@@ -1,5 +1,5 @@
 // content.js
-// ChatGPT Sidebar Tag Highlighter (ultra perf, config-driven only)
+// ChatGPT Tag Highlighter (ultra perf, config-driven only)
 //
 // Behavior:
 // - Reads rules from extension storage key "tagHighlighterConfigV1" (set by options page).

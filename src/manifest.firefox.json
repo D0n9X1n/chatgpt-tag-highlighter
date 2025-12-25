@@ -10,7 +10,10 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "chatgpt-tag-highlighter@D0n9X1n.dev",
-      "strict_min_version": "109.0"
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "content_scripts": [
