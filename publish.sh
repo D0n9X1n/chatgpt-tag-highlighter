@@ -12,7 +12,7 @@ DIST_DIR="$ROOT_DIR/dist"
 MANIFEST_CHROME="$SRC_DIR/manifest.chrome.json"
 MANIFEST_FIREFOX="$SRC_DIR/manifest.firefox.json"
 
-EXT_NAME="chatgpt-sidebar-tag-highlighter"
+EXT_NAME="chatgpt-tag-highlighter"
 # -----------------------------------------------------
 
 usage() {

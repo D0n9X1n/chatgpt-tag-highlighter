@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Sidebar Tag Highlighter",
+  "name": "ChatGPT Tag Highlighter",
   "version": "0.0.1",
-  "description": "Highlight ChatGPT sidebar chats by tags like [DX] with custom colors.",
+  "description": "Highlight ChatGPT sidebar chats by tags like [TODO] with custom colors.",
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"
