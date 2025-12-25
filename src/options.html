@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ChatGPT Tag Highlighter Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+
+<body>
+  <header class="header">
+    <div class="title">
+      <h1>Tag Highlighter</h1>
+      <p class="sub">
+        Configure ChatGPT sidebar tag rules (e.g. <code>[TODO]</code>, <code>[BUG]</code>).
+      </p>
+    </div>
+
+    <div class="actions">
+      <button id="addRow" type="button">+ Add Tag</button>
+      <button id="reset" type="button" class="ghost">Reset</button>
+      <button id="save" type="button" class="primary">Save</button>
+    </div>
+  </header>
+
+  <main class="card">
+    <table class="table" aria-label="Tag rules">
+      <thead>
+        <tr>
+          <th style="width: 26%">Tag</th>
+          <th style="width: 18%">Match</th>
+          <th style="width: 24%">Color (preset)</th>
+          <th style="width: 20%">Custom hex</th>
+          <th style="width: 8%">Preview</th>
+          <th style="width: 4%"></th>
+        </tr>
+      </thead>
+
+      <tbody id="rows"></tbody>
+    </table>
+
+    <p class="hint">
+      Tip: Use <b>startsWith</b> for best performance. Custom hex must be <code>#RRGGBB</code>.
+    </p>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <template id="rowTemplate">
+    <tr>
+      <td>
+        <input class="input tag" placeholder="[TODO]" />
+      </td>
+
+      <td>
+        <select class="select match">
+          <option value="startsWith">startsWith</option>
+          <option value="includes">includes</option>
+        </select>
+      </td>
+
+      <td>
+        <select class="select color"></select>
+      </td>
+
+      <td>
+        <input class="input hex" placeholder="#fabd2f" />
+      </td>
+
+      <td class="previewCell">
+        <span class="swatch" title="Preview"></span>
+      </td>
+
+      <td class="delCell">
+        <button class="del" type="button" title="Delete">✕</button>
+      </td>
+    </tr>
+  </template>
+
+  <script src="options.js"></script>
+</body>
+</html>

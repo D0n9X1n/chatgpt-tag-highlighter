@@ -1,0 +1,149 @@
+:root{
+  --bg: #0b0f14;
+  --card: #101826;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --border: rgba(255,255,255,.12);
+  --accent: #60a5fa;
+}
+
+*{ box-sizing: border-box; }
+
+body{
+  margin: 0;
+  padding: 18px;
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  background: var(--bg);
+  color: var(--text);
+}
+
+.header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.title{ min-width: 280px; }
+
+h1{
+  margin: 0;
+  font-size: 18px;
+}
+
+.sub{
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.actions{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+button{
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+button:hover{
+  background: rgba(255,255,255,.10);
+}
+
+button.primary{
+  border-color: rgba(96,165,250,.6);
+  background: rgba(96,165,250,.18);
+}
+
+button.ghost{
+  background: transparent;
+}
+
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.table{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td{
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+th{
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.input, .select{
+  width: 100%;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.input:focus, .select:focus{
+  border-color: rgba(96,165,250,.8);
+  box-shadow: 0 0 0 3px rgba(96,165,250,.15);
+}
+
+.previewCell{
+  text-align: center;
+}
+
+.swatch{
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: transparent;
+}
+
+.delCell{
+  text-align: right;
+}
+
+.del{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.hint{
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.toast{
+  margin-top: 10px;
+  color: var(--muted);
+  min-height: 18px;
+}
+
+code{
+  background: rgba(255,255,255,.07);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
