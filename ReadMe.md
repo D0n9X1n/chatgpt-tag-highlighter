@@ -5,6 +5,10 @@ It adds a **colored left stripe** + subtle background so tagged chats are easy t
 
 ![LOGO](./src/icon.png)
 
+## Installation
+### For Chrome: visit [ChatGPT Tag Highlighter](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm?authuser=0&hl=en)
+### For Firefox: visit [ChatGPT Tag Highlighter](https://addons.mozilla.org/en-US/firefox/addon/chatgpt-tag-highlighter/)
+
 ---
 
 ## Why this exists
