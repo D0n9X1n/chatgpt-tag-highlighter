@@ -1,82 +1,150 @@
-// background.js
-// Seeds default rules into storage on install/startup.
-// This ensures content.js can read config from options storage;
-// content.js will EARLY RETURN if config is missing, so we must seed it here.
+// Background.js
+// Seeds default config and performs a lightweight migration to add new fields:
+// - rule.hide (boolean)
+// - maxChatTurns (number)
 //
-// Works in both Chrome and Firefox (MV3 service worker in Chrome, background in Firefox).
-// Requires: "permissions": ["storage"] and "background": { "service_worker": "background.js" } in manifest.
+// This prevents content.js from early returning due to missing config.
 
 (() => {
-  "use strict";
+	'use strict';
 
-  const STORAGE_KEY = "tagHighlighterConfigV1";
+	const STORAGE_KEY = 'tagHighlighterConfigV1';
 
-  // Default rules (only TODO + BUG as requested)
-  const DEFAULT_RULES = [
-    { tag: "[TODO]", color: "BrightYellow", match: "startsWith" },
-    { tag: "[BUG]",  color: "BrightRed",    match: "startsWith" },
-  ];
+	const DEFAULT_RULES = [
+		{
+			tag: '[TODO]', color: '#fabd2f', match: 'startsWith', hide: false,
+		}, // BrightYellow
+		{
+			tag: '[BUG]', color: '#fb4934', match: 'startsWith', hide: false,
+		}, // BrightRed
+	];
 
-  // Choose the extension API namespace (Firefox prefers `browser`, Chrome uses `chrome`)
-  const API =
-    (typeof browser !== "undefined" && browser?.runtime) ? browser :
-    (typeof chrome !== "undefined" && chrome?.runtime) ? chrome :
-    null;
+	const DEFAULT_MAX_CHAT_TURNS = 0;
 
-  if (!API) return;
+	const API
+    = (typeof browser !== 'undefined' && browser?.runtime)
+    	? browser
+    	: ((typeof chrome !== 'undefined' && chrome?.runtime)
+    		? chrome
+    		: null);
 
-  // Use sync storage if available, otherwise fallback to local storage
-  const storageArea =
-    API.storage?.sync ? API.storage.sync :
-    API.storage?.local ? API.storage.local :
-    null;
+	if (!API) {
+		return;
+	}
 
-  if (!storageArea) return;
+	const storageArea
+    = API.storage?.sync
+    	? API.storage.sync
+    	: (API.storage?.local
+    		? API.storage.local
+    		: null);
 
-  // Promisified get/set that works for both browser (Promise) and chrome (callback) APIs
-  function storageGet(key) {
-    try {
-      const r = storageArea.get(key);
-      if (r && typeof r.then === "function") return r; // Firefox: Promise
-    } catch {}
-    return new Promise((resolve) => storageArea.get(key, resolve)); // Chrome: callback
-  }
+	if (!storageArea) {
+		return;
+	}
 
-  function storageSet(obj) {
-    try {
-      const r = storageArea.set(obj);
-      if (r && typeof r.then === "function") return r; // Firefox: Promise
-    } catch {}
-    return new Promise((resolve) => storageArea.set(obj, resolve)); // Chrome: callback
-  }
+	function storageGet(key) {
+		try {
+			const r = storageArea.get(key);
+			if (r && typeof r.then === 'function') {
+				return r;
+			}
+		} catch {}
 
-  // Only seed defaults when storage is empty/missing.
-  // This won't overwrite user customizations.
-  async function seedIfMissing() {
-    try {
-      const data = await storageGet(STORAGE_KEY);
-      const rules = data?.[STORAGE_KEY]?.rules;
+		return new Promise(resolve => storageArea.get(key, resolve));
+	}
 
-      if (Array.isArray(rules) && rules.length > 0) return;
+	function storageSet(object) {
+		try {
+			const r = storageArea.set(object);
+			if (r && typeof r.then === 'function') {
+				return r;
+			}
+		} catch {}
 
-      await storageSet({ [STORAGE_KEY]: { rules: DEFAULT_RULES } });
-    } catch {
-      // Intentionally ignore errors: seeding is best-effort and should not break the extension.
-    }
-  }
+		return new Promise(resolve => storageArea.set(object, resolve));
+	}
 
-  // Seed once on installation/update
-  API.runtime?.onInstalled?.addListener(() => {
-    seedIfMissing();
-  });
+	function safeMatch(v) {
+		return String(v || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith';
+	}
 
-  // Seed again on browser startup (best-effort)
-  // Some environments may not support onStartup; guard it.
-  API.runtime?.onStartup?.addListener?.(() => {
-    seedIfMissing();
-  });
+	function safeBool(v) {
+		return v === true;
+	}
 
-  // Optional: also seed immediately when the background script loads.
-  // This helps in dev when the service worker is started without onInstalled firing.
-  seedIfMissing();
+	function safeInt(v, fallback) {
+		const n = Number(v);
+		if (!Number.isFinite(n)) {
+			return fallback;
+		}
+
+		if (n < 0) {
+			return 0;
+		}
+
+		return Math.floor(n);
+	}
+
+	function normalizeRules(rules) {
+		if (!Array.isArray(rules) || rules.length === 0) {
+			return null;
+		}
+
+		const out = [];
+		for (const r of rules) {
+			const tag = String(r?.tag || '').trim();
+			if (!tag) {
+				continue;
+			}
+
+			out.push({
+				tag,
+				match: safeMatch(r?.match),
+				color: String(r?.color || 'Green'),
+				hide: safeBool(r?.hide),
+			});
+		}
+
+		return out.length > 0 ? out : null;
+	}
+
+	async function seedOrMigrate() {
+		try {
+			const data = await storageGet(STORAGE_KEY);
+			const existing = data?.[STORAGE_KEY];
+
+			if (!existing) {
+				await storageSet({
+					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS},
+				});
+				return;
+			}
+
+			const rules = normalizeRules(existing.rules) || DEFAULT_RULES;
+			const maxChatTurns
+        = (typeof existing.maxChatTurns === 'number')
+        	? safeInt(existing.maxChatTurns, DEFAULT_MAX_CHAT_TURNS)
+        	: DEFAULT_MAX_CHAT_TURNS;
+
+			// Only write if missing/invalid fields.
+			const needWrite
+        = !Array.isArray(existing.rules)
+        	|| existing.rules.length === 0
+        	|| typeof existing.maxChatTurns !== 'number'
+        	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean');
+
+			if (needWrite) {
+				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns}});
+			}
+		} catch {
+			// Best-effort: do not block extension startup.
+		}
+	}
+
+	API.runtime?.onInstalled?.addListener(() => seedOrMigrate());
+	API.runtime?.onStartup?.addListener?.(() => seedOrMigrate());
+
+	// Helpful for dev: seed on background load.
+	seedOrMigrate();
 })();

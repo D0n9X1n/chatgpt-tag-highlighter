@@ -10,9 +10,9 @@
 <body>
   <header class="header">
     <div class="title">
-      <h1>Tag Highlighter</h1>
+      <h1>ChatGPT Tag Highlighter</h1>
       <p class="sub">
-        Configure ChatGPT sidebar tag rules (e.g. <code>[TODO]</code>, <code>[BUG]</code>).
+        Configure sidebar tag rules, hide tags, and optionally prune chat turns.
       </p>
     </div>
 
@@ -24,26 +24,47 @@
   </header>
 
   <main class="card">
-    <table class="table" aria-label="Tag rules">
-      <thead>
-        <tr>
-          <th style="width: 26%">Tag</th>
-          <th style="width: 18%">Match</th>
-          <th style="width: 24%">Color (preset)</th>
-          <th style="width: 20%">Custom hex</th>
-          <th style="width: 8%">Preview</th>
-          <th style="width: 4%"></th>
-        </tr>
-      </thead>
+    <section class="section">
+      <h2 class="sectionTitle">General</h2>
 
-      <tbody id="rows"></tbody>
-    </table>
+      <div class="generalRow">
+        <label class="label">
+          Max chat turns to keep (0 = disabled)
+          <span class="hintInline">Removes old conversation-turn DOM nodes for performance.</span>
+        </label>
 
-    <p class="hint">
-      Tip: Use <b>startsWith</b> for best performance. Custom hex must be <code>#RRGGBB</code>.
-    </p>
+        <div class="generalInputWrap">
+          <input id="maxChatTurns" class="input" type="number" min="0" step="1" placeholder="0" />
+        </div>
+      </div>
+    </section>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <section class="section">
+      <h2 class="sectionTitle">Tag Rules (order matters)</h2>
+
+      <table class="table" aria-label="Tag rules">
+        <thead>
+          <tr>
+            <th style="width: 24%">Tag</th>
+            <th style="width: 14%">Match</th>
+            <th style="width: 20%">Color (preset)</th>
+            <th style="width: 16%">Custom hex</th>
+            <th style="width: 10%">Hide</th>
+            <th style="width: 8%">Preview</th>
+            <th style="width: 8%">Order</th>
+            <th style="width: 4%"></th>
+          </tr>
+        </thead>
+
+        <tbody id="rows"></tbody>
+      </table>
+
+      <p class="hint">
+        Tip: Use <b>startsWith</b> for best performance. Rules are matched top-to-bottom.
+      </p>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </section>
   </main>
 
   <template id="rowTemplate">
@@ -67,8 +88,20 @@
         <input class="input hex" placeholder="#fabd2f" />
       </td>
 
+      <td class="hideCell">
+        <label class="checkboxWrap" title="Hide matching chats in sidebar list">
+          <input class="hide" type="checkbox" />
+          <span>Hide</span>
+        </label>
+      </td>
+
       <td class="previewCell">
         <span class="swatch" title="Preview"></span>
+      </td>
+
+      <td class="orderCell">
+        <button class="moveUp" type="button" title="Move up">↑</button>
+        <button class="moveDown" type="button" title="Move down">↓</button>
       </td>
 
       <td class="delCell">
@@ -80,3 +113,4 @@
   <script src="options.js"></script>
 </body>
 </html>
+

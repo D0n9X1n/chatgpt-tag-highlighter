@@ -1,405 +1,679 @@
-// content.js
-// ChatGPT Tag Highlighter (ultra perf, config-driven only)
-//
-// Behavior:
-// - Reads rules from extension storage key "tagHighlighterConfigV1" (set by options page).
-// - If no rules exist, early return (does nothing).
-// - Supports palette names (Gruvbox-ish) OR custom hex "#RRGGBB" in stored rules.
-// - Distinguishes selected vs non-selected chat item styles.
-//
+// Content.js
+// ChatGPT Tag Highlighter — performance-first sidebar highlighter + hider + turn pruner + compact overlay.
 // Notes:
-// - Comments are English by request.
-// - Designed for maximum performance: pre-compiled rules, incremental DOM processing, minimal observers.
+// - Reads config from storage key: tagHighlighterConfigV1
+// - Options page stores ONLY hex colors (#RRGGBB)
+// - This script still accepts legacy color names and normalizes them for rendering
 
 (() => {
-  "use strict";
-
-  /***********************
-   * 1) Storage: config only
-   ***********************/
-  const STORAGE_KEY = "tagHighlighterConfigV1";
-
-  const API =
-    (typeof browser !== "undefined" && browser?.storage) ? browser :
-    (typeof chrome !== "undefined" && chrome?.storage) ? chrome :
-    null;
-
-  if (!API) return;
-
-  const storageArea =
-    API.storage?.sync ? API.storage.sync :
-    API.storage?.local ? API.storage.local :
-    null;
-
-  if (!storageArea) return;
-
-  function storageGet(key) {
-    try {
-      const r = storageArea.get(key);
-      if (r && typeof r.then === "function") return r; // Firefox Promise
-    } catch {}
-    return new Promise((resolve) => storageArea.get(key, resolve)); // Chrome callback
-  }
-
-  async function getRulesOrNull() {
-    const data = await storageGet(STORAGE_KEY);
-    const rules = data?.[STORAGE_KEY]?.rules;
-    if (!Array.isArray(rules) || rules.length === 0) return null;
-    return rules;
-  }
-
-  /***********************
-   * 2) Palette + style constants
-   ***********************/
-  // Palette is needed because options page may store color as a palette name (e.g. "BrightYellow").
-  // If you always store hex in options page, you can remove this palette and keep hex-only.
-  const PALETTE = {
-    Green:        "#98971a",
-    BrightGreen:  "#b8bb26",
-    Aqua:         "#689d6a",
-    BrightAqua:   "#8ec07c",
-    Blue:         "#458588",
-    BrightBlue:   "#83a598",
-    Yellow:       "#d79921",
-    BrightYellow: "#fabd2f",
-    Orange:       "#d65d0e",
-    BrightOrange: "#fe8019",
-    Red:          "#cc241d",
-    BrightRed:    "#fb4934",
-    Purple:       "#b16286",
-    BrightPurple: "#d3869b",
-    Gray:         "#928374",
-  };
-
-  const OP = {
-    normal: 0.14,
-    hover: 0.20,
-    active: 0.28,
-    activeHover: 0.34,
-    outline: 0.25,
-    outlineHover: 0.35,
-  };
-
-  const STYLE_ID = "tag-highlighter-style";
-  const CLASS = "tag-highlight";
-  const HISTORY_ID = "history";
-
-  const css = `
-    #${HISTORY_ID} a.${CLASS}{
-      background: var(--tag-bg) !important;
-      border-left: 4px solid var(--tag-color) !important;
-      padding-left: 12px !important;
-      border-radius: 10px !important;
-      font-weight: 600 !important;
-    }
-    #${HISTORY_ID} a.${CLASS}:hover{
-      background: var(--tag-bg-hover) !important;
-    }
-    #${HISTORY_ID} a.${CLASS}[data-active],
-    #${HISTORY_ID} a.${CLASS}[aria-current="page"]{
-      background: var(--tag-bg-active) !important;
-      border-left-width: 6px !important;
-      box-shadow: inset 0 0 0 1px rgba(var(--tag-rgb), ${OP.outline}) !important;
-    }
-    #${HISTORY_ID} a.${CLASS}[data-active]:hover,
-    #${HISTORY_ID} a.${CLASS}[aria-current="page"]:hover{
-      background: var(--tag-bg-active-hover) !important;
-      box-shadow: inset 0 0 0 1px rgba(var(--tag-rgb), ${OP.outlineHover}) !important;
-    }
-  `;
-
-  function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-    const s = document.createElement("style");
-    s.id = STYLE_ID;
-    s.textContent = css;
-    document.head.appendChild(s);
-  }
-
-  /***********************
-   * 3) Compiler (rules -> ultra-fast matchers)
-   ***********************/
-  function isHex(s) {
-    return /^#[0-9a-fA-F]{6}$/.test(String(s || "").trim());
-  }
-
-  function normalizeColor(c) {
-    const raw = String(c || "").trim();
-    if (isHex(raw)) return raw;
-
-    const key = Object.keys(PALETTE).find((k) => k.toLowerCase() === raw.toLowerCase());
-    return key ? PALETTE[key] : null;
-  }
-
-  function hexToRgbStr(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `${r},${g},${b}`;
-  }
-
-  function compileRules(rules) {
-    // Compiled rules are split into:
-    // - prefix rules: startsWith (fast, usually "[TAG]")
-    // - includes rules: includes (slower; evaluated last)
-    const prefix = [];
-    const incl = [];
-
-    for (const r of rules) {
-      const tag = String(r?.tag || "").trim();
-      if (!tag) continue;
-
-      const match = String(r?.match || "startsWith").toLowerCase() === "includes" ? "includes" : "startsWith";
-      const hex = normalizeColor(r?.color);
-      if (!hex) continue;
-
-      const rgbStr = hexToRgbStr(hex);
-      const compiled = {
-        tag,
-        match,
-        colorHex: hex,
-        rgbStr,
-        bg:        `rgba(${rgbStr},${OP.normal})`,
-        bgHover:   `rgba(${rgbStr},${OP.hover})`,
-        bgActive:  `rgba(${rgbStr},${OP.active})`,
-        bgActHov:  `rgba(${rgbStr},${OP.activeHover})`,
-      };
-
-      if (match === "includes") incl.push(compiled);
-      else prefix.push(compiled);
-    }
-
-    return { prefix, incl };
-  }
-
-  /***********************
-   * 4) DOM helpers (fast paths)
-   ***********************/
-  function isChatLink(a) {
-    if (!a || a.nodeType !== 1 || a.tagName !== "A") return false;
-    if (a.getAttribute("data-sidebar-item") !== "true") return false;
-    const href = a.getAttribute("href") || "";
-    return href.startsWith("/c/");
-  }
-
-  function readTitle(a) {
-    // Prefer the visible span; fallback to full text.
-    const t = a.querySelector('span[dir="auto"]')?.textContent;
-    return (t ? t.trim() : (a.textContent || "").trim());
-  }
-
-  /***********************
-   * 5) Engine (incremental + batched updates)
-   ***********************/
-  const engine = {
-    compiled: null,
-    historyRoot: null,
-    historyMO: null,
-    parentMO: null,
-
-    // WeakMap for diffing per <a>
-    last: new WeakMap(), // a -> { title, tag, colorHex }
-
-    // Batch queue
-    queue: new Set(),
-    scheduled: false,
-
-    running: false,
-  };
-
-  function pickRule(title) {
-    const { prefix, incl } = engine.compiled;
-
-    // Ultra fast skip for common prefix style tags:
-    // Only run startsWith checks if title begins with '['.
-    if (title.charCodeAt(0) === 91) { // '['
-      for (const r of prefix) if (title.startsWith(r.tag)) return r;
-    }
-
-    // Includes rules last (slower).
-    for (const r of incl) if (title.includes(r.tag)) return r;
-
-    return null;
-  }
-
-  function setVars(a, r) {
-    a.classList.add(CLASS);
-    a.style.setProperty("--tag-color", r.colorHex);
-    a.style.setProperty("--tag-rgb", r.rgbStr);
-    a.style.setProperty("--tag-bg", r.bg);
-    a.style.setProperty("--tag-bg-hover", r.bgHover);
-    a.style.setProperty("--tag-bg-active", r.bgActive);
-    a.style.setProperty("--tag-bg-active-hover", r.bgActHov);
-  }
-
-  function clearVars(a) {
-    a.classList.remove(CLASS);
-    a.style.removeProperty("--tag-color");
-    a.style.removeProperty("--tag-rgb");
-    a.style.removeProperty("--tag-bg");
-    a.style.removeProperty("--tag-bg-hover");
-    a.style.removeProperty("--tag-bg-active");
-    a.style.removeProperty("--tag-bg-active-hover");
-  }
-
-  function enqueue(a) {
-    engine.queue.add(a);
-    if (engine.scheduled) return;
-    engine.scheduled = true;
-    requestAnimationFrame(flush);
-  }
-
-  function processOne(a) {
-    const title = readTitle(a);
-    const rule = pickRule(title);
-    const prev = engine.last.get(a);
-
-    if (!rule) {
-      if (prev?.tag) clearVars(a);
-      engine.last.set(a, { title, tag: null, colorHex: null });
-      return;
-    }
-
-    // Skip if unchanged
-    if (prev && prev.title === title && prev.tag === rule.tag && prev.colorHex === rule.colorHex) return;
-
-    setVars(a, rule);
-    engine.last.set(a, { title, tag: rule.tag, colorHex: rule.colorHex });
-  }
-
-  function flush() {
-    engine.scheduled = false;
-    const items = engine.queue;
-    engine.queue = new Set();
-
-    for (const a of items) processOne(a);
-  }
-
-  function scanExisting(root) {
-    const links = root.querySelectorAll('a[data-sidebar-item="true"][href^="/c/"]');
-    for (const a of links) enqueue(a);
-  }
-
-  function collectLinksFromNode(node) {
-    if (node.nodeType !== 1) return;
-
-    if (node.tagName === "A") {
-      if (isChatLink(node) && node.closest(`#${HISTORY_ID}`) === engine.historyRoot) enqueue(node);
-      return;
-    }
-
-    // Faster than querySelectorAll in many cases
-    const as = node.getElementsByTagName?.("a");
-    if (!as || as.length === 0) return;
-
-    for (let i = 0; i < as.length; i++) {
-      const a = as[i];
-      if (isChatLink(a) && a.closest(`#${HISTORY_ID}`) === engine.historyRoot) enqueue(a);
-    }
-  }
-
-  function observeHistory(root) {
-    const mo = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const n of m.addedNodes) collectLinksFromNode(n);
-      }
-    });
-
-    mo.observe(root, { childList: true, subtree: true });
-    return mo;
-  }
-
-  function attachHistory() {
-    const root = document.getElementById(HISTORY_ID);
-    if (!root || root === engine.historyRoot) return false;
-
-    engine.historyMO?.disconnect();
-    engine.parentMO?.disconnect();
-
-    engine.historyRoot = root;
-    scanExisting(root);
-    engine.historyMO = observeHistory(root);
-
-    // Tiny parent observer to detect replacement/removal of #history
-    const parent = root.parentElement;
-    if (parent) {
-      engine.parentMO = new MutationObserver(() => {
-        if (!document.contains(engine.historyRoot)) attachHistory();
-      });
-      engine.parentMO.observe(parent, { childList: true });
-    }
-
-    return true;
-  }
-
-  function stopEngineAndClear() {
-    engine.historyMO?.disconnect();
-    engine.parentMO?.disconnect();
-    engine.historyMO = null;
-    engine.parentMO = null;
-
-    const root = engine.historyRoot;
-    engine.historyRoot = null;
-    engine.running = false;
-
-    // Clear highlights (best effort)
-    if (root) {
-      const links = root.querySelectorAll('a[data-sidebar-item="true"][href^="/c/"]');
-      for (const a of links) clearVars(a);
-    }
-  }
-
-  function startEngine(compiled) {
-    engine.compiled = compiled;
-    engine.running = true;
-    ensureStyle();
-
-    // Attach now
-    attachHistory();
-
-    // Lightweight retry for SPA lazy-load
-    let tries = 0;
-    const timer = setInterval(() => {
-      if (!engine.running) return clearInterval(timer);
-      const ok = attachHistory();
-      if (++tries >= 20 || ok) clearInterval(timer);
-    }, 500);
-  }
-
-  function rescanAll() {
-    if (!engine.historyRoot) return;
-    scanExisting(engine.historyRoot);
-  }
-
-  /***********************
-   * 6) Boot: config-driven only (early return if missing)
-   ***********************/
-  (async () => {
-    const rules = await getRulesOrNull();
-    if (!rules) return; // EARLY RETURN: do nothing if no config exists
-
-    const compiled = compileRules(rules);
-    startEngine(compiled);
-
-    // Optional: live update when options page changes
-    if (API.storage?.onChanged?.addListener) {
-      API.storage.onChanged.addListener(async (changes, areaName) => {
-        // Only react to the exact key we use
-        if (!changes || !changes[STORAGE_KEY]) return;
-
-        const newRules = await getRulesOrNull();
-
-        // If config was removed, stop and clear (still respects "no config => do nothing")
-        if (!newRules) {
-          stopEngineAndClear();
-          return;
-        }
-
-        // Update compiled rules and rescan existing items
-        engine.compiled = compileRules(newRules);
-        rescanAll();
-      });
-    }
-  })();
+	'use strict';
+
+	// ---- Config ----
+	const STORAGE_KEY = 'tagHighlighterConfigV1';
+	const STYLE_ID = 'cth-style';
+	const OVERLAY_ID = 'cth-overlay';
+	const DEBUG = true; // Flip to false when stable
+
+	const log = (...a) => DEBUG && console.log('[CTH]', ...a);
+	const warn = (...a) => DEBUG && console.warn('[CTH]', ...a);
+
+	// ---- Extension API detection (avoid page-level window.chrome) ----
+	const API
+    = (typeof browser !== 'undefined' && browser?.runtime?.id && browser?.storage)
+    	? browser
+    	: ((typeof chrome !== 'undefined' && chrome?.runtime?.id && chrome?.storage) ? chrome : null);
+
+	if (!API) {
+		return;
+	}
+
+	const storeSync = API.storage?.sync ?? null;
+	const storeLocal = API.storage?.local ?? null;
+
+	if (!storeSync && !storeLocal) {
+		return;
+	}
+
+	// ---- Promise wrapper for storage.get/set (works for Chrome + Firefox) ----
+	function storageGet(store, key) {
+		return new Promise(resolve => {
+			try {
+				const r = store.get(key);
+				if (r && typeof r.then === 'function') {
+					r.catch(() => resolve({})).then(resolve);
+				} else {
+					store.get(key, resolve);
+				}
+			} catch {
+				try {
+					store.get(key, resolve);
+				} catch {
+					resolve({});
+				}
+			}
+		});
+	}
+
+	// ---- Colors: legacy -> hex, always normalize for rendering ----
+	const LEGACY = Object.freeze({
+		red: '#fb4934',
+		green: '#b8bb26',
+		yellow: '#fabd2f',
+		blue: '#83a598',
+		purple: '#d3869b',
+		aqua: '#8ec07c',
+		orange: '#fe8019',
+		gray: '#928374',
+		grey: '#928374',
+		brightred: '#fb4934',
+		brightgreen: '#b8bb26',
+		brightyellow: '#fabd2f',
+		brightblue: '#83a598',
+		brightpurple: '#d3869b',
+		brightaqua: '#8ec07c',
+		brightorange: '#fe8019',
+		gruvboxred: '#fb4934',
+		gruvboxgreen: '#b8bb26',
+		gruvboxyellow: '#fabd2f',
+		gruvboxblue: '#83a598',
+		gruvboxpurple: '#d3869b',
+		gruvboxaqua: '#8ec07c',
+		gruvboxorange: '#fe8019',
+		gruvboxgray: '#928374',
+		gruvboxgrey: '#928374',
+	});
+
+	const isHex6 = s => /^#[\da-fA-F]{6}$/.test(String(s || '').trim());
+	const isHex3 = s => /^#[\da-fA-F]{3}$/.test(String(s || '').trim());
+	const normKey = s => String(s || '').toLowerCase().replaceAll(/[^a-z\d]/g, '');
+	const expandHex3 = h => {
+		const x = h.slice(1);
+		return (`#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}`).toLowerCase();
+	};
+
+	function toHex(value, fallback = '#a7a7a7') {
+		const v = String(value || '').trim();
+		if (!v) {
+			return fallback;
+		}
+
+		if (isHex6(v)) {
+			return v.toLowerCase();
+		}
+
+		if (isHex3(v)) {
+			return expandHex3(v);
+		}
+
+		const k = normKey(v);
+		return LEGACY[k] || fallback;
+	}
+
+	function hexToRgba(hex, a) {
+		const h = toHex(hex);
+		const r = Number.parseInt(h.slice(1, 3), 16) || 0;
+		const g = Number.parseInt(h.slice(3, 5), 16) || 0;
+		const b = Number.parseInt(h.slice(5, 7), 16) || 0;
+		return `rgba(${r},${g},${b},${a})`;
+	}
+
+	// ---- Inject CSS once ----
+	function injectStyleOnce() {
+		if (document.getElementById(STYLE_ID)) {
+			return;
+		}
+
+		const style = document.createElement('style');
+		style.id = STYLE_ID;
+
+		// The scroll-to-bottom floating button you asked to hide
+		// (Selector uses multiple stable utility classes; keep minimal)
+		const hideScrollBtnCss = `
+button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-token-text-secondary.border-token-border-default.end-1\\/2.translate-x-1\\/2.print\\:hidden {
+  display: none !important;
+}
+`;
+
+		// Sidebar highlight + hide styles (bigger highlighted area)
+		const sidebarCss = `
+/* Hide chats matched by hide=true rules */
+#history a[data-cth-hidden="1"] { display: none !important; }
+
+/* Base highlighted row */
+#history a[data-cth="1"]{
+  position: relative !important;
+  background: var(--cth-bg, transparent) !important;
+  border-radius: 12px !important;
+}
+
+/* Left stripe */
+#history a[data-cth="1"]::before{
+  content:"";
+  position:absolute;
+  left:0; top:6px; bottom:6px;
+  width:4px;
+  background: var(--cth-color, #a7a7a7);
+  border-radius: 999px;
+  pointer-events:none;
+}
+
+/* Selected row gets stronger background + thicker stripe */
+#history a[data-cth="1"][data-active],
+#history a[data-cth="1"][aria-current="page"]{
+  background: var(--cth-bg-strong, var(--cth-bg, transparent)) !important;
+}
+#history a[data-cth="1"][data-active]::before,
+#history a[data-cth="1"][aria-current="page"]::before{
+  width:6px;
+}
+`;
+
+		// Overlay styles (match your screenshot: dark pill + top color line + arrow on right)
+		const overlayCss = `
+#${OVERLAY_ID}{
+  position: fixed;
+  z-index: 2147483647;
+  left: 0; top: 0;
+  display: none;
+  box-sizing: border-box;
+
+  border-radius: 18px;
+  overflow: hidden;
+
+  background: rgba(0,0,0,0.72);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.40);
+
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+
+  transform: translateZ(0);
+}
+
+#${OVERLAY_ID} .cth-topline{
+  height: 4px;
+  background: var(--cth-color, #a7a7a7);
+}
+
+#${OVERLAY_ID} .cth-body{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+#${OVERLAY_ID} .cth-title{
+  flex: 1;
+  min-width: 0;
+  font: 600 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: rgba(255,255,255,0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#${OVERLAY_ID} .cth-arrow{
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.90);
+  flex: 0 0 auto;
+}
+
+#${OVERLAY_ID}:hover{
+  border-color: rgba(255,255,255,0.18);
+}
+#${OVERLAY_ID}:hover .cth-arrow{
+  background: rgba(255,255,255,0.10);
+}
+`;
+
+		style.textContent = `${hideScrollBtnCss}\n${sidebarCss}\n${overlayCss}`;
+		document.documentElement.append(style);
+		log('Style injected');
+	}
+
+	// ---- Overlay (one element) ----
+	function ensureOverlay() {
+		let element = document.getElementById(OVERLAY_ID);
+		if (element) {
+			return element;
+		}
+
+		element = document.createElement('div');
+		element.id = OVERLAY_ID;
+		element.innerHTML = `
+      <div class="cth-topline"></div>
+      <div class="cth-body">
+        <div class="cth-title"></div>
+        <div class="cth-arrow" aria-hidden="true">
+          <!-- Inline SVG chevron-down (no network, no extra files) -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+               xmlns="http://www.w3.org/2000/svg" style="display:block">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    `;
+		document.body.append(element);
+
+		// Click overlay => scroll to bottom
+		element.addEventListener('click', () => scrollToBottom(), {passive: true});
+
+		log('Overlay created');
+		return element;
+	}
+
+	// ---- Find active conversation title in sidebar ----
+	function getActiveChatAnchor(historyRoot) {
+		// ChatGPT uses data-active in many builds; aria-current covers others.
+		return (
+			historyRoot?.querySelector('a[data-sidebar-item="true"][data-active]')
+			|| historyRoot?.querySelector('a[data-sidebar-item="true"][aria-current="page"]')
+			|| historyRoot?.querySelector('a[data-sidebar-item="true"][data-active="true"]')
+			|| null
+		);
+	}
+
+	function getChatTitleText(a) {
+		// Keep selector cheap and resilient.
+		// Typical: a > ... > .truncate > span[dir="auto"]
+		const span = a.querySelector('.truncate span[dir="auto"]');
+		if (span && span.textContent) {
+			return span.textContent.trim();
+		}
+
+		const t = a.querySelector('.truncate');
+		return (t?.textContent || '').trim();
+	}
+
+	// ---- Rules ----
+	function compileConfig(rawCfg) {
+		const cfg = rawCfg && typeof rawCfg === 'object' ? rawCfg : null;
+		const rulesIn = Array.isArray(cfg?.rules) ? cfg.rules : [];
+		const rules = [];
+
+		for (const element of rulesIn) {
+			const r = element || {};
+			const tag = String(r.tag || '').trim();
+			if (!tag) {
+				continue;
+			}
+
+			const match = String(r.match || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith';
+			const color = toHex(r.color, '#a7a7a7');
+			const hide = r.hide === true;
+
+			rules.push({
+				tag, match, color, hide,
+			});
+		}
+
+		const maxChatTurns = Number.isFinite(Number(cfg?.maxChatTurns))
+			? Math.max(0, Math.floor(Number(cfg.maxChatTurns)))
+			: 0;
+
+		return {rules, maxChatTurns};
+	}
+
+	function matchRule(title, rules) {
+		// Fast path: small rule count, linear scan, order matters.
+		for (const r of rules) {
+			if (r.match === 'startsWith') {
+				if (title.startsWith(r.tag)) {
+					return r;
+				}
+			} else if (title.includes(r.tag)) {
+				return r;
+			}
+		}
+
+		return null;
+	}
+
+	// ---- Sidebar processing (batched) ----
+	let historyRoot = null;
+	let compiled = null;
+
+	const itemCache = new WeakMap(); // A -> lastTitle
+	let sidebarRAF = 0;
+
+	function scheduleSidebarScan() {
+		if (sidebarRAF) {
+			return;
+		}
+
+		sidebarRAF = requestAnimationFrame(() => {
+			sidebarRAF = 0;
+			scanSidebarNow();
+		});
+	}
+
+	function scanSidebarNow() {
+		if (!historyRoot || !compiled?.rules?.length) {
+			return;
+		}
+
+		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
+		for (const a of anchors) {
+			const title = getChatTitleText(a);
+			const last = itemCache.get(a);
+
+			// Skip unchanged items
+			if (last === title) {
+				continue;
+			}
+
+			itemCache.set(a, title);
+
+			applyRuleToAnchor(a, title);
+		}
+
+		// Update overlay content whenever sidebar is scanned (cheap)
+		scheduleOverlayUpdate();
+	}
+
+	function applyRuleToAnchor(a, title) {
+		const r = matchRule(title, compiled.rules);
+
+		if (!r) {
+			delete a.dataset.cth;
+			delete a.dataset.cthHidden;
+			a.style.removeProperty('--cth-color');
+			a.style.removeProperty('--cth-bg');
+			a.style.removeProperty('--cth-bg-strong');
+			return;
+		}
+
+		a.dataset.cth = '1';
+		a.style.setProperty('--cth-color', r.color);
+		a.style.setProperty('--cth-bg', hexToRgba(r.color, 0.12));
+		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.18));
+
+		if (r.hide) {
+			a.dataset.cthHidden = '1';
+		} else {
+			delete a.dataset.cthHidden;
+		}
+	}
+
+	// ---- Overlay update + positioning (batched) ----
+	const overlay = ensureOverlay();
+	let overlayTitle = '';
+	let overlayColor = '#a7a7a7';
+
+	let overlayUpdateRAF = 0;
+	function scheduleOverlayUpdate() {
+		if (overlayUpdateRAF) {
+			return;
+		}
+
+		overlayUpdateRAF = requestAnimationFrame(() => {
+			overlayUpdateRAF = 0;
+			updateOverlayNow();
+			scheduleOverlayLayout();
+		});
+	}
+
+	function updateOverlayNow() {
+		if (!historyRoot || !compiled?.rules?.length) {
+			return;
+		}
+
+		const active = getActiveChatAnchor(historyRoot);
+		if (!active) {
+			return;
+		}
+
+		const title = getChatTitleText(active);
+		const r = matchRule(title, compiled.rules);
+
+		const nextTitle = title || '';
+		const nextColor = r?.color || '#a7a7a7';
+
+		if (nextTitle === overlayTitle && nextColor === overlayColor) {
+			return;
+		}
+
+		overlayTitle = nextTitle;
+		overlayColor = nextColor;
+
+		overlay.style.setProperty('--cth-color', overlayColor);
+		const titleElement = overlay.querySelector('.cth-title');
+		if (titleElement) {
+			titleElement.textContent = overlayTitle;
+		}
+
+		overlay.style.display = overlayTitle ? 'block' : 'none';
+	}
+
+	function findComposerBox() {
+		// Most stable anchor: #prompt-textarea then closest background box
+		const pt = document.querySelector('#prompt-textarea');
+		if (!pt) {
+			return null;
+		}
+
+		return pt.closest('div.bg-token-bg-primary') || null;
+	}
+
+	let overlayLayoutRAF = 0;
+	function scheduleOverlayLayout() {
+		if (overlayLayoutRAF) {
+			return;
+		}
+
+		overlayLayoutRAF = requestAnimationFrame(() => {
+			overlayLayoutRAF = 0;
+			layoutOverlayNow();
+		});
+	}
+
+	function layoutOverlayNow() {
+		if (overlay.style.display === 'none') {
+			return;
+		}
+
+		const box = findComposerBox();
+		if (!box) {
+			overlay.style.display = 'none';
+			return;
+		}
+
+		const r = box.getBoundingClientRect();
+
+		// Set width/left first (so height is correct after wrap)
+		overlay.style.left = `${Math.round(r.left)}px`;
+		overlay.style.width = `${Math.round(r.width)}px`;
+
+		// Measure overlay height AFTER width is applied
+		const h = overlay.getBoundingClientRect().height;
+
+		// 0px gap: overlay bottom == composer box top
+		overlay.style.top = `${Math.round(r.top - h)}px`;
+	}
+
+	// Keep overlay aligned on scroll/resize (batched)
+	window.addEventListener('scroll', scheduleOverlayLayout, {passive: true});
+	window.addEventListener('resize', scheduleOverlayLayout, {passive: true});
+
+	// ---- Scroll-to-bottom action ----
+	let scrollContainer = null;
+
+	function getScrollContainer() {
+		if (scrollContainer && document.contains(scrollContainer)) {
+			return scrollContainer;
+		}
+
+		// Heuristic: find a conversation turn, then walk up to a scrollable parent.
+		const turn = document.querySelector('article[data-testid^="conversation-turn-"]');
+		let node = turn ? turn.parentElement : null;
+
+		while (node && node !== document.body) {
+			const s = getComputedStyle(node);
+			const oy = s.overflowY;
+			if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 20) {
+				scrollContainer = node;
+				return node;
+			}
+
+			node = node.parentElement;
+		}
+
+		scrollContainer = null;
+		return null;
+	}
+
+	function scrollToBottom() {
+		const sc = getScrollContainer();
+		if (sc) {
+			sc.scrollTo({top: sc.scrollHeight, behavior: 'smooth'});
+			return;
+		}
+
+		// Fallback
+		window.scrollTo({top: document.documentElement.scrollHeight, behavior: 'smooth'});
+	}
+
+	// ---- Chat turn pruning (maxChatTurns) ----
+	let pruneRAF = 0;
+
+	function schedulePrune() {
+		if (!compiled?.maxChatTurns) {
+			return;
+		}
+
+		if (pruneRAF) {
+			return;
+		}
+
+		pruneRAF = requestAnimationFrame(() => {
+			pruneRAF = 0;
+			pruneTurnsNow();
+		});
+	}
+
+	function pruneTurnsNow() {
+		const keep = compiled?.maxChatTurns | 0;
+		if (!keep) {
+			return;
+		}
+
+		const turns = document.querySelectorAll('article[data-testid^="conversation-turn-"]');
+		const extra = turns.length - keep;
+		if (extra <= 0) {
+			return;
+		}
+
+		// Remove oldest turns first
+		for (let i = 0; i < extra; i++) {
+			turns[i]?.remove();
+		}
+
+		log(`Pruned turns: kept=${keep}, removed=${extra}`);
+	}
+
+	// Observe DOM for new turns (fast: one observer + rAF batch)
+	const turnObserver = new MutationObserver(() => schedulePrune());
+
+	// ---- History observer ----
+	let historyObserver = null;
+
+	function attachHistoryObserver() {
+		if (!historyRoot) {
+			return;
+		}
+
+		if (historyObserver) {
+			historyObserver.disconnect();
+		}
+
+		historyObserver = new MutationObserver(() => {
+			scheduleSidebarScan();
+			scheduleOverlayUpdate();
+		});
+
+		historyObserver.observe(historyRoot, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ['data-active', 'aria-current', 'class'],
+		});
+	}
+
+	// ---- Boot ----
+	async function main() {
+		log('content.js loaded', {href: location.href, ua: navigator.userAgent});
+
+		injectStyleOnce();
+		ensureOverlay();
+
+		// Load config (try sync first; fallback to local)
+		const fromSync = storeSync ? await storageGet(storeSync, STORAGE_KEY) : {};
+		const fromLocal = (!fromSync?.[STORAGE_KEY] && storeLocal) ? await storageGet(storeLocal, STORAGE_KEY) : {};
+
+		const cfg = (fromSync?.[STORAGE_KEY] || fromLocal?.[STORAGE_KEY]) || null;
+
+		const keys = Object.keys(fromSync || {}).concat(Object.keys(fromLocal || {}));
+		log('storage.get() returned keys:', keys);
+
+		if (!cfg) {
+			log('No settings found. Early return by design.');
+			return;
+		}
+
+		compiled = compileConfig(cfg);
+		log('Config loaded', compiled);
+
+		if (compiled.rules.length === 0) {
+			log('No rules in config. Early return by design.');
+			return;
+		}
+
+		// Find history root (ChatGPT sidebar chat list)
+		historyRoot = document.querySelector('#history');
+		if (!historyRoot) {
+			// Fallback: sometimes history is lazily mounted
+			historyRoot = document.querySelector('#history') || null;
+		}
+
+		if (historyRoot) {
+			attachHistoryObserver();
+			scheduleSidebarScan();
+			scheduleOverlayUpdate();
+		} else {
+			warn('Sidebar history root not found (#history).');
+		}
+
+		// Overlay alignment now
+		scheduleOverlayLayout();
+
+		// Pruning setup
+		if (compiled.maxChatTurns > 0) {
+			turnObserver.observe(document.documentElement, {childList: true, subtree: true});
+			schedulePrune();
+		}
+
+		// If SPA navigation happens, #history can be recreated — rebind cheaply
+		const rootObserver = new MutationObserver(() => {
+			const hr = document.querySelector('#history');
+			if (hr && hr !== historyRoot) {
+				historyRoot = hr;
+				attachHistoryObserver();
+				scheduleSidebarScan();
+				scheduleOverlayUpdate();
+			}
+
+			scheduleOverlayLayout();
+		});
+		rootObserver.observe(document.documentElement, {childList: true, subtree: true});
+	}
+
+	main();
 })();
-

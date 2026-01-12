@@ -73,6 +73,17 @@ button.ghost{
   padding: 12px;
 }
 
+.section{
+  margin-bottom: 14px;
+}
+
+.sectionTitle{
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .table{
   width: 100%;
   border-collapse: collapse;
@@ -129,21 +140,41 @@ th{
   padding: 0;
 }
 
+.orderCell{
+  white-space: nowrap;
+  text-align: center;
+}
+
+.orderCell button{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  padding: 0;
+  margin: 0 2px;
+}
+
+.hideCell{
+  white-space: nowrap;
+}
+
+.checkboxWrap{
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.checkboxWrap input{
+  width: 16px;
+  height: 16px;
+}
+
 .hint{
   margin: 10px 0 0;
   color: var(--muted);
 }
 
-.toast{
-  margin-top: 10px;
-  color: var(--muted);
-  min-height: 18px;
-}
-
-code{
-  background: rgba(255,255,255,.07);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
-  border-radius: 8px;
-}
+.hintInline{
+  display: i
 

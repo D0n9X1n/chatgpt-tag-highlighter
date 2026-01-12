@@ -1,233 +1,412 @@
-// options.js
-// Options page for configuring tag rules (tag + match + color) saved into extension storage.
-//
-// Defaults:
-// - Only [TODO] + [BUG] are created by default.
-// - If storage has no config, we seed defaults so both options page and content.js can read them.
-//
-// Cross-browser:
-// - Works in Firefox (browser.* Promise API) and Chrome (chrome.* callback API).
+// Options.js
+// Stores ONLY hex colors (#RRGGBB) in storage. Order matters.
+// UI is driven by options.html template (#rowTemplate) + tbody (#rows).
 
 (() => {
-  "use strict";
+	'use strict';
 
-  const STORAGE_KEY = "tagHighlighterConfigV1";
+	const STORAGE_KEY = 'tagHighlighterConfigV1';
 
-  // Gruvbox-ish preset palette (names are case-insensitive)
-  const PALETTE = {
-    Green:        "#98971a",
-    BrightGreen:  "#b8bb26",
-    Aqua:         "#689d6a",
-    BrightAqua:   "#8ec07c",
-    Blue:         "#458588",
-    BrightBlue:   "#83a598",
-    Yellow:       "#d79921",
-    BrightYellow: "#fabd2f",
-    Orange:       "#d65d0e",
-    BrightOrange: "#fe8019",
-    Red:          "#cc241d",
-    BrightRed:    "#fb4934",
-    Purple:       "#b16286",
-    BrightPurple: "#d3869b",
-    Gray:         "#928374",
-  };
+	const API
+    = (typeof browser !== 'undefined' && browser?.storage)
+    	? browser
+    	: ((typeof chrome !== 'undefined' && chrome?.storage)
+    		? chrome
+    		: null);
+	if (!API) {
+		return;
+	}
 
-  // Default rules: only TODO + BUG (as requested)
-  const DEFAULT_RULES = [
-    { tag: "[TODO]", color: "BrightYellow", match: "startsWith" },
-    { tag: "[BUG]",  color: "BrightRed",    match: "startsWith" },
-  ];
+	const store = API.storage?.sync ?? API.storage?.local;
+	if (!store) {
+		return;
+	}
 
-  // Choose the extension API namespace (Firefox prefers `browser`, Chrome uses `chrome`)
-  const API =
-    (typeof browser !== "undefined" && browser?.storage) ? browser :
-    (typeof chrome !== "undefined" && chrome?.storage) ? chrome :
-    null;
+	const $ = id => document.getElementById(id);
 
-  if (!API) return;
+	const els = {
+		rows: $('rows'),
+		tpl: $('rowTemplate'),
+		addRow: $('addRow'),
+		reset: $('reset'),
+		save: $('save'),
+		maxChatTurns: $('maxChatTurns'),
+		toast: $('toast'),
+	};
 
-  // Use sync storage if available, otherwise fallback to local storage
-  const storageArea =
-    API.storage?.sync ? API.storage.sync :
-    API.storage?.local ? API.storage.local :
-    null;
+	// ---- Palette (display only; stored as hex) ----
+	const PALETTE = [
+		['Gruvbox Red', '#fb4934'],
+		['Gruvbox Green', '#b8bb26'],
+		['Gruvbox Yellow', '#fabd2f'],
+		['Gruvbox Blue', '#83a598'],
+		['Gruvbox Purple', '#d3869b'],
+		['Gruvbox Aqua', '#8ec07c'],
+		['Gruvbox Orange', '#fe8019'],
+		['Gruvbox Gray', '#928374'],
+		['Light Gray', '#a7a7a7'],
+		['White', '#ffffff'],
+	];
 
-  if (!storageArea) return;
+	// Legacy mapping: accepts old non-hex values, but we ALWAYS save hex.
+	const LEGACY = Object.freeze({
+		red: '#fb4934',
+		green: '#b8bb26',
+		yellow: '#fabd2f',
+		blue: '#83a598',
+		purple: '#d3869b',
+		aqua: '#8ec07c',
+		orange: '#fe8019',
+		gray: '#928374',
+		grey: '#928374',
+		brightred: '#fb4934',
+		brightgreen: '#b8bb26',
+		brightyellow: '#fabd2f',
+		brightblue: '#83a598',
+		brightpurple: '#d3869b',
+		brightaqua: '#8ec07c',
+		brightorange: '#fe8019',
+		gruvboxred: '#fb4934',
+		gruvboxgreen: '#b8bb26',
+		gruvboxyellow: '#fabd2f',
+		gruvboxblue: '#83a598',
+		gruvboxpurple: '#d3869b',
+		gruvboxaqua: '#8ec07c',
+		gruvboxorange: '#fe8019',
+		gruvboxgray: '#928374',
+		gruvboxgrey: '#928374',
+	});
 
-  // Promisified get/set that works for both browser (Promise) and chrome (callback) APIs
-  function storageGet(key) {
-    try {
-      const r = storageArea.get(key);
-      if (r && typeof r.then === "function") return r; // Firefox: Promise
-    } catch {}
-    return new Promise((resolve) => storageArea.get(key, resolve)); // Chrome: callback
-  }
+	const DEFAULT_CFG = () => ({
+		rules: [
+			{
+				tag: '[TODO]', match: 'startsWith', color: '#fabd2f', hide: false,
+			},
+			{
+				tag: '[BUG]', match: 'startsWith', color: '#fb4934', hide: false,
+			},
+		],
+		maxChatTurns: 0,
+	});
 
-  function storageSet(obj) {
-    try {
-      const r = storageArea.set(obj);
-      if (r && typeof r.then === "function") return r; // Firefox: Promise
-    } catch {}
-    return new Promise((resolve) => storageArea.set(obj, resolve)); // Chrome: callback
-  }
+	// ---- Storage helpers (promise + callback compatible) ----
+	const get = key =>
+		new Promise(resolve => {
+			try {
+				const r = store.get(key);
+				if (r?.then) {
+					r.then(resolve);
+				} else {
+					store.get(key, resolve);
+				}
+			} catch {
+				store.get(key, resolve);
+			}
+		});
 
-  // Basic validators/helpers
-  function isHex(s) {
-    return /^#[0-9a-fA-F]{6}$/.test(String(s || "").trim());
-  }
+	const set = object =>
+		new Promise(resolve => {
+			try {
+				const r = store.set(object);
+				if (r?.then) {
+					r.then(resolve);
+				} else {
+					store.set(object, resolve);
+				}
+			} catch {
+				store.set(object, resolve);
+			}
+		});
 
-  function normalizeColorName(name) {
-    const k = String(name || "").trim();
-    const hit = Object.keys(PALETTE).find((x) => x.toLowerCase() === k.toLowerCase());
-    return hit || null;
-  }
+	// ---- Color normalization (ALWAYS -> #rrggbb) ----
+	const isHex6 = s => /^#[\da-fA-F]{6}$/.test(String(s || '').trim());
+	const isHex3 = s => /^#[\da-fA-F]{3}$/.test(String(s || '').trim());
+	const normKey = s => String(s || '').toLowerCase().replaceAll(/[^a-z\d]/g, '');
 
-  function safeMatch(v) {
-    return String(v || "").toLowerCase() === "includes" ? "includes" : "startsWith";
-  }
+	const expandHex3 = h => {
+		const x = h.slice(1);
+		return (`#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}`).toLowerCase();
+	};
 
-  function toast(msg) {
-    const el = document.getElementById("toast");
-    if (!el) return;
-    el.textContent = msg;
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => (el.textContent = ""), 2000);
-  }
+	function toHex(value, fallback = '#999999') {
+		const v = String(value || '').trim();
+		if (!v) {
+			return fallback;
+		}
 
-  // Populate the preset color <select>
-  function buildColorSelectOptions(selectEl) {
-    selectEl.innerHTML = "";
-    for (const [name, hex] of Object.entries(PALETTE)) {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = `${name} (${hex})`;
-      selectEl.appendChild(opt);
-    }
-  }
+		if (isHex6(v)) {
+			return v.toLowerCase();
+		}
 
-  // Determine what color should be previewed:
-  // - If custom hex is valid, use it.
-  // - Otherwise use selected palette color.
-  function effectiveHexFromRow(row) {
-    const hex = row.querySelector(".hex")?.value?.trim() || "";
-    if (isHex(hex)) return hex;
+		if (isHex3(v)) {
+			return expandHex3(v);
+		}
 
-    const name = row.querySelector(".color")?.value || "";
-    return PALETTE[name] || "#999999";
-  }
+		const k = normKey(v);
+		if (LEGACY[k]) {
+			return LEGACY[k];
+		}
 
-  function updatePreview(row) {
-    const swatch = row.querySelector(".swatch");
-    if (!swatch) return;
-    swatch.style.background = effectiveHexFromRow(row);
-  }
+		// Allow palette label input
+		for (const element of PALETTE) {
+			if (normKey(element[0]) === k) {
+				return element[1];
+			}
+		}
 
-  // Add one editable row to the table
-  function addRow(rule = { tag: "", color: "Green", match: "startsWith" }) {
-    const tpl = document.getElementById("rowTemplate");
-    if (!tpl) return;
+		return fallback;
+	}
 
-    const row = tpl.content.firstElementChild.cloneNode(true);
+	const safeMatch = v => (String(v || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith');
+	const safeInt = (v, fb = 0) => {
+		const n = Number(v);
+		return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fb;
+	};
 
-    const tagInput = row.querySelector(".tag");
-    const matchSel = row.querySelector(".match");
-    const colorSel = row.querySelector(".color");
-    const hexInput = row.querySelector(".hex");
-    const delBtn = row.querySelector(".del");
+	// ---- Toast ----
+	let toastTimer = 0;
+	function toast(message) {
+		els.toast.textContent = message;
+		els.toast.classList.add('show');
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(() => {
+			els.toast.classList.remove('show');
+			els.toast.textContent = '';
+		}, 1400);
+	}
 
-    buildColorSelectOptions(colorSel);
+	// ---- Row creation / binding ----
+	function buildPaletteOptions(selectElement) {
+		// First option: Custom
+		selectElement.innerHTML = '';
+		const o0 = document.createElement('option');
+		o0.value = '';
+		o0.textContent = 'Custom…';
+		selectElement.append(o0);
 
-    // Tag + match
-    tagInput.value = String(rule.tag || "");
-    matchSel.value = safeMatch(rule.match);
+		for (const element of PALETTE) {
+			const o = document.createElement('option');
+			o.value = element[1];
+			o.textContent = `${element[0]} (${element[1]})`;
+			selectElement.append(o);
+		}
+	}
 
-    // Color: accept either palette name or hex
-    const colorRaw = String(rule.color || "");
-    if (isHex(colorRaw)) {
-      // If stored as hex, show it in custom hex field
-      hexInput.value = colorRaw;
-      // Keep a valid palette selection as a fallback
-      colorSel.value = "Green";
-    } else {
-      const name = normalizeColorName(colorRaw) || "Green";
-      colorSel.value = name;
-      hexInput.value = "";
-    }
+	function setPreview(tr, hex) {
+		const sw = tr.querySelector('.swatch');
+		sw.style.background = hex;
+		sw.style.boxShadow = `0 0 0 1px ${hex}55 inset`;
+	}
 
-    const onChange = () => updatePreview(row);
-    tagInput.addEventListener("input", onChange);
-    matchSel.addEventListener("change", onChange);
-    colorSel.addEventListener("change", onChange);
-    hexInput.addEventListener("input", onChange);
+	function setRowColor(tr, hex) {
+		const h = toHex(hex);
+		tr.querySelector('.hex').value = h;
+		// Select preset if matches, else "Custom…"
+		const sel = tr.querySelector('.color');
+		sel.value = [...sel.options].some(o => o.value === h) ? h : '';
+		setPreview(tr, h);
+	}
 
-    delBtn.addEventListener("click", () => row.remove());
+	function createRow(rule) {
+		const tr = els.tpl.content.firstElementChild.cloneNode(true);
 
-    updatePreview(row);
-    document.getElementById("rows").appendChild(row);
-  }
+		const tag = String(rule?.tag || '').trim();
+		const match = safeMatch(rule?.match);
+		const hide = rule?.hide === true;
 
-  // Read all rows from UI into rules array
-  function readRulesFromUI() {
-    const rows = [...document.querySelectorAll("#rows tr")];
-    const rules = [];
+		const sel = tr.querySelector('.color');
+		buildPaletteOptions(sel);
 
-    for (const row of rows) {
-      const tag = row.querySelector(".tag")?.value?.trim() || "";
-      if (!tag) continue;
+		tr.querySelector('.tag').value = tag;
+		tr.querySelector('.match').value = match;
+		tr.querySelector('.hide').checked = hide;
 
-      const match = safeMatch(row.querySelector(".match")?.value);
+		setRowColor(tr, rule?.color);
 
-      // Save custom hex if valid; otherwise save palette name
-      const hex = row.querySelector(".hex")?.value?.trim() || "";
-      let color;
-      if (isHex(hex)) color = hex;
-      else color = row.querySelector(".color")?.value || "Green";
+		return tr;
+	}
 
-      rules.push({ tag, match, color });
-    }
+	// ---- Render ----
+	function clearRows() {
+		els.rows.textContent = '';
+	}
 
-    return rules;
-  }
+	function render(cfg) {
+		clearRows();
+		els.maxChatTurns.value = String(safeInt(cfg.maxChatTurns, 0));
 
-  // Seed defaults into storage (only when missing/empty)
-  async function seedIfMissing() {
-    const data = await storageGet(STORAGE_KEY);
-    const rules = data?.[STORAGE_KEY]?.rules;
-    if (Array.isArray(rules) && rules.length > 0) return { rules };
-    const cfg = { rules: DEFAULT_RULES };
-    await storageSet({ [STORAGE_KEY]: cfg });
-    return cfg;
-  }
+		const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
+		for (const rule of rules) {
+			els.rows.append(createRow(rule));
+		}
+	}
 
-  async function load() {
-    const cfg = await seedIfMissing();
+	// ---- Read UI -> config (enforce hex) ----
+	function collectConfig() {
+		const trs = els.rows.querySelectorAll('tr');
+		const rules = [];
 
-    const rules = Array.isArray(cfg?.rules) && cfg.rules.length ? cfg.rules : DEFAULT_RULES;
+		for (const tr of trs) {
+			const tag = String(tr.querySelector('.tag').value || '').trim();
+			if (!tag) {
+				continue;
+			}
 
-    document.getElementById("rows").innerHTML = "";
-    rules.forEach((r) => addRow(r));
-    toast("Loaded.");
-  }
+			rules.push({
+				tag,
+				match: safeMatch(tr.querySelector('.match').value),
+				color: toHex(tr.querySelector('.hex').value, '#999999'), // ONLY hex persisted
+				hide: tr.querySelector('.hide').checked === true,
+			});
+		}
 
-  async function save() {
-    const rules = readRulesFromUI();
-    await storageSet({ [STORAGE_KEY]: { rules } });
-    toast("Saved.");
-  }
+		return {
+			rules,
+			maxChatTurns: safeInt(els.maxChatTurns.value, 0),
+		};
+	}
 
-  async function reset() {
-    document.getElementById("rows").innerHTML = "";
-    DEFAULT_RULES.forEach((r) => addRow(r));
-    await storageSet({ [STORAGE_KEY]: { rules: DEFAULT_RULES } });
-    toast("Reset to default.");
-  }
+	// ---- Event delegation for best performance ----
+	els.rows.addEventListener('change', e => {
+		const tr = e.target.closest('tr');
+		if (!tr) {
+			return;
+		}
 
-  // Wire up buttons
-  document.getElementById("addRow").addEventListener("click", () => addRow());
-  document.getElementById("save").addEventListener("click", save);
-  document.getElementById("reset").addEventListener("click", reset);
+		if (e.target.classList.contains('color')) {
+			// Preset selected -> update hex + preview
+			const hex = e.target.value ? toHex(e.target.value) : toHex(tr.querySelector('.hex').value);
+			setRowColor(tr, hex);
+			return;
+		}
 
-  // Initial load
-  load();
+		if (e.target.classList.contains('hex')) {
+			// Normalize on change for instant feedback
+			setRowColor(tr, e.target.value);
+		}
+	});
+
+	els.rows.addEventListener('click', e => {
+		const tr = e.target.closest('tr');
+		if (!tr) {
+			return;
+		}
+
+		if (e.target.classList.contains('del')) {
+			tr.remove();
+			return;
+		}
+
+		if (e.target.classList.contains('moveUp')) {
+			const previous = tr.previousElementSibling;
+			if (previous) {
+				els.rows.insertBefore(tr, previous);
+			}
+
+			return;
+		}
+
+		if (e.target.classList.contains('moveDown')) {
+			const next = tr.nextElementSibling;
+			if (next) {
+				els.rows.insertBefore(next, tr);
+			}
+		}
+	});
+
+	// Normalize hex on blur (covers paste + partial input)
+	els.rows.addEventListener('blur', e => {
+		if (!e.target.classList.contains('hex')) {
+			return;
+		}
+
+		const tr = e.target.closest('tr');
+		if (!tr) {
+			return;
+		}
+
+		setRowColor(tr, e.target.value);
+	}, true);
+
+	// ---- Buttons ----
+	els.addRow.addEventListener('click', () => {
+		const tr = createRow({
+			tag: '', match: 'startsWith', color: PALETTE[0][1], hide: false,
+		});
+		els.rows.append(tr);
+		tr.querySelector('.tag').focus();
+	});
+
+	els.reset.addEventListener('click', async () => {
+		const cfg = DEFAULT_CFG();
+		// Persist defaults as hex
+		await set({[STORAGE_KEY]: cfg});
+		render(cfg);
+		toast('Reset ✓');
+	});
+
+	els.save.addEventListener('click', async () => {
+		const cfg = collectConfig();
+		if (cfg.rules.length === 0) {
+			toast('No rules to save');
+			return;
+		}
+
+		// Final enforcement: make sure we only save #RRGGBB
+		for (let i = 0; i < cfg.rules.length; i++) {
+			cfg.rules[i].color = toHex(cfg.rules[i].color);
+		}
+
+		await set({[STORAGE_KEY]: cfg});
+		// Re-render to reflect normalized values in UI
+		render(cfg);
+		toast('Saved ✓');
+	});
+
+	// Ctrl/Cmd+S => Save
+	globalThis.addEventListener('keydown', e => {
+		if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 's') {
+			e.preventDefault();
+			els.save.click();
+		}
+	});
+
+	// ---- Load + migrate ----
+	async function init() {
+		const data = await get(STORAGE_KEY);
+		let cfg = data?.[STORAGE_KEY];
+
+		if (!cfg || !Array.isArray(cfg.rules) || cfg.rules.length === 0) {
+			cfg = DEFAULT_CFG();
+			await set({[STORAGE_KEY]: cfg});
+			render(cfg);
+			return;
+		}
+
+		// Migrate: force all colors to hex and persist back
+		const migrated = {
+			rules: [],
+			maxChatTurns: safeInt(cfg.maxChatTurns, 0),
+		};
+
+		for (let i = 0; i < cfg.rules.length; i++) {
+			const r = cfg.rules[i] || {};
+			const tag = String(r.tag || '').trim();
+			if (!tag) {
+				continue;
+			}
+
+			migrated.rules.push({
+				tag,
+				match: safeMatch(r.match),
+				color: toHex(r.color, '#999999'),
+				hide: r.hide === true,
+			});
+		}
+
+		await set({[STORAGE_KEY]: migrated});
+		render(migrated);
+	}
+
+	init();
 })();
-
