@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CTH Unit Tests</title>
+  <style>
+    body { font-family: monospace; margin: 2em; background: #1d2021; color: #ebdbb2; }
+    .pass { color: #b8bb26; }
+    .fail { color: #fb4934; font-weight: bold; }
+    h2 { color: #83a598; margin-top: 1.5em; }
+    #summary { font-size: 1.2em; margin-top: 2em; padding: 1em; border-radius: 8px; }
+    #summary.all-pass { background: #3c3836; border: 2px solid #b8bb26; }
+    #summary.has-fail { background: #3c3836; border: 2px solid #fb4934; }
+  </style>
+</head>
+<body>
+  <h1>ChatGPT Tag Highlighter — Unit Tests</h1>
+  <div id="results"></div>
+  <div id="summary"></div>
+
+  <script>
+  // ========================================================
+  // Extract pure functions from content.js / options.js
+  // (duplicated here to test without IIFE / extension API)
+  // ========================================================
+
+  const LEGACY = Object.freeze({
+    red: '#fb4934', green: '#b8bb26', yellow: '#fabd2f', blue: '#83a598',
+    purple: '#d3869b', aqua: '#8ec07c', orange: '#fe8019', gray: '#928374',
+    grey: '#928374', brightred: '#fb4934', brightgreen: '#b8bb26',
+    brightyellow: '#fabd2f', brightblue: '#83a598', brightpurple: '#d3869b',
+    brightaqua: '#8ec07c', brightorange: '#fe8019', gruvboxred: '#fb4934',
+    gruvboxgreen: '#b8bb26', gruvboxyellow: '#fabd2f', gruvboxblue: '#83a598',
+    gruvboxpurple: '#d3869b', gruvboxaqua: '#8ec07c', gruvboxorange: '#fe8019',
+    gruvboxgray: '#928374', gruvboxgrey: '#928374',
+  });
+
+  const isHex6 = s => /^#[\da-fA-F]{6}$/.test(String(s || '').trim());
+  const isHex3 = s => /^#[\da-fA-F]{3}$/.test(String(s || '').trim());
+  const normKey = s => String(s || '').toLowerCase().replaceAll(/[^a-z\d]/g, '');
+  const expandHex3 = h => {
+    const x = h.slice(1);
+    return (`#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}`).toLowerCase();
+  };
+
+  function toHex(value, fallback = '#a7a7a7') {
+    const v = String(value || '').trim();
+    if (!v) return fallback;
+    if (isHex6(v)) return v.toLowerCase();
+    if (isHex3(v)) return expandHex3(v);
+    const k = normKey(v);
+    return LEGACY[k] || fallback;
+  }
+
+  function hexToRgba(hex, a) {
+    const h = toHex(hex);
+    const r = Number.parseInt(h.slice(1, 3), 16) || 0;
+    const g = Number.parseInt(h.slice(3, 5), 16) || 0;
+    const b = Number.parseInt(h.slice(5, 7), 16) || 0;
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function compileConfig(rawCfg) {
+    const cfg = rawCfg && typeof rawCfg === 'object' ? rawCfg : null;
+    const rulesIn = Array.isArray(cfg?.rules) ? cfg.rules : [];
+    const rules = [];
+    for (const element of rulesIn) {
+      const r = element || {};
+      const tag = String(r.tag || '').trim();
+      if (!tag) continue;
+      const match = String(r.match || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith';
+      const color = toHex(r.color, '#a7a7a7');
+      const hide = r.hide === true;
+      rules.push({ tag, match, color, hide });
+    }
+    const maxChatTurns = Number.isFinite(Number(cfg?.maxChatTurns))
+      ? Math.max(0, Math.floor(Number(cfg.maxChatTurns))) : 0;
+    const hideNavBar = cfg?.hideNavBar !== false;
+    return { rules, maxChatTurns, hideNavBar };
+  }
+
+  function matchRule(title, rules) {
+    for (const r of rules) {
+      if (r.match === 'startsWith') {
+        if (title.startsWith(r.tag)) return r;
+      } else if (title.includes(r.tag)) return r;
+    }
+    return null;
+  }
+
+  // ========================================================
+  // Test runner
+  // ========================================================
+  let passed = 0, failed = 0;
+  const results = document.getElementById('results');
+
+  function group(name) {
+    const h = document.createElement('h2');
+    h.textContent = name;
+    results.appendChild(h);
+  }
+
+  function assert(description, actual, expected) {
+    const ok = JSON.stringify(actual) === JSON.stringify(expected);
+    const div = document.createElement('div');
+    if (ok) {
+      passed++;
+      div.className = 'pass';
+      div.textContent = `✓ ${description}`;
+    } else {
+      failed++;
+      div.className = 'fail';
+      div.textContent = `✗ ${description} — expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`;
+    }
+    results.appendChild(div);
+  }
+
+  // ========================================================
+  // Tests
+  // ========================================================
+
+  // ---- toHex ----
+  group('toHex — hex passthrough');
+  assert('6-digit hex lowercase', toHex('#fabd2f'), '#fabd2f');
+  assert('6-digit hex uppercase normalized', toHex('#FABD2F'), '#fabd2f');
+  assert('6-digit hex mixed case', toHex('#FaBd2F'), '#fabd2f');
+
+  group('toHex — 3-digit hex expansion');
+  assert('#abc expands to #aabbcc', toHex('#abc'), '#aabbcc');
+  assert('#FFF expands to #ffffff', toHex('#FFF'), '#ffffff');
+  assert('#123 expands to #112233', toHex('#123'), '#112233');
+
+  group('toHex — legacy color names');
+  assert('red → #fb4934', toHex('red'), '#fb4934');
+  assert('green → #b8bb26', toHex('green'), '#b8bb26');
+  assert('gruvboxYellow → #fabd2f', toHex('gruvboxYellow'), '#fabd2f');
+  assert('BrightBlue → #83a598', toHex('BrightBlue'), '#83a598');
+  assert('grey → #928374', toHex('grey'), '#928374');
+  assert('gray → #928374', toHex('gray'), '#928374');
+
+  group('toHex — fallback');
+  assert('empty string → fallback', toHex(''), '#a7a7a7');
+  assert('null → fallback', toHex(null), '#a7a7a7');
+  assert('undefined → fallback', toHex(undefined), '#a7a7a7');
+  assert('unknown name → fallback', toHex('nope'), '#a7a7a7');
+  assert('custom fallback', toHex('nope', '#111111'), '#111111');
+
+  group('toHex — edge cases');
+  assert('whitespace trimmed', toHex('  #fabd2f  '), '#fabd2f');
+  assert('invalid hex length → fallback', toHex('#abcde'), '#a7a7a7');
+  assert('4-digit not valid → fallback', toHex('#abcd'), '#a7a7a7');
+
+  // ---- isHex6 / isHex3 ----
+  group('isHex6');
+  assert('#aabbcc is hex6', isHex6('#aabbcc'), true);
+  assert('#AABBCC is hex6', isHex6('#AABBCC'), true);
+  assert('#abc is NOT hex6', isHex6('#abc'), false);
+  assert('no hash is NOT hex6', isHex6('aabbcc'), false);
+
+  group('isHex3');
+  assert('#abc is hex3', isHex3('#abc'), true);
+  assert('#ABC is hex3', isHex3('#ABC'), true);
+  assert('#aabbcc is NOT hex3', isHex3('#aabbcc'), false);
+
+  // ---- hexToRgba ----
+  group('hexToRgba');
+  assert('#fb4934 at 0.2', hexToRgba('#fb4934', 0.2), 'rgba(251,73,52,0.2)');
+  assert('#000000 at 1', hexToRgba('#000000', 1), 'rgba(0,0,0,1)');
+  assert('#ffffff at 0.5', hexToRgba('#ffffff', 0.5), 'rgba(255,255,255,0.5)');
+  assert('legacy name resolved', hexToRgba('red', 0.1), 'rgba(251,73,52,0.1)');
+
+  // ---- compileConfig ----
+  group('compileConfig — valid config');
+  const cfg1 = compileConfig({
+    rules: [
+      { tag: '[TODO]', match: 'startsWith', color: '#fabd2f', hide: false },
+      { tag: '[BUG]', match: 'includes', color: 'red', hide: true },
+    ],
+    maxChatTurns: 10,
+    hideNavBar: false,
+  });
+  assert('2 rules compiled', cfg1.rules.length, 2);
+  assert('rule 0 tag', cfg1.rules[0].tag, '[TODO]');
+  assert('rule 0 match', cfg1.rules[0].match, 'startsWith');
+  assert('rule 0 color is hex', cfg1.rules[0].color, '#fabd2f');
+  assert('rule 0 hide', cfg1.rules[0].hide, false);
+  assert('rule 1 color normalized from legacy', cfg1.rules[1].color, '#fb4934');
+  assert('rule 1 hide', cfg1.rules[1].hide, true);
+  assert('maxChatTurns', cfg1.maxChatTurns, 10);
+  assert('hideNavBar false', cfg1.hideNavBar, false);
+
+  group('compileConfig — defaults & edge cases');
+  const cfg2 = compileConfig(null);
+  assert('null config → empty rules', cfg2.rules.length, 0);
+  assert('null config → maxChatTurns 0', cfg2.maxChatTurns, 0);
+  assert('null config → hideNavBar defaults true', cfg2.hideNavBar, true);
+
+  const cfg3 = compileConfig({ rules: [{ tag: '', color: '#aaa' }] });
+  assert('empty tag skipped', cfg3.rules.length, 0);
+
+  const cfg4 = compileConfig({ rules: [{ tag: '[X]' }] });
+  assert('missing match defaults to startsWith', cfg4.rules[0].match, 'startsWith');
+  assert('missing color gets fallback', cfg4.rules[0].color, '#a7a7a7');
+  assert('missing hide defaults false', cfg4.rules[0].hide, false);
+
+  const cfg5 = compileConfig({ maxChatTurns: -5 });
+  assert('negative maxChatTurns clamped to 0', cfg5.maxChatTurns, 0);
+
+  const cfg6 = compileConfig({ maxChatTurns: 3.7 });
+  assert('float maxChatTurns floored', cfg6.maxChatTurns, 3);
+
+  group('compileConfig — hideNavBar defaults');
+  assert('undefined → true', compileConfig({}).hideNavBar, true);
+  assert('true → true', compileConfig({ hideNavBar: true }).hideNavBar, true);
+  assert('false → false', compileConfig({ hideNavBar: false }).hideNavBar, false);
+
+  // ---- matchRule ----
+  group('matchRule — startsWith');
+  const rules = [
+    { tag: '[TODO]', match: 'startsWith', color: '#fabd2f', hide: false },
+    { tag: '[BUG]', match: 'startsWith', color: '#fb4934', hide: false },
+    { tag: 'debug', match: 'includes', color: '#83a598', hide: false },
+  ];
+  assert('matches [TODO] prefix', matchRule('[TODO] Fix build', rules)?.tag, '[TODO]');
+  assert('matches [BUG] prefix', matchRule('[BUG] Crash on login', rules)?.tag, '[BUG]');
+  assert('no match returns null', matchRule('Random chat', rules), null);
+
+  group('matchRule — includes');
+  assert('includes match mid-string', matchRule('My debug session', rules)?.tag, 'debug');
+  assert('includes match at start', matchRule('debug something', rules)?.tag, 'debug');
+
+  group('matchRule — order matters');
+  const overlapping = [
+    { tag: '[T', match: 'startsWith', color: '#aaa', hide: false },
+    { tag: '[TODO]', match: 'startsWith', color: '#bbb', hide: false },
+  ];
+  assert('first matching rule wins', matchRule('[TODO] Fix it', overlapping)?.color, '#aaa');
+
+  group('matchRule — edge cases');
+  assert('empty title', matchRule('', rules), null);
+  assert('empty rules', matchRule('[TODO] test', []), null);
+
+  // ---- Summary ----
+  const summary = document.getElementById('summary');
+  const total = passed + failed;
+  summary.textContent = `${passed}/${total} passed, ${failed} failed`;
+  summary.className = failed === 0 ? 'all-pass' : 'has-fail';
+
+  // Expose for Playwright assertions
+  window.__testResults = { passed, failed, total };
+  </script>
+</body>
+</html>

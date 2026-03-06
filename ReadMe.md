@@ -253,7 +253,18 @@ page.goto('https://chatgpt.com')
 | Options page | Load options, modify rules, save | Config in storage matches UI state |
 | Migration | Start with old config (missing fields) | `background.js` adds missing fields |
 
-These tests can be scripted with Playwright + `pytest` or `@playwright/test`. Since the project has no npm/build tooling, a standalone Python script in `tests/` is the lightest approach.
+The test suite lives in `tests/` and can be run with:
+
+```sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install playwright pytest
+playwright install chromium
+pytest tests/test_extension.py -v
+```
+
+Tests include:
+- **Unit tests** (`tests/unit_test.html`) — 40+ assertions for color normalization, config compilation, and rule matching, run in-browser via Playwright
+- **E2E tests** (`tests/test_extension.py`) — options page rendering, config persistence, save/reset, add/delete rows, migration of missing fields
 
 ## License
 See [License](./LICENSE)

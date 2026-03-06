@@ -240,7 +240,18 @@ page.goto('https://chatgpt.com')
 | 设置页 | 加载设置、修改规则、保存 | storage 中配置与 UI 一致 |
 | 配置迁移 | 使用旧配置（缺少字段）启动 | `background.js` 自动补全缺失字段 |
 
-这些测试可以用 Playwright + `pytest` 或 `@playwright/test` 编写。由于项目无 npm/构建工具，放在 `tests/` 目录下的独立 Python 脚本是最轻量的方案。
+测试套件位于 `tests/`，运行方式：
+
+```sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install playwright pytest
+playwright install chromium
+pytest tests/test_extension.py -v
+```
+
+包含：
+- **单元测试** (`tests/unit_test.html`) — 40+ 个断言，测试颜色转换、配置编译、规则匹配，通过 Playwright 在浏览器中运行
+- **E2E 测试** (`tests/test_extension.py`) — 设置页渲染、配置持久化、保存/重置、添加/删除规则、缺失字段迁移
 
 ## License
 
