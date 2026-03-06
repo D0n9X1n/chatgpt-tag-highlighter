@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tag Highlighter",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Highlight ChatGPT sidebar chats by tags like [TODO] with custom colors.",
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -13,17 +13,20 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
   }
 }
-
