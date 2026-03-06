@@ -33,6 +33,8 @@
   - 只处理侧边栏会话列表
   - 增量更新（新出现/变更的才处理）
   - 批量刷新，减少 DOM 操作
+-  **隐藏右侧导航栏**：加快长对话的加载速度
+-  **对话轮次剪裁**：限制可见轮次数，减少 DOM 开销
 
 ---
 
@@ -118,13 +120,127 @@
 ### 没有任何高亮效果？
 - 确认聊天标题里确实有标签（例如 `[TODO] ...`）
 - 打开设置页确认规则存在
-- 修改设置后建议刷新一次 ChatGPT 页面
+- 设置现在实时生效 —— 无需刷新页面
 
 ### 设置页崩溃/白屏？
 - 不要用 `file://...` 直接打开 `options.html`
 - 必须从扩展的 **Options / Preferences** 打开（这样才有 `storage` API）
 
 ---
+
+## 开发与测试指南
+
+本节帮助贡献者（人类或 AI Agent）理解如何修改和测试代码。
+
+### 架构概览
+
+所有运行时代码在 `src/`。Chrome 和 Firefox 共享相同的 JS/HTML/CSS，但使用不同的 manifest：
+- `src/manifest.chrome.json` — Chrome（Manifest V3，`service_worker`）
+- `src/manifest.firefox.json` — Firefox（Manifest V3，`scripts` 数组 + gecko ID）
+
+关键文件：
+| 文件 | 职责 |
+|------|------|
+| `content.js` | 注入 `chatgpt.com` 的内容脚本。扫描侧边栏、应用高亮、隐藏会话、剪裁对话轮次、管理浮层。 |
+| `background.js` | Service Worker。安装时初始化默认配置，迁移配置结构。 |
+| `options.js` + `options.html` | 设置页。渲染标签规则，持久化配置。 |
+
+### 数据流
+
+所有脚本共享存储键 `tagHighlighterConfigV1`：
+```json
+{
+  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false }],
+  "maxChatTurns": 0,
+  "hideNavBar": true
+}
+```
+- `background.js` 安装时初始化默认值并迁移
+- `options.js` 读取、编辑、保存配置
+- `content.js` 加载时读取配置，**并监听 `storage.onChanged` 实时更新**
+
+### 修改代码
+
+1. **在 `src/` 中编辑** —— 这是唯一的源码目录
+2. **以未打包扩展加载 `src/`** —— Chrome 在 `chrome://extensions` 加载，Firefox 在 `about:debugging` 加载
+3. **编辑后重新加载扩展**，然后刷新 ChatGPT 标签页
+4. **同步到 `dist/`**：`publish.sh` 会自动处理，或手动复制：
+   ```sh
+   for f in content.js background.js options.js options.html options.css; do
+     cp src/$f dist/chrome/$f && cp src/$f dist/firefox/$f
+   done
+   ```
+
+### 添加新配置字段
+
+添加新字段（如 `hideNavBar`）时需修改：
+1. **`background.js`**：添加默认值，在 `seedOrMigrate()` 中添加迁移检查
+2. **`options.html`**：添加 UI 元素（input/checkbox）
+3. **`options.js`**：添加到 `els`、`DEFAULT_CFG()`、`render()`、`collectConfig()` 和 `init()` 迁移
+4. **`content.js`**：在 `compileConfig()` 中处理，并确保 `storage.onChanged` 处理器能响应
+
+### 使用 Playwright 测试
+
+由于本项目是无构建步骤的浏览器扩展，测试通过 Playwright E2E 自动化完成：
+
+```sh
+# 初始化（仅需一次）
+python3 -m venv /tmp/pw-env
+source /tmp/pw-env/bin/activate
+pip install playwright
+playwright install chromium
+```
+
+```python
+# 启动 Chrome 并加载扩展
+from playwright.sync_api import sync_playwright
+
+pw = sync_playwright().start()
+ext_path = '/path/to/chatgpt-tag-highligher/dist/chrome'
+profile_dir = '/tmp/pw-test-profile'
+
+context = pw.chromium.launch_persistent_context(
+    profile_dir,
+    headless=False,
+    args=[
+        f'--disable-extensions-except={ext_path}',
+        f'--load-extension={ext_path}',
+        '--disable-blink-features=AutomationControlled',
+    ],
+    ignore_default_args=['--enable-automation'],
+)
+
+page = context.pages[0]
+page.goto('https://chatgpt.com')
+# ... 交互并验证
+```
+
+**关键测试模式：**
+
+1. **通过 storage 设置配置**（在扩展页面上下文中）：
+   ```js
+   chrome.storage.sync.set({tagHighlighterConfigV1: config}, callback)
+   ```
+
+2. **验证高亮** —— 检查侧边栏链接的 `data-cth="1"` 属性
+3. **验证隐藏** —— 检查 `data-cth-hidden="1"` 属性
+4. **验证对话剪裁** —— 计数 `article[data-testid^="conversation-turn-"]` 元素
+5. **验证导航栏隐藏** —— 检查 `html.cth-hide-navbar` 类名
+6. **实时配置重载** —— 通过 storage 修改配置，等待 1–2 秒，无需 `page.reload()` 即可验证 DOM 更新
+
+### 未来：自动化测试套件
+
+| 测试项 | 操作 | 断言 |
+|------|--------|-----------|
+| 侧边栏高亮 | 设置规则，打开 ChatGPT | 匹配的链接有 `data-cth="1"` |
+| 隐藏标签 | 设置 `hide: true` | 匹配的链接有 `data-cth-hidden="1"` |
+| 实时配置重载 | 通过 `storage.onChanged` 修改配置 | DOM 无需刷新即更新 |
+| 对话剪裁 | 在 100+ 轮次对话中设置 `maxChatTurns: 10` | `article` 数量 ≤ 10 |
+| 导航栏隐藏 | 设置 `hideNavBar: true` | `html.cth-hide-navbar` 类名存在 |
+| 设置页 | 加载设置、修改规则、保存 | storage 中配置与 UI 一致 |
+| 配置迁移 | 使用旧配置（缺少字段）启动 | `background.js` 自动补全缺失字段 |
+
+这些测试可以用 Playwright + `pytest` 或 `@playwright/test` 编写。由于项目无 npm/构建工具，放在 `tests/` 目录下的独立 Python 脚本是最轻量的方案。
 
 ## License
 

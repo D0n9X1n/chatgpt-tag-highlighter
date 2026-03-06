@@ -31,6 +31,7 @@
 		reset: $('reset'),
 		save: $('save'),
 		maxChatTurns: $('maxChatTurns'),
+		hideNavBar: $('hideNavBar'),
 		toast: $('toast'),
 	};
 
@@ -87,6 +88,7 @@
 			},
 		],
 		maxChatTurns: 0,
+		hideNavBar: true,
 	});
 
 	// ---- Storage helpers (promise + callback compatible) ----
@@ -234,6 +236,7 @@
 	function render(cfg) {
 		clearRows();
 		els.maxChatTurns.value = String(safeInt(cfg.maxChatTurns, 0));
+		els.hideNavBar.checked = cfg.hideNavBar !== false;
 
 		const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
 		for (const rule of rules) {
@@ -263,6 +266,7 @@
 		return {
 			rules,
 			maxChatTurns: safeInt(els.maxChatTurns.value, 0),
+			hideNavBar: els.hideNavBar.checked,
 		};
 	}
 
@@ -387,6 +391,7 @@
 		const migrated = {
 			rules: [],
 			maxChatTurns: safeInt(cfg.maxChatTurns, 0),
+			hideNavBar: cfg.hideNavBar !== false,
 		};
 
 		for (let i = 0; i < cfg.rules.length; i++) {

@@ -134,6 +134,13 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 }
 `;
 
+		// Right-side turn navigation bar (minimap) — hidden when config says so
+		const hideNavBarCss = `
+html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
+  display: none !important;
+}
+`;
+
 		// Sidebar highlight + hide styles (bigger highlighted area)
 		const sidebarCss = `
 /* Hide chats matched by hide=true rules */
@@ -233,7 +240,7 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${sidebarCss}\n${overlayCss}`;
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -319,7 +326,12 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 			? Math.max(0, Math.floor(Number(cfg.maxChatTurns)))
 			: 0;
 
-		return {rules, maxChatTurns};
+		const hideNavBar = cfg?.hideNavBar !== false; // default true
+
+		// Toggle CSS class for nav bar visibility
+		document.documentElement.classList.toggle('cth-hide-navbar', hideNavBar);
+
+		return {rules, maxChatTurns, hideNavBar};
 	}
 
 	function matchRule(title, rules) {
@@ -341,7 +353,7 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 	let historyRoot = null;
 	let compiled = null;
 
-	const itemCache = new WeakMap(); // A -> lastTitle
+	let itemCache = new WeakMap();
 	let sidebarRAF = 0;
 
 	function scheduleSidebarScan() {
@@ -675,5 +687,39 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 		rootObserver.observe(document.documentElement, {childList: true, subtree: true});
 	}
 
+	// ---- Live-reload config when options page saves changes ----
+	function listenForConfigChanges() {
+		const handler = (changes, areaName) => {
+			if (!changes[STORAGE_KEY]) return;
+			const newCfg = changes[STORAGE_KEY].newValue;
+			if (!newCfg) return;
+
+			log('storage.onChanged fired — reloading config', {areaName});
+			compiled = compileConfig(newCfg);
+			itemCache = new WeakMap();
+
+			if (!historyRoot) {
+				historyRoot = document.querySelector('#history') || null;
+			}
+
+			if (historyRoot) {
+				scheduleSidebarScan();
+				scheduleOverlayUpdate();
+			}
+
+			scheduleOverlayLayout();
+
+			if (compiled.maxChatTurns > 0) {
+				turnObserver.observe(document.documentElement, {childList: true, subtree: true});
+				schedulePrune();
+			} else {
+				turnObserver.disconnect();
+			}
+		};
+
+		API.storage.onChanged.addListener(handler);
+	}
+
 	main();
+	listenForConfigChanges();
 })();

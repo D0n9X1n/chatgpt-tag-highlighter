@@ -20,6 +20,7 @@
 	];
 
 	const DEFAULT_MAX_CHAT_TURNS = 0;
+	const DEFAULT_HIDE_NAV_BAR = true;
 
 	const API
     = (typeof browser !== 'undefined' && browser?.runtime)
@@ -116,7 +117,7 @@
 
 			if (!existing) {
 				await storageSet({
-					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS},
+					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR},
 				});
 				return;
 			}
@@ -127,15 +128,21 @@
         	? safeInt(existing.maxChatTurns, DEFAULT_MAX_CHAT_TURNS)
         	: DEFAULT_MAX_CHAT_TURNS;
 
+			const hideNavBar
+        = (typeof existing.hideNavBar === 'boolean')
+        	? existing.hideNavBar
+        	: DEFAULT_HIDE_NAV_BAR;
+
 			// Only write if missing/invalid fields.
 			const needWrite
         = !Array.isArray(existing.rules)
         	|| existing.rules.length === 0
         	|| typeof existing.maxChatTurns !== 'number'
+        	|| typeof existing.hideNavBar !== 'boolean'
         	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean');
 
 			if (needWrite) {
-				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns}});
+				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar}});
 			}
 		} catch {
 			// Best-effort: do not block extension startup.
