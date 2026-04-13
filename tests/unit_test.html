@@ -77,7 +77,9 @@
     const maxChatTurns = Number.isFinite(Number(cfg?.maxChatTurns))
       ? Math.max(0, Math.floor(Number(cfg.maxChatTurns))) : 0;
     const hideNavBar = cfg?.hideNavBar !== false;
-    return { rules, maxChatTurns, hideNavBar };
+    const dimUntagged = cfg?.dimUntagged === true;
+    const showBadge = cfg?.showBadge !== false; // default true
+    return { rules, maxChatTurns, hideNavBar, dimUntagged, showBadge };
   }
 
   function matchRule(title, rules) {
@@ -214,6 +216,18 @@
   assert('undefined → true', compileConfig({}).hideNavBar, true);
   assert('true → true', compileConfig({ hideNavBar: true }).hideNavBar, true);
   assert('false → false', compileConfig({ hideNavBar: false }).hideNavBar, false);
+
+  // ---- compileConfig — dimUntagged ----
+  group('compileConfig — dimUntagged');
+  assert('dimUntagged false by default', compileConfig({}).dimUntagged, false);
+  assert('dimUntagged true when set', compileConfig({ dimUntagged: true }).dimUntagged, true);
+  assert('dimUntagged false when false', compileConfig({ dimUntagged: false }).dimUntagged, false);
+
+  // ---- compileConfig — showBadge ----
+  group('compileConfig — showBadge');
+  assert('showBadge true by default', compileConfig({}).showBadge, true);
+  assert('showBadge false when set', compileConfig({ showBadge: false }).showBadge, false);
+  assert('showBadge true when true', compileConfig({ showBadge: true }).showBadge, true);
 
   // ---- compileConfig — overlay field ----
   group('compileConfig — overlay field');

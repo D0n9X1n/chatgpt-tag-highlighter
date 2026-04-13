@@ -32,6 +32,8 @@
 		save: $('save'),
 		maxChatTurns: $('maxChatTurns'),
 		hideNavBar: $('hideNavBar'),
+		dimUntagged: $('dimUntagged'),
+		showBadge: $('showBadge'),
 		toast: $('toast'),
 		exportCfg: $('exportCfg'),
 		importCfg: $('importCfg'),
@@ -95,6 +97,8 @@
 		],
 		maxChatTurns: 0,
 		hideNavBar: true,
+		dimUntagged: false,
+		showBadge: true,
 	});
 
 	// ---- Storage helpers (promise + callback compatible) ----
@@ -246,6 +250,8 @@
 		clearRows();
 		els.maxChatTurns.value = String(safeInt(cfg.maxChatTurns, 0));
 		els.hideNavBar.checked = cfg.hideNavBar !== false;
+		els.dimUntagged.checked = cfg.dimUntagged === true;
+		els.showBadge.checked = cfg.showBadge !== false;
 
 		const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
 		for (const rule of rules) {
@@ -277,6 +283,8 @@
 			rules,
 			maxChatTurns: safeInt(els.maxChatTurns.value, 0),
 			hideNavBar: els.hideNavBar.checked,
+			dimUntagged: els.dimUntagged.checked,
+			showBadge: els.showBadge.checked,
 		};
 	}
 
@@ -409,6 +417,8 @@
 			rules: [],
 			maxChatTurns: safeInt(parsed.maxChatTurns, 0),
 			hideNavBar: parsed.hideNavBar !== false,
+			dimUntagged: parsed.dimUntagged === true,
+			showBadge: parsed.showBadge !== false,
 		};
 		for (const r of parsed.rules) {
 			const tag = String(r?.tag || '').trim();
@@ -492,6 +502,8 @@
 			rules: [],
 			maxChatTurns: safeInt(cfg.maxChatTurns, 0),
 			hideNavBar: cfg.hideNavBar !== false,
+			dimUntagged: cfg.dimUntagged === true,
+			showBadge: cfg.showBadge !== false,
 		};
 
 		for (let i = 0; i < cfg.rules.length; i++) {

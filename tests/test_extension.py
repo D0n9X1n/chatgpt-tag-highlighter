@@ -412,3 +412,68 @@ class TestMigration:
 
         cfg = self._get_config_via_options()
         assert cfg['rules'][0]['hide'] is False, 'Missing hide should default to false'
+
+    def test_dim_untagged_persists(self, browser_context, ext_id):
+        """dimUntagged checkbox should persist in config."""
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_timeout(1500)
+        page.evaluate(
+            f"new Promise(r => chrome.storage.sync.set("
+            f"{{'{STORAGE_KEY}': {json.dumps({'rules': [{'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}], 'maxChatTurns': 0, 'hideNavBar': True, 'dimUntagged': False})}}}, r))"
+        )
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.check('#dimUntagged')
+        page.click('#save')
+        page.wait_for_timeout(500)
+
+        cfg = json.loads(page.evaluate(
+            f"new Promise(r => chrome.storage.sync.get('{STORAGE_KEY}', "
+            f"d => r(JSON.stringify(d['{STORAGE_KEY}']))))"
+        ))
+        page.close()
+        assert cfg['dimUntagged'] is True
+
+    def test_show_badge_persists(self, browser_context, ext_id):
+        """showBadge checkbox should persist in config."""
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_timeout(1500)
+        page.evaluate(
+            f"new Promise(r => chrome.storage.sync.set("
+            f"{{'{STORAGE_KEY}': {json.dumps({'rules': [{'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}], 'maxChatTurns': 0, 'hideNavBar': True, 'showBadge': True})}}}, r))"
+        )
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.uncheck('#showBadge')
+        page.click('#save')
+        page.wait_for_timeout(500)
+
+        cfg = json.loads(page.evaluate(
+            f"new Promise(r => chrome.storage.sync.get('{STORAGE_KEY}', "
+            f"d => r(JSON.stringify(d['{STORAGE_KEY}']))))"
+        ))
+        page.close()
+        assert cfg['showBadge'] is False
+
+    def test_show_badge_defaults_true(self, browser_context, ext_id):
+        """showBadge should default to true when missing."""
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_timeout(1500)
+        page.evaluate(
+            f"new Promise(r => chrome.storage.sync.set("
+            f"{{'{STORAGE_KEY}': {json.dumps({'rules': [{'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}], 'maxChatTurns': 0, 'hideNavBar': True})}}}, r))"
+        )
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        cfg = json.loads(page.evaluate(
+            f"new Promise(r => chrome.storage.sync.get('{STORAGE_KEY}', "
+            f"d => r(JSON.stringify(d['{STORAGE_KEY}']))))"
+        ))
+        page.close()
+        assert cfg.get('showBadge') is True

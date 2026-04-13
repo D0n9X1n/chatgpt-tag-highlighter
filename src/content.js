@@ -329,7 +329,13 @@ html.cth-light .cth-pill.active {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}`;
+		const dimCss = `
+html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
+  opacity: 0.45;
+}
+`;
+
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -435,11 +441,14 @@ html.cth-light .cth-pill.active {
 			: 0;
 
 		const hideNavBar = cfg?.hideNavBar !== false; // default true
+		const dimUntagged = cfg?.dimUntagged === true;
+		const showBadge = cfg?.showBadge !== false; // default true
 
 		// Toggle CSS class for nav bar visibility
 		document.documentElement.classList.toggle('cth-hide-navbar', hideNavBar);
+		document.documentElement.classList.toggle('cth-dim-untagged', dimUntagged);
 
-		return {rules, maxChatTurns, hideNavBar};
+		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge};
 	}
 
 	function matchRule(title, rules) {
@@ -580,6 +589,27 @@ html.cth-light .cth-pill.active {
 
 		// Update overlay content whenever sidebar is scanned (cheap)
 		scheduleOverlayUpdate();
+		updateBadgeCount();
+	}
+
+	function updateBadgeCount() {
+		if (!compiled?.showBadge) {
+			try { API.runtime.sendMessage({ type: 'badgeCount', count: 0 }); } catch {}
+			return;
+		}
+
+		if (!historyRoot) return;
+
+		const tagged = historyRoot.querySelectorAll(
+			'a[data-sidebar-item="true"][data-cth="1"]:not([data-cth-hidden="1"])'
+		);
+		const count = tagged.length;
+
+		try {
+			API.runtime.sendMessage({ type: 'badgeCount', count });
+		} catch {
+			// Extension context may be invalidated
+		}
 	}
 
 	function applyRuleToAnchor(a, title) {
@@ -943,6 +973,7 @@ html.cth-light .cth-pill.active {
 			if (historyRoot) {
 				scheduleSidebarScan();
 				scheduleOverlayUpdate();
+				updateBadgeCount();
 			}
 
 			scheduleOverlayLayout();
@@ -957,6 +988,34 @@ html.cth-light .cth-pill.active {
 
 		API.storage.onChanged.addListener(handler);
 	}
+
+	// ---- Keyboard shortcuts ----
+	document.addEventListener('keydown', e => {
+		// Alt+H: Toggle hidden conversations visibility
+		if (e.altKey && e.key.toLowerCase() === 'h') {
+			e.preventDefault();
+			const hiddenAnchors = document.querySelectorAll('#history a[data-cth-hidden="1"]');
+			const anyVisible = [...hiddenAnchors].some(a => a.style.display !== 'none');
+			for (const a of hiddenAnchors) {
+				if (anyVisible) {
+					a.style.display = 'none';
+				} else {
+					a.style.removeProperty('display');
+				}
+			}
+			return;
+		}
+
+		// Alt+F: Focus filter bar
+		if (e.altKey && e.key.toLowerCase() === 'f') {
+			e.preventDefault();
+			const bar = document.getElementById(FILTER_BAR_ID);
+			if (bar && bar.classList.contains('cth-visible')) {
+				const firstPill = bar.querySelector('.cth-pill');
+				if (firstPill) firstPill.focus();
+			}
+		}
+	});
 
 	main();
 	listenForConfigChanges();

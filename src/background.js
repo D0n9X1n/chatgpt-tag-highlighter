@@ -118,7 +118,7 @@
 
 			if (!existing) {
 				await storageSet({
-					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR},
+					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR, dimUntagged: false, showBadge: true},
 				});
 				return;
 			}
@@ -134,6 +134,9 @@
         	? existing.hideNavBar
         	: DEFAULT_HIDE_NAV_BAR;
 
+			const dimUntagged = existing.dimUntagged === true;
+			const showBadge = existing.showBadge !== false;
+
 			// Only write if missing/invalid fields.
 			const needWrite
         = !Array.isArray(existing.rules)
@@ -141,10 +144,12 @@
         	|| typeof existing.maxChatTurns !== 'number'
         	|| typeof existing.hideNavBar !== 'boolean'
         	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean')
-        	|| (existing.rules || []).some(r => typeof r.overlay !== 'boolean');
+        	|| (existing.rules || []).some(r => typeof r.overlay !== 'boolean')
+        	|| typeof existing.dimUntagged !== 'boolean'
+        	|| typeof existing.showBadge !== 'boolean';
 
 			if (needWrite) {
-				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar}});
+				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge}});
 			}
 		} catch {
 			// Best-effort: do not block extension startup.
@@ -156,4 +161,22 @@
 
 	// Helpful for dev: seed on background load.
 	seedOrMigrate();
+
+	// ---- Badge counter ----
+	API.runtime?.onMessage?.addListener((msg) => {
+		if (msg?.type === 'badgeCount') {
+			const count = Number(msg.count) || 0;
+			const text = count > 0 ? String(count) : '';
+			try {
+				API.action?.setBadgeText?.({ text });
+				API.action?.setBadgeBackgroundColor?.({ color: '#fabd2f' });
+			} catch {
+				// Fallback for older APIs
+				try {
+					API.browserAction?.setBadgeText?.({ text });
+					API.browserAction?.setBadgeBackgroundColor?.({ color: '#fabd2f' });
+				} catch {}
+			}
+		}
+	});
 })();
