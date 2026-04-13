@@ -433,21 +433,38 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 		});
 	}
 
+	function hideOverlay() {
+		if (overlayTitle === '' && overlay.style.display === 'none') {
+			return;
+		}
+
+		overlayTitle = '';
+		overlayColor = '#a7a7a7';
+		overlay.style.display = 'none';
+	}
+
 	function updateOverlayNow() {
 		if (!historyRoot || !compiled?.rules?.length) {
+			hideOverlay();
 			return;
 		}
 
 		const active = getActiveChatAnchor(historyRoot);
 		if (!active) {
+			hideOverlay();
 			return;
 		}
 
 		const title = getChatTitleText(active);
 		const r = matchRule(title, compiled.rules);
 
+		if (!r) {
+			hideOverlay();
+			return;
+		}
+
 		const nextTitle = title || '';
-		const nextColor = r?.color || '#a7a7a7';
+		const nextColor = r.color;
 
 		if (nextTitle === overlayTitle && nextColor === overlayColor) {
 			return;
@@ -462,7 +479,7 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 			titleElement.textContent = overlayTitle;
 		}
 
-		overlay.style.display = overlayTitle ? 'block' : 'none';
+		overlay.style.display = 'block';
 	}
 
 	function findComposerBox() {
@@ -514,6 +531,29 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 	// Keep overlay aligned on scroll/resize (batched)
 	window.addEventListener('scroll', scheduleOverlayLayout, {passive: true});
 	window.addEventListener('resize', scheduleOverlayLayout, {passive: true});
+
+	// ---- Detect SPA navigation (New Chat, switching chats) ----
+	let lastUrl = location.href;
+	function checkUrlChange() {
+		if (location.href !== lastUrl) {
+			lastUrl = location.href;
+			log('SPA navigation detected', lastUrl);
+			scheduleSidebarScan();
+			scheduleOverlayUpdate();
+		}
+	}
+
+	// Patch pushState/replaceState so we catch programmatic navigations
+	for (const method of ['pushState', 'replaceState']) {
+		const orig = history[method];
+		history[method] = function (...args) {
+			const result = orig.apply(this, args);
+			checkUrlChange();
+			return result;
+		};
+	}
+
+	window.addEventListener('popstate', checkUrlChange);
 
 	// ---- Scroll-to-bottom action ----
 	let scrollContainer = null;
