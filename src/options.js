@@ -33,6 +33,12 @@
 		maxChatTurns: $('maxChatTurns'),
 		hideNavBar: $('hideNavBar'),
 		toast: $('toast'),
+		exportCfg: $('exportCfg'),
+		importCfg: $('importCfg'),
+		importPanel: $('importPanel'),
+		importText: $('importText'),
+		importApply: $('importApply'),
+		importCancel: $('importCancel'),
 	};
 
 	// ---- Palette (display only; stored as hex) ----
@@ -301,21 +307,7 @@
 			return;
 		}
 
-		if (e.target.classList.contains('moveUp')) {
-			const previous = tr.previousElementSibling;
-			if (previous) {
-				els.rows.insertBefore(tr, previous);
-			}
 
-			return;
-		}
-
-		if (e.target.classList.contains('moveDown')) {
-			const next = tr.nextElementSibling;
-			if (next) {
-				els.rows.insertBefore(next, tr);
-			}
-		}
 	});
 
 	// Normalize hex on blur (covers paste + partial input)
@@ -373,6 +365,109 @@
 			e.preventDefault();
 			els.save.click();
 		}
+	});
+
+	// ---- Import / Export ----
+	els.exportCfg.addEventListener('click', async () => {
+		const cfg = collectConfig();
+		try {
+			await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2));
+			toast('Copied ✓');
+		} catch {
+			const ta = document.createElement('textarea');
+			ta.value = JSON.stringify(cfg, null, 2);
+			document.body.append(ta);
+			ta.select();
+			document.execCommand('copy');
+			ta.remove();
+			toast('Copied ✓');
+		}
+	});
+
+	els.importCfg.addEventListener('click', () => {
+		els.importPanel.style.display = els.importPanel.style.display === 'none' ? '' : 'none';
+		els.importText.value = '';
+		if (els.importPanel.style.display !== 'none') els.importText.focus();
+	});
+
+	els.importCancel.addEventListener('click', () => {
+		els.importPanel.style.display = 'none';
+		els.importText.value = '';
+	});
+
+	els.importApply.addEventListener('click', async () => {
+		const raw = els.importText.value.trim();
+		let parsed;
+		try { parsed = JSON.parse(raw); } catch { toast('Invalid config'); return; }
+		if (!parsed || !Array.isArray(parsed.rules)) { toast('Invalid config'); return; }
+
+		const cfg = {
+			rules: [],
+			maxChatTurns: safeInt(parsed.maxChatTurns, 0),
+			hideNavBar: parsed.hideNavBar !== false,
+		};
+		for (const r of parsed.rules) {
+			const tag = String(r?.tag || '').trim();
+			if (!tag) continue;
+			cfg.rules.push({
+				tag,
+				match: safeMatch(r?.match),
+				color: toHex(r?.color, '#999999'),
+				hide: r?.hide === true,
+			});
+		}
+		if (cfg.rules.length === 0) { toast('Invalid config'); return; }
+
+		await set({ [STORAGE_KEY]: cfg });
+		render(cfg);
+		els.importPanel.style.display = 'none';
+		els.importText.value = '';
+		toast('Imported ✓');
+	});
+
+	// ---- Drag-and-drop reorder ----
+	let draggedRow = null;
+
+	els.rows.addEventListener('dragstart', e => {
+		const handle = e.target.closest('.dragHandle');
+		if (!handle) { e.preventDefault(); return; }
+		draggedRow = handle.closest('tr');
+		if (!draggedRow) { e.preventDefault(); return; }
+		draggedRow.classList.add('dragging');
+		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.setData('text/plain', '');
+	});
+
+	els.rows.addEventListener('dragover', e => {
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		const targetRow = e.target.closest('tr');
+		if (!targetRow || targetRow === draggedRow) return;
+		for (const tr of els.rows.querySelectorAll('.drag-over')) tr.classList.remove('drag-over');
+		targetRow.classList.add('drag-over');
+	});
+
+	els.rows.addEventListener('dragleave', e => {
+		const targetRow = e.target.closest('tr');
+		if (targetRow) targetRow.classList.remove('drag-over');
+	});
+
+	els.rows.addEventListener('drop', e => {
+		e.preventDefault();
+		const targetRow = e.target.closest('tr');
+		if (!targetRow || !draggedRow || targetRow === draggedRow) return;
+		const rect = targetRow.getBoundingClientRect();
+		const midY = rect.top + rect.height / 2;
+		if (e.clientY < midY) {
+			els.rows.insertBefore(draggedRow, targetRow);
+		} else {
+			els.rows.insertBefore(draggedRow, targetRow.nextElementSibling);
+		}
+	});
+
+	els.rows.addEventListener('dragend', () => {
+		if (draggedRow) { draggedRow.classList.remove('dragging'); draggedRow = null; }
+		for (const tr of els.rows.querySelectorAll('.drag-over')) tr.classList.remove('drag-over');
 	});
 
 	// ---- Load + migrate ----

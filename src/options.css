@@ -140,19 +140,6 @@ th{
   padding: 0;
 }
 
-.orderCell{
-  white-space: nowrap;
-  text-align: center;
-}
-
-.orderCell button{
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  padding: 0;
-  margin: 0 2px;
-}
-
 .hideCell{
   white-space: nowrap;
 }
@@ -176,5 +163,93 @@ th{
 }
 
 .hintInline{
-  display: i
+  display: inline;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.toast{
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(96,165,250,.18);
+  border: 1px solid rgba(96,165,250,.4);
+  color: var(--text);
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.toast.show{
+  opacity: 1;
+}
+
+.importPanel{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.importTextarea{
+  width: 100%;
+  min-height: 80px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+}
+
+.importTextarea:focus{
+  border-color: rgba(96,165,250,.8);
+  box-shadow: 0 0 0 3px rgba(96,165,250,.15);
+}
+
+.importActions{
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.dragCell{
+  text-align: center;
+  width: 40px;
+}
+
+.dragHandle{
+  cursor: grab;
+  font-size: 18px;
+  color: var(--muted);
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 4px 8px;
+  display: inline-block;
+}
+
+.dragHandle:hover{
+  color: var(--text);
+}
+
+.dragHandle:active{
+  cursor: grabbing;
+}
+
+tr.dragging{
+  opacity: 0.4;
+}
+
+tr.drag-over td{
+  border-top: 2px solid var(--accent);
+}
 

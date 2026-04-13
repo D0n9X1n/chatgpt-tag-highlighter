@@ -238,6 +238,68 @@ class TestOptionsPage:
         assert cfg['rules'][0]['tag'] == '[TODO]', 'Reset should restore [TODO] rule'
         assert cfg['maxChatTurns'] == 0, 'Reset should restore maxChatTurns=0'
 
+    def test_import_applies_config(self, browser_context, ext_id):
+        """Import should parse JSON, persist, and re-render."""
+        page = self._open_options()
+        page.click('#importCfg')
+        page.wait_for_timeout(300)
+
+        new_cfg = {
+            'rules': [{'tag': '[IMP]', 'match': 'includes', 'color': '#b8bb26', 'hide': False}],
+            'maxChatTurns': 7, 'hideNavBar': False,
+        }
+        page.fill('#importText', json.dumps(new_cfg))
+        page.click('#importApply')
+        page.wait_for_timeout(500)
+
+        cfg = self._get_config(page)
+        page.close()
+        assert cfg['rules'][0]['tag'] == '[IMP]'
+        assert cfg['maxChatTurns'] == 7
+
+    def test_import_rejects_invalid_json(self, browser_context, ext_id):
+        """Import should show error toast for invalid JSON."""
+        page = self._open_options()
+        page.click('#importCfg')
+        page.wait_for_timeout(300)
+        page.fill('#importText', 'not json')
+        page.click('#importApply')
+        page.wait_for_timeout(500)
+
+        toast_text = page.evaluate("document.getElementById('toast').textContent")
+        page.close()
+        assert 'Invalid' in toast_text
+
+    def test_drag_reorder_saves(self, browser_context, ext_id):
+        """Reordering rows and saving should persist new order."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[FIRST]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False},
+                {'tag': '[SECOND]', 'match': 'startsWith', 'color': '#fb4934', 'hide': False},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        tag0 = page.evaluate("document.querySelectorAll('#rows tr .tag')[0].value")
+        assert tag0 == '[FIRST]'
+
+        # Simulate reorder via JS (drag API is hard in Playwright)
+        page.evaluate("""
+            const rows = document.getElementById('rows');
+            const trs = rows.querySelectorAll('tr');
+            rows.insertBefore(trs[1], trs[0]);
+        """)
+
+        page.click('#save')
+        page.wait_for_timeout(500)
+        cfg = self._get_config(page)
+        page.close()
+        assert cfg['rules'][0]['tag'] == '[SECOND]'
+        assert cfg['rules'][1]['tag'] == '[FIRST]'
+
     def test_color_normalized_to_hex(self, browser_context, ext_id):
         """Saving should normalize all colors to #RRGGBB hex."""
         page = self._open_options()

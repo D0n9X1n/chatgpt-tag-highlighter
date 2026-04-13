@@ -17,11 +17,22 @@
     </div>
 
     <div class="actions">
+      <button id="exportCfg" type="button" class="ghost">Export</button>
+      <button id="importCfg" type="button" class="ghost">Import</button>
       <button id="addRow" type="button">+ Add Tag</button>
       <button id="reset" type="button" class="ghost">Reset</button>
       <button id="save" type="button" class="primary">Save</button>
     </div>
   </header>
+
+  <div id="importPanel" class="importPanel" style="display:none">
+    <textarea id="importText" class="importTextarea" rows="6"
+              placeholder="Paste exported JSON here…"></textarea>
+    <div class="importActions">
+      <button id="importApply" type="button" class="primary">Apply</button>
+      <button id="importCancel" type="button" class="ghost">Cancel</button>
+    </div>
+  </div>
 
   <main class="card">
     <section class="section">
@@ -54,13 +65,13 @@
       <table class="table" aria-label="Tag rules">
         <thead>
           <tr>
+            <th style="width: 4%"></th>
             <th style="width: 24%">Tag</th>
             <th style="width: 14%">Match</th>
             <th style="width: 20%">Color (preset)</th>
             <th style="width: 16%">Custom hex</th>
             <th style="width: 10%">Hide</th>
             <th style="width: 8%">Preview</th>
-            <th style="width: 8%">Order</th>
             <th style="width: 4%"></th>
           </tr>
         </thead>
@@ -78,6 +89,8 @@
 
   <template id="rowTemplate">
     <tr>
+      <td class="dragCell"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
+
       <td>
         <input class="input tag" placeholder="[TODO]" />
       </td>
@@ -106,11 +119,6 @@
 
       <td class="previewCell">
         <span class="swatch" title="Preview"></span>
-      </td>
-
-      <td class="orderCell">
-        <button class="moveUp" type="button" title="Move up">↑</button>
-        <button class="moveDown" type="button" title="Move down">↓</button>
       </td>
 
       <td class="delCell">
