@@ -240,6 +240,17 @@
   assert('empty title', matchRule('', rules), null);
   assert('empty rules', matchRule('[TODO] test', []), null);
 
+  // ---- Theme detection (DOM-based) ----
+  group('Theme detection');
+  const origClass = document.documentElement.className;
+  document.documentElement.className = 'light';
+  assert('light class detected', document.documentElement.classList.contains('light'), true);
+  document.documentElement.className = 'dark';
+  assert('dark class → not light', document.documentElement.classList.contains('light'), false);
+  document.documentElement.className = '';
+  assert('no class → not light', document.documentElement.classList.contains('light'), false);
+  document.documentElement.className = origClass;
+
   // ---- Summary ----
   const summary = document.getElementById('summary');
   const total = passed + failed;

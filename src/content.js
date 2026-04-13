@@ -240,10 +240,60 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}`;
+		const themeCss = `
+/* Light mode overlay */
+html.cth-light #${OVERLAY_ID} {
+  background: rgba(255,255,255,0.85);
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+}
+html.cth-light #${OVERLAY_ID} .cth-title {
+  color: rgba(0,0,0,0.88);
+}
+html.cth-light #${OVERLAY_ID} .cth-arrow {
+  border-color: rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.04);
+  color: rgba(0,0,0,0.70);
+}
+html.cth-light #${OVERLAY_ID}:hover {
+  border-color: rgba(0,0,0,0.18);
+}
+html.cth-light #${OVERLAY_ID}:hover .cth-arrow {
+  background: rgba(0,0,0,0.08);
+}
+
+/* Light mode sidebar highlights */
+html.cth-light #history a[data-cth="1"] {
+  background: var(--cth-bg-light, var(--cth-bg, transparent)) !important;
+}
+html.cth-light #history a[data-cth="1"][data-active],
+html.cth-light #history a[data-cth="1"][aria-current="page"] {
+  background: var(--cth-bg-strong-light, var(--cth-bg-strong, transparent)) !important;
+}
+`;
+
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
+
+	// ---- Theme detection ----
+	function detectTheme() {
+		return document.documentElement.classList.contains('light') ? 'light' : 'dark';
+	}
+
+	function applyThemeClass() {
+		const isLight = detectTheme() === 'light';
+		document.documentElement.classList.toggle('cth-light', isLight);
+	}
+
+	const themeObserver = new MutationObserver(() => {
+		applyThemeClass();
+	});
+	themeObserver.observe(document.documentElement, {
+		attributes: true,
+		attributeFilter: ['class'],
+	});
 
 	// ---- Overlay (one element) ----
 	function ensureOverlay() {
@@ -407,6 +457,8 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 		a.style.setProperty('--cth-color', r.color);
 		a.style.setProperty('--cth-bg', hexToRgba(r.color, 0.12));
 		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.18));
+		a.style.setProperty('--cth-bg-light', hexToRgba(r.color, 0.10));
+		a.style.setProperty('--cth-bg-strong-light', hexToRgba(r.color, 0.14));
 
 		if (r.hide) {
 			a.dataset.cthHidden = '1';
@@ -664,6 +716,7 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
 		log('content.js loaded', {href: location.href, ua: navigator.userAgent});
 
 		injectStyleOnce();
+		applyThemeClass();
 		ensureOverlay();
 
 		// Load config (try sync first; fallback to local)
