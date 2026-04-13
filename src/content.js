@@ -137,7 +137,7 @@ button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-tok
 
 		// Right-side turn navigation bar (minimap) — hidden when config says so
 		const hideNavBarCss = `
-html.cth-hide-navbar div.fixed.end-4.top-1\\/2.z-10.-translate-y-1\\/2 {
+html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 {
   display: none !important;
 }
 `;
