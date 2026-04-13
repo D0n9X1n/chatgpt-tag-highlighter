@@ -321,6 +321,39 @@ class TestOptionsPage:
             f"Expected #fb4934, got {cfg['rules'][0]['color']}"
         )
 
+    def test_overlay_field_persists(self, browser_context, ext_id):
+        """Overlay toggle should persist in config."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [{'tag': '[OV]', 'match': 'startsWith', 'color': '#fabd2f',
+                        'hide': False, 'overlay': True}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.uncheck('#rows tr:first-child .overlay')
+        page.click('#save')
+        page.wait_for_timeout(500)
+
+        cfg = self._get_config(page)
+        page.close()
+        assert cfg['rules'][0]['overlay'] is False
+
+    def test_overlay_defaults_true(self, browser_context, ext_id):
+        """Rules without overlay field should default to true after migration."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [{'tag': '[DEF]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        cfg = self._get_config(page)
+        page.close()
+        assert cfg['rules'][0].get('overlay') is True
+
 
 # ============================================================
 # Background Script Migration Tests

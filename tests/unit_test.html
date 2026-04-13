@@ -71,7 +71,8 @@
       const match = String(r.match || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith';
       const color = toHex(r.color, '#a7a7a7');
       const hide = r.hide === true;
-      rules.push({ tag, match, color, hide });
+      const overlay = r.overlay !== false;
+      rules.push({ tag, match, color, hide, overlay });
     }
     const maxChatTurns = Number.isFinite(Number(cfg?.maxChatTurns))
       ? Math.max(0, Math.floor(Number(cfg.maxChatTurns))) : 0;
@@ -213,6 +214,15 @@
   assert('undefined → true', compileConfig({}).hideNavBar, true);
   assert('true → true', compileConfig({ hideNavBar: true }).hideNavBar, true);
   assert('false → false', compileConfig({ hideNavBar: false }).hideNavBar, false);
+
+  // ---- compileConfig — overlay field ----
+  group('compileConfig — overlay field');
+  const cfgOv1 = compileConfig({
+      rules: [{ tag: '[A]', overlay: true }, { tag: '[B]', overlay: false }, { tag: '[C]' }]
+  });
+  assert('explicit true', cfgOv1.rules[0].overlay, true);
+  assert('explicit false', cfgOv1.rules[1].overlay, false);
+  assert('missing defaults true', cfgOv1.rules[2].overlay, true);
 
   // ---- matchRule ----
   group('matchRule — startsWith');

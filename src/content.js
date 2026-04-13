@@ -366,9 +366,10 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 			const match = String(r.match || '').toLowerCase() === 'includes' ? 'includes' : 'startsWith';
 			const color = toHex(r.color, '#a7a7a7');
 			const hide = r.hide === true;
+			const overlay = r.overlay !== false;
 
 			rules.push({
-				tag, match, color, hide,
+				tag, match, color, hide, overlay,
 			});
 		}
 
@@ -510,7 +511,7 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 		const title = getChatTitleText(active);
 		const r = matchRule(title, compiled.rules);
 
-		if (!r) {
+		if (!r || r.overlay === false) {
 			hideOverlay();
 			return;
 		}

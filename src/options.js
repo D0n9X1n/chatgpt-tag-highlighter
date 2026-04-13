@@ -87,10 +87,10 @@
 	const DEFAULT_CFG = () => ({
 		rules: [
 			{
-				tag: '[TODO]', match: 'startsWith', color: '#fabd2f', hide: false,
+				tag: '[TODO]', match: 'startsWith', color: '#fabd2f', hide: false, overlay: true,
 			},
 			{
-				tag: '[BUG]', match: 'startsWith', color: '#fb4934', hide: false,
+				tag: '[BUG]', match: 'startsWith', color: '#fb4934', hide: false, overlay: true,
 			},
 		],
 		maxChatTurns: 0,
@@ -229,6 +229,9 @@
 		tr.querySelector('.match').value = match;
 		tr.querySelector('.hide').checked = hide;
 
+		const overlay = rule?.overlay !== false;
+		tr.querySelector('.overlay').checked = overlay;
+
 		setRowColor(tr, rule?.color);
 
 		return tr;
@@ -266,6 +269,7 @@
 				match: safeMatch(tr.querySelector('.match').value),
 				color: toHex(tr.querySelector('.hex').value, '#999999'), // ONLY hex persisted
 				hide: tr.querySelector('.hide').checked === true,
+				overlay: tr.querySelector('.overlay').checked !== false,
 			});
 		}
 
@@ -327,7 +331,7 @@
 	// ---- Buttons ----
 	els.addRow.addEventListener('click', () => {
 		const tr = createRow({
-			tag: '', match: 'startsWith', color: PALETTE[0][1], hide: false,
+			tag: '', match: 'startsWith', color: PALETTE[0][1], hide: false, overlay: true,
 		});
 		els.rows.append(tr);
 		tr.querySelector('.tag').focus();
@@ -414,6 +418,7 @@
 				match: safeMatch(r?.match),
 				color: toHex(r?.color, '#999999'),
 				hide: r?.hide === true,
+				overlay: r?.overlay !== false,
 			});
 		}
 		if (cfg.rules.length === 0) { toast('Invalid config'); return; }
@@ -501,6 +506,7 @@
 				match: safeMatch(r.match),
 				color: toHex(r.color, '#999999'),
 				hide: r.hide === true,
+				overlay: r.overlay !== false,
 			});
 		}
 

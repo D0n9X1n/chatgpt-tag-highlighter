@@ -144,6 +144,10 @@ th{
   white-space: nowrap;
 }
 
+.overlayCell{
+  white-space: nowrap;
+}
+
 .checkboxWrap{
   display: inline-flex;
   gap: 6px;

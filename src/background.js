@@ -12,10 +12,10 @@
 
 	const DEFAULT_RULES = [
 		{
-			tag: '[TODO]', color: '#fabd2f', match: 'startsWith', hide: false,
+			tag: '[TODO]', color: '#fabd2f', match: 'startsWith', hide: false, overlay: true,
 		}, // BrightYellow
 		{
-			tag: '[BUG]', color: '#fb4934', match: 'startsWith', hide: false,
+			tag: '[BUG]', color: '#fb4934', match: 'startsWith', hide: false, overlay: true,
 		}, // BrightRed
 	];
 
@@ -104,6 +104,7 @@
 				match: safeMatch(r?.match),
 				color: String(r?.color || 'Green'),
 				hide: safeBool(r?.hide),
+				overlay: r?.overlay !== false,
 			});
 		}
 
@@ -139,7 +140,8 @@
         	|| existing.rules.length === 0
         	|| typeof existing.maxChatTurns !== 'number'
         	|| typeof existing.hideNavBar !== 'boolean'
-        	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean');
+        	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean')
+        	|| (existing.rules || []).some(r => typeof r.overlay !== 'boolean');
 
 			if (needWrite) {
 				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar}});
