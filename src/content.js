@@ -12,6 +12,7 @@
 	const STORAGE_KEY = 'tagHighlighterConfigV1';
 	const STYLE_ID = 'cth-style';
 	const OVERLAY_ID = 'cth-overlay';
+	const FILTER_BAR_ID = 'cth-filter-bar';
 	const DEBUG = true; // Flip to false when stable
 
 	const log = (...a) => DEBUG && console.log('[CTH]', ...a);
@@ -272,7 +273,63 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}`;
+		const filterBarCss = `
+#${FILTER_BAR_ID} {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+html.cth-light #${FILTER_BAR_ID} {
+  border-bottom-color: rgba(0,0,0,0.08);
+}
+
+#${FILTER_BAR_ID}.cth-visible {
+  display: flex;
+}
+
+.cth-pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.80);
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+html.cth-light .cth-pill {
+  border-color: rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.04);
+  color: rgba(0,0,0,0.70);
+}
+
+.cth-pill:hover {
+  background: rgba(255,255,255,0.10);
+}
+
+html.cth-light .cth-pill:hover {
+  background: rgba(0,0,0,0.08);
+}
+
+.cth-pill.active {
+  border-color: var(--pill-color, rgba(255,255,255,0.30));
+  background: var(--pill-bg, rgba(255,255,255,0.14));
+  color: #fff;
+}
+
+html.cth-light .cth-pill.active {
+  color: #000;
+}
+`;
+
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -400,6 +457,85 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 		return null;
 	}
 
+	// ---- Filter bar ----
+	let activeFilter = null;
+
+	function ensureFilterBar() {
+		let bar = document.getElementById(FILTER_BAR_ID);
+		if (bar) return bar;
+		bar = document.createElement('div');
+		bar.id = FILTER_BAR_ID;
+		return bar;
+	}
+
+	function renderFilterBar() {
+		if (!compiled || compiled.rules.length < 2) {
+			const bar = document.getElementById(FILTER_BAR_ID);
+			if (bar) bar.classList.remove('cth-visible');
+			return;
+		}
+
+		const bar = ensureFilterBar();
+
+		if (historyRoot && bar.parentElement !== historyRoot) {
+			historyRoot.prepend(bar);
+		}
+
+		bar.innerHTML = '';
+
+		const allPill = document.createElement('span');
+		allPill.className = 'cth-pill' + (activeFilter === null ? ' active' : '');
+		allPill.textContent = 'All';
+		allPill.addEventListener('click', () => {
+			activeFilter = null;
+			renderFilterBar();
+			applyFilter();
+		});
+		bar.append(allPill);
+
+		for (const r of compiled.rules) {
+			const pill = document.createElement('span');
+			pill.className = 'cth-pill' + (activeFilter === r.tag ? ' active' : '');
+			pill.textContent = r.tag;
+			pill.style.setProperty('--pill-color', r.color);
+			pill.style.setProperty('--pill-bg', hexToRgba(r.color, 0.18));
+			if (activeFilter === r.tag) {
+				pill.style.borderColor = r.color;
+				pill.style.background = hexToRgba(r.color, 0.18);
+			}
+			pill.addEventListener('click', () => {
+				activeFilter = activeFilter === r.tag ? null : r.tag;
+				renderFilterBar();
+				applyFilter();
+			});
+			bar.append(pill);
+		}
+
+		bar.classList.add('cth-visible');
+	}
+
+	function applyFilter() {
+		if (!historyRoot) return;
+
+		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
+		for (const a of anchors) {
+			if (activeFilter === null) {
+				a.style.removeProperty('display');
+				if (a.dataset.cthHidden === '1') {
+					a.style.display = 'none';
+				}
+			} else {
+				const title = getChatTitleText(a);
+				const r = matchRule(title, compiled.rules);
+				if (r && r.tag === activeFilter) {
+					a.style.removeProperty('display');
+				} else {
+					a.style.display = 'none';
+				}
+			}
+		}
+	}
+
 	// ---- Sidebar processing (batched) ----
 	let historyRoot = null;
 	let compiled = null;
@@ -436,6 +572,10 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 			itemCache.set(a, title);
 
 			applyRuleToAnchor(a, title);
+		}
+
+		if (activeFilter !== null) {
+			applyFilter();
 		}
 
 		// Update overlay content whenever sidebar is scanned (cheap)
@@ -753,6 +893,7 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 			attachHistoryObserver();
 			scheduleSidebarScan();
 			scheduleOverlayUpdate();
+			renderFilterBar();
 		} else {
 			warn('Sidebar history root not found (#history).');
 		}
@@ -774,6 +915,7 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 				attachHistoryObserver();
 				scheduleSidebarScan();
 				scheduleOverlayUpdate();
+				renderFilterBar();
 			}
 
 			scheduleOverlayLayout();
@@ -791,6 +933,8 @@ html.cth-light #history a[data-cth="1"][aria-current="page"] {
 			log('storage.onChanged fired — reloading config', {areaName});
 			compiled = compileConfig(newCfg);
 			itemCache = new WeakMap();
+			activeFilter = null;
+			renderFilterBar();
 
 			if (!historyRoot) {
 				historyRoot = document.querySelector('#history') || null;
