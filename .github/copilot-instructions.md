@@ -17,9 +17,9 @@ The `publish.sh` script copies `src/` into `dist/chrome/` and `dist/firefox/`, i
 
 ### Key files
 
-- **`content.js`** — Content script injected into `chatgpt.com`. Reads config from storage, compiles tag rules, scans the `#history` sidebar via MutationObserver, applies CSS custom properties (`--cth-color`, `--cth-bg`, `--cth-bg-strong`) to matching anchors, and manages a floating overlay above the composer box.
-- **`background.js`** — Service worker / background script. Seeds default config on install/startup, performs lightweight migration to add new fields (`hide`, `maxChatTurns`).
-- **`options.js` + `options.html` + `options.css`** — Settings page. Renders tag rules table from a `<template>`, handles palette/hex color selection, persists config.
+- **`content.js`** — Content script injected into `chatgpt.com`. Reads config from storage, compiles tag rules, scans the `#history` sidebar via MutationObserver, applies CSS custom properties (`--cth-color`, `--cth-bg`, `--cth-bg-strong`) to matching anchors, manages a floating overlay, filter bar, theme detection, badge counter, and keyboard shortcuts.
+- **`background.js`** — Service worker / background script. Seeds default config on install/startup, performs lightweight migration to add new fields, handles badge counter messages from content.js.
+- **`options.js` + `options.html` + `options.css`** — Settings page. Renders tag rules table from a `<template>`, handles palette/hex color selection, import/export, drag-to-reorder, and persists config.
 
 ### Data flow
 
@@ -28,15 +28,18 @@ All three scripts share the storage key `tagHighlighterConfigV1`. The config sch
 ```json
 {
   "rules": [
-    { "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false }
+    { "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false, "overlay": true }
   ],
-  "maxChatTurns": 0
+  "maxChatTurns": 0,
+  "hideNavBar": true,
+  "dimUntagged": false,
+  "showBadge": true
 }
 ```
 
 - `background.js` seeds defaults and migrates on install
 - `options.js` reads, edits, and persists config
-- `content.js` reads config once at load and applies it
+- `content.js` reads config at load and live-reloads via `storage.onChanged`
 
 ### Browser API compatibility
 
@@ -45,12 +48,62 @@ All three scripts detect the extension API at runtime (`browser` vs `chrome`) an
 ## Build & publish
 
 ```sh
-./publish.sh --version 0.0.3
+./publish.sh --version 0.1.0
 ```
 
-This produces `dist/chatgpt-tag-highlighter-chrome-0.0.3.zip` and `dist/chatgpt-tag-highlighter-firefox-0.0.3.xpi`. Requires `python3` and `zip`.
+This produces `dist/chatgpt-tag-highlighter-chrome-0.1.0.zip` and `dist/chatgpt-tag-highlighter-firefox-0.1.0.xpi`. Requires `python3` and `zip`.
 
 There is no build step for development — load `src/` directly as an unpacked extension in Chrome, or as a temporary add-on in Firefox.
+
+## Testing
+
+### Setup (one-time)
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install playwright pytest
+playwright install chromium
+```
+
+### Unit tests
+
+Open `tests/unit_test.html` in a browser. Tests pure functions (`toHex`, `hexToRgba`, `compileConfig`, `matchRule`).
+
+### E2E tests (automated, options page)
+
+```sh
+./publish.sh --version 0.1.0          # build dist/chrome/ first
+source .venv/bin/activate
+pytest tests/test_extension.py -v
+```
+
+These tests run headless-compatible Chrome with the extension loaded. They test the options page UI, config persistence, migration, import/export, and drag-reorder.
+
+### Live tests (ChatGPT, requires login)
+
+**CRITICAL — Playwright session management rules:**
+
+1. **The user only logs in ONCE.** The login session is stored in `tests/.test-profile/`.
+2. **NEVER delete `tests/.test-profile/`.** This contains the ChatGPT login cookies and session data.
+3. **ChatGPT uses short-lived cookies** that expire when the browser closes. Therefore:
+   - Run ALL live tests in a **single browser session** (one `launch_persistent_context` → all tests → one `close`).
+   - Do NOT close and reopen the browser between test steps.
+4. **Required launch args** for Playwright persistent context:
+   ```python
+   ctx = pw.chromium.launch_persistent_context(
+       'tests/.test-profile',
+       headless=False,
+       args=[
+           f'--disable-extensions-except={EXT_PATH}',
+           f'--load-extension={EXT_PATH}',
+           '--disable-blink-features=AutomationControlled',
+       ],
+       ignore_default_args=['--enable-automation', '--disable-extensions'],
+   )
+   ```
+   - `ignore_default_args` **must** include both `--enable-automation` and `--disable-extensions`.
+5. **If `tests/.test-profile/` does not exist**, launch the browser, let the user log in, close it, then run tests. Only do this once.
 
 ## Conventions
 
@@ -60,3 +113,4 @@ There is no build step for development — load `src/` directly as an unpacked e
 - **Performance-first DOM work.** Sidebar scans and overlay updates are batched via `requestAnimationFrame`. The `itemCache` WeakMap skips unchanged items. Keep this pattern when adding DOM operations.
 - **CSS custom properties for styling.** Highlight colors are applied as `--cth-*` CSS variables on each anchor, not inline styles. The `<style>` block injected by `content.js` references these variables.
 - **`DEBUG` flag in `content.js`.** Set `const DEBUG = true` for console logging during development; flip to `false` for release.
+- **Backward-compatible config migration.** New config fields must default safely. `background.js`, `options.js`, and `content.js` all tolerate missing fields.
