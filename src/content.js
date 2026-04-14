@@ -496,6 +496,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		const allPill = document.createElement('span');
 		allPill.className = 'cth-pill' + (activeFilter === null ? ' active' : '');
 		allPill.textContent = 'All';
+		allPill.tabIndex = 0;
 		allPill.addEventListener('click', () => {
 			activeFilter = null;
 			renderFilterBar();
@@ -507,6 +508,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			const pill = document.createElement('span');
 			pill.className = 'cth-pill' + (activeFilter === r.tag ? ' active' : '');
 			pill.textContent = r.tag;
+			pill.tabIndex = 0;
 			pill.style.setProperty('--pill-color', r.color);
 			pill.style.setProperty('--pill-bg', hexToRgba(r.color, 0.18));
 			if (activeFilter === r.tag) {
