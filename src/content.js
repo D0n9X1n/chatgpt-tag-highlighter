@@ -479,7 +479,8 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	}
 
 	function renderFilterBar() {
-		if (!compiled || compiled.rules.length < 2) {
+		const visibleRules = compiled ? compiled.rules.filter(r => !r.hide) : [];
+		if (visibleRules.length < 2) {
 			const bar = document.getElementById(FILTER_BAR_ID);
 			if (bar) bar.classList.remove('cth-visible');
 			return;
@@ -504,7 +505,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		});
 		bar.append(allPill);
 
-		for (const r of compiled.rules) {
+		for (const r of visibleRules) {
 			const pill = document.createElement('span');
 			pill.className = 'cth-pill' + (activeFilter === r.tag ? ' active' : '');
 			pill.textContent = r.tag;
