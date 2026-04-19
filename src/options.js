@@ -41,6 +41,8 @@
 		importText: $('importText'),
 		importApply: $('importApply'),
 		importCancel: $('importCancel'),
+		debugTitle: $('debugTitle'),
+		debugResult: $('debugResult'),
 	};
 
 	// ---- Palette (display only; stored as hex) ----
@@ -263,6 +265,16 @@
 		for (const rule of rules) {
 			els.rows.append(createRow(rule));
 		}
+
+		updateRowNumbers();
+	}
+
+	function updateRowNumbers() {
+		const trs = els.rows.querySelectorAll('tr');
+		for (let i = 0; i < trs.length; i++) {
+			const cell = trs[i].querySelector('.rowNum');
+			if (cell) cell.textContent = String(i + 1);
+		}
 	}
 
 	// ---- Read UI -> config (enforce hex) ----
@@ -322,6 +334,7 @@
 
 		if (e.target.classList.contains('del')) {
 			tr.remove();
+			updateRowNumbers();
 			return;
 		}
 
@@ -348,6 +361,7 @@
 			tag: '', match: 'startsWith', color: PALETTE[0][1], hide: false, overlay: true,
 		});
 		els.rows.append(tr);
+		updateRowNumbers();
 		tr.querySelector('.tag').focus();
 	});
 
@@ -489,7 +503,38 @@
 	els.rows.addEventListener('dragend', () => {
 		if (draggedRow) { draggedRow.classList.remove('dragging'); draggedRow = null; }
 		for (const tr of els.rows.querySelectorAll('.drag-over')) tr.classList.remove('drag-over');
+		updateRowNumbers();
 	});
+
+	// ---- Rule tester ----
+	function runDebugTest() {
+		const title = els.debugTitle.value.trim();
+		if (!title) {
+			els.debugResult.innerHTML = 'Type a title above to see which rule matches.';
+			return;
+		}
+
+		const trs = els.rows.querySelectorAll('tr');
+		for (let i = 0; i < trs.length; i++) {
+			const tag = String(trs[i].querySelector('.tag').value || '').trim();
+			if (!tag) continue;
+			const match = safeMatch(trs[i].querySelector('.match').value);
+			const hit = match === 'startsWith' ? title.startsWith(tag) : title.includes(tag);
+			if (hit) {
+				const hex = toHex(trs[i].querySelector('.hex').value);
+				els.debugResult.innerHTML =
+					`<span class="matchHit">✓ Rule #${i + 1}</span> — ` +
+					`tag <code>${tag}</code> (${match}) matches ` +
+					`"<b>${title}</b>" ` +
+					`<span class="swatch" style="background:${hex};width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin-left:4px"></span>`;
+				return;
+			}
+		}
+
+		els.debugResult.innerHTML = `<span class="matchNone">✗ No rule matches "${title}"</span>`;
+	}
+
+	els.debugTitle.addEventListener('input', runDebugTest);
 
 	// ---- Load + migrate ----
 	async function init() {

@@ -80,16 +80,23 @@
     <section class="section">
       <h2 class="sectionTitle">Tag Rules (order matters)</h2>
 
+      <div class="ruleExplainer">
+        <p><b>startsWith</b> — matches chats whose title begins with the tag. Best for prefixes like <code>[TODO]</code>, <code>[BUG]</code>.</p>
+        <p><b>includes</b> — matches chats whose title contains the tag anywhere. Good for keywords like <code>code</code>, <code>help</code>.</p>
+        <p>Rules are checked top-to-bottom — the first match wins. Drag ≡ to reorder.</p>
+      </div>
+
       <table class="table" aria-label="Tag rules">
         <thead>
           <tr>
+            <th style="width: 3%">#</th>
             <th style="width: 4%"></th>
-            <th style="width: 22%">Tag</th>
-            <th style="width: 12%">Match</th>
-            <th style="width: 18%">Color (preset)</th>
+            <th style="width: 21%">Tag</th>
+            <th style="width: 11%">Match</th>
+            <th style="width: 17%">Color (preset)</th>
             <th style="width: 14%">Custom hex</th>
-            <th style="width: 8%">Hide</th>
-            <th style="width: 8%">Overlay</th>
+            <th style="width: 7%">Hide</th>
+            <th style="width: 7%">Overlay</th>
             <th style="width: 6%">Preview</th>
             <th style="width: 4%"></th>
           </tr>
@@ -102,12 +109,21 @@
         Tip: Use <b>startsWith</b> for best performance. Rules are matched top-to-bottom.
       </p>
 
+      <div class="debugSection">
+        <h3 class="sectionTitle">Rule Tester</h3>
+        <div class="debugRow">
+          <input id="debugTitle" class="input" type="text" placeholder="Type a chat title to test, e.g. [TODO] Fix build" />
+          <div id="debugResult" class="debugResult">Type a title above to see which rule matches.</div>
+        </div>
+      </div>
+
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
     </section>
   </main>
 
   <template id="rowTemplate">
     <tr>
+      <td class="rowNum"></td>
       <td class="dragCell"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
 
       <td>

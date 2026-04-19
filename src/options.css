@@ -173,6 +173,67 @@ th{
   color: var(--muted);
 }
 
+.ruleExplainer{
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ruleExplainer p{
+  margin: 4px 0;
+}
+
+.ruleExplainer code{
+  background: rgba(255,255,255,.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.rowNum{
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  width: 30px;
+}
+
+.debugSection{
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.debugRow{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debugResult{
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px 0 0;
+  min-height: 24px;
+}
+
+.debugResult .matchHit{
+  color: #b8bb26;
+  font-weight: 600;
+}
+
+.debugResult .matchNone{
+  color: var(--muted);
+}
+
 .toast{
   position: fixed;
   bottom: 18px;
