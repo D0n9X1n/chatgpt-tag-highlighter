@@ -354,6 +354,150 @@ class TestOptionsPage:
         page.close()
         assert cfg['rules'][0].get('overlay') is True
 
+    def test_row_numbers_displayed(self, browser_context, ext_id):
+        """Row numbers should be displayed for each rule."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False, 'overlay': True},
+                {'tag': '[B]', 'match': 'startsWith', 'color': '#fb4934', 'hide': False, 'overlay': True},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        num1 = page.evaluate("document.querySelectorAll('#rows tr .rowNum')[0].textContent")
+        num2 = page.evaluate("document.querySelectorAll('#rows tr .rowNum')[1].textContent")
+        page.close()
+        assert num1 == '1', f'First row should be 1, got {num1}'
+        assert num2 == '2', f'Second row should be 2, got {num2}'
+
+    def test_row_numbers_update_on_delete(self, browser_context, ext_id):
+        """Row numbers should update after deleting a row."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False},
+                {'tag': '[B]', 'match': 'startsWith', 'color': '#fb4934', 'hide': False},
+                {'tag': '[C]', 'match': 'startsWith', 'color': '#b8bb26', 'hide': False},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        # Delete first row
+        page.click('#rows tr:first-child .del')
+        page.wait_for_timeout(300)
+
+        num1 = page.evaluate("document.querySelectorAll('#rows tr .rowNum')[0].textContent")
+        num2 = page.evaluate("document.querySelectorAll('#rows tr .rowNum')[1].textContent")
+        page.close()
+        assert num1 == '1', f'After delete, first should be 1, got {num1}'
+        assert num2 == '2', f'After delete, second should be 2, got {num2}'
+
+    def test_rule_tester_matches(self, browser_context, ext_id):
+        """Rule tester should show which rule matches a typed title."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[TODO]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False},
+                {'tag': 'bug', 'match': 'includes', 'color': '#fb4934', 'hide': False},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        # Test startsWith match
+        page.fill('#debugTitle', '[TODO] Fix build')
+        page.wait_for_timeout(300)
+        result = page.evaluate("document.getElementById('debugResult').textContent")
+        page.close()
+        assert '#1' in result and 'WINNER' in result, f'Should match rule #1, got: {result}'
+
+    def test_rule_tester_no_match(self, browser_context, ext_id):
+        """Rule tester should show no match for unmatched title."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[TODO]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.fill('#debugTitle', 'Random chat title')
+        page.wait_for_timeout(300)
+        result = page.evaluate("document.getElementById('debugResult').textContent")
+        page.close()
+        assert 'No rule matches' in result, f'Should show no match, got: {result}'
+
+    def test_rule_tester_includes_match(self, browser_context, ext_id):
+        """Rule tester should match includes rules."""
+        page = self._open_options()
+        self._set_config(page, {
+            'rules': [
+                {'tag': '[TODO]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False},
+                {'tag': 'code', 'match': 'includes', 'color': '#83a598', 'hide': False},
+            ],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.fill('#debugTitle', 'My code review')
+        page.wait_for_timeout(300)
+        result = page.evaluate("document.getElementById('debugResult').textContent")
+        page.close()
+        assert '#2' in result and 'WINNER' in result, f'Should match rule #2 (code includes), got: {result}'
+
+    def test_import_with_all_fields(self, browser_context, ext_id):
+        """Import should handle all config fields including overlay, dimUntagged, showBadge."""
+        page = self._open_options()
+        page.click('#importCfg')
+        page.wait_for_timeout(300)
+
+        new_cfg = {
+            'rules': [{'tag': '[X]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False, 'overlay': False}],
+            'maxChatTurns': 5, 'hideNavBar': False, 'dimUntagged': True, 'showBadge': False,
+        }
+        page.fill('#importText', json.dumps(new_cfg))
+        page.click('#importApply')
+        page.wait_for_timeout(500)
+
+        cfg = self._get_config(page)
+        page.close()
+        assert cfg['rules'][0]['overlay'] is False
+        assert cfg['dimUntagged'] is True
+        assert cfg['showBadge'] is False
+        assert cfg['hideNavBar'] is False
+        assert cfg['maxChatTurns'] == 5
+
+    def test_reset_has_four_default_rules(self, browser_context, ext_id):
+        """Reset should restore 4 default rules including demo rules."""
+        page = self._open_options()
+
+        self._set_config(page, {
+            'rules': [{'tag': '[CUSTOM]', 'match': 'includes', 'color': '#111111', 'hide': True}],
+            'maxChatTurns': 99, 'hideNavBar': False,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        page.click('#reset')
+        page.wait_for_timeout(500)
+
+        cfg = self._get_config(page)
+        page.close()
+        assert len(cfg['rules']) == 4, f'Reset should have 4 rules, got {len(cfg["rules"])}'
+        assert cfg['rules'][0]['tag'] == '[TODO]'
+        assert cfg['rules'][2]['tag'] == 'code'
+        assert cfg['rules'][2]['match'] == 'includes'
+        assert cfg['rules'][3]['tag'] == 'help'
+
 
 # ============================================================
 # Background Script Migration Tests
@@ -477,3 +621,18 @@ class TestMigration:
         ))
         page.close()
         assert cfg.get('showBadge') is True
+
+    def test_missing_all_new_fields_gets_migrated(self, browser_context, ext_id):
+        """Config missing all new fields should get them added."""
+        self._set_raw_config({
+            'rules': [{'tag': '[Z]', 'match': 'startsWith', 'color': '#fabd2f'}],
+            'maxChatTurns': 0,
+            # hideNavBar, dimUntagged, showBadge, overlay all missing
+        })
+
+        cfg = self._get_config_via_options()
+        assert cfg['rules'][0].get('overlay') is True
+        assert cfg['rules'][0].get('hide') is False
+        assert 'hideNavBar' in cfg
+        assert 'dimUntagged' in cfg
+        assert 'showBadge' in cfg
