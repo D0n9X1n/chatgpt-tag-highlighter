@@ -27,6 +27,16 @@
   - 增加/删除标签
   - 匹配方式：`startsWith`（推荐、最快）或 `includes`
   - 颜色：预置配色（Gruvbox 风格）或自定义 `#RRGGBB`
+  - **每条规则可独立控制浮层**：单独启用/禁用每个标签的浮层横幅显示
+-  **拖拽排序规则**：使用 ≡ 拖拽手柄调整规则优先级
+-  **导入/导出设置**：导出将配置 JSON 复制到剪贴板；导入解析粘贴的 JSON
+-  **侧边栏标签筛选栏**：`#history` 顶部的药丸状标签切换按钮，支持多选（点击多个标签）
+-  **主题感知浮层**：浮层自动适应 ChatGPT 深色/浅色模式
+-  **弱化无标签会话**：降低不匹配任何规则的侧边栏项目的不透明度
+-  **扩展图标角标计数**：在扩展图标上显示已标记会话数量
+-  **键盘快捷键**：
+  - `Alt+H` 切换隐藏的会话显示/隐藏
+  - `Alt+F` 聚焦筛选栏
 -  **选中态 vs 非选中态区分**：
   - 选中的会话更明显（更强背景 + 更粗标柱）
 -  **性能优先**：
@@ -35,6 +45,10 @@
   - 批量刷新，减少 DOM 操作
 -  **隐藏右侧导航栏**：加快长对话的加载速度
 -  **对话轮次剪裁**：限制可见轮次数，减少 DOM 开销
+-  **规则测试器**：设置页中的调试区域，输入标题即可测试匹配哪条规则
+-  **行号显示**：设置页规则表格中显示行号，方便定位
+-  **规则说明**：设置页内嵌 `startsWith` 和 `includes` 匹配方式的解释说明
+-  **保存提示**：仅在有未保存更改时显示黄色警告
 
 ---
 
@@ -86,10 +100,12 @@
 
 ## 默认规则
 
-扩展首次安装会自动写入（seed）两条默认规则：
+扩展首次安装会自动写入四条默认规则：
 
-- **[TODO]** → Bright Yellow
-- **[BUG]** → Bright Red
+- **[TODO]** → Bright Yellow（`startsWith`）
+- **[BUG]** → Bright Red（`startsWith`）
+- **code** → Bright Blue（`includes`）
+- **help** → Bright Green（`includes`）
 
 你可以在设置页随时修改或删除。
 
@@ -141,18 +157,20 @@
 关键文件：
 | 文件 | 职责 |
 |------|------|
-| `content.js` | 注入 `chatgpt.com` 的内容脚本。扫描侧边栏、应用高亮、隐藏会话、剪裁对话轮次、管理浮层。 |
-| `background.js` | Service Worker。安装时初始化默认配置，迁移配置结构。 |
-| `options.js` + `options.html` | 设置页。渲染标签规则，持久化配置。 |
+| `content.js` | 注入 `chatgpt.com` 的内容脚本。扫描侧边栏、应用高亮、隐藏会话、剪裁对话轮次、管理主题感知浮层、筛选栏、角标计数、键盘快捷键（`Alt+H`/`Alt+F`）、弱化无标签项。 |
+| `background.js` | Service Worker。安装时初始化默认配置，迁移配置结构，处理内容脚本发送的角标计数消息。 |
+| `options.js` + `options.html` | 设置页。渲染带行号的标签规则表格，支持拖拽排序、导入/导出、规则测试器、规则说明、保存提示，持久化配置。 |
 
 ### 数据流
 
 所有脚本共享存储键 `tagHighlighterConfigV1`：
 ```json
 {
-  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false }],
+  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false, "overlay": true }],
   "maxChatTurns": 0,
-  "hideNavBar": true
+  "hideNavBar": true,
+  "dimUntagged": false,
+  "showBadge": true
 }
 ```
 - `background.js` 安装时初始化默认值并迁移
@@ -185,9 +203,9 @@
 
 ```sh
 # 初始化（仅需一次）
-python3 -m venv /tmp/pw-env
-source /tmp/pw-env/bin/activate
-pip install playwright
+python3 -m venv .venv
+source .venv/bin/activate
+pip install playwright pytest
 playwright install chromium
 ```
 
@@ -197,7 +215,7 @@ from playwright.sync_api import sync_playwright
 
 pw = sync_playwright().start()
 ext_path = '/path/to/chatgpt-tag-highligher/dist/chrome'
-profile_dir = '/tmp/pw-test-profile'
+profile_dir = 'tests/.test-profile'
 
 context = pw.chromium.launch_persistent_context(
     profile_dir,
@@ -207,7 +225,7 @@ context = pw.chromium.launch_persistent_context(
         f'--load-extension={ext_path}',
         '--disable-blink-features=AutomationControlled',
     ],
-    ignore_default_args=['--enable-automation'],
+    ignore_default_args=['--enable-automation', '--disable-extensions'],
 )
 
 page = context.pages[0]
@@ -228,18 +246,6 @@ page.goto('https://chatgpt.com')
 5. **验证导航栏隐藏** —— 检查 `html.cth-hide-navbar` 类名
 6. **实时配置重载** —— 通过 storage 修改配置，等待 1–2 秒，无需 `page.reload()` 即可验证 DOM 更新
 
-### 未来：自动化测试套件
-
-| 测试项 | 操作 | 断言 |
-|------|--------|-----------|
-| 侧边栏高亮 | 设置规则，打开 ChatGPT | 匹配的链接有 `data-cth="1"` |
-| 隐藏标签 | 设置 `hide: true` | 匹配的链接有 `data-cth-hidden="1"` |
-| 实时配置重载 | 通过 `storage.onChanged` 修改配置 | DOM 无需刷新即更新 |
-| 对话剪裁 | 在 100+ 轮次对话中设置 `maxChatTurns: 10` | `article` 数量 ≤ 10 |
-| 导航栏隐藏 | 设置 `hideNavBar: true` | `html.cth-hide-navbar` 类名存在 |
-| 设置页 | 加载设置、修改规则、保存 | storage 中配置与 UI 一致 |
-| 配置迁移 | 使用旧配置（缺少字段）启动 | `background.js` 自动补全缺失字段 |
-
 测试套件位于 `tests/`，运行方式：
 
 ```sh
@@ -250,8 +256,27 @@ pytest tests/test_extension.py -v
 ```
 
 包含：
-- **单元测试** (`tests/unit_test.html`) — 40+ 个断言，测试颜色转换、配置编译、规则匹配，通过 Playwright 在浏览器中运行
-- **E2E 测试** (`tests/test_extension.py`) — 设置页渲染、配置持久化、保存/重置、添加/删除规则、缺失字段迁移
+- **单元测试** (`tests/unit_test.html`) — 50+ 个断言，测试颜色转换、配置编译、规则匹配、浮层逻辑，通过 Playwright 在浏览器中运行
+- **E2E 测试** (`tests/test_extension.py`) — 25 个测试，覆盖设置页渲染、配置持久化、保存/重置、添加/删除规则、拖拽排序、导入/导出、规则测试器、缺失字段迁移等
+
+**重要 — 实时测试的会话管理规则：**
+
+1. **永远不要删除 `tests/.test-profile/`。** 它包含你的 ChatGPT 登录 Cookie 和会话数据。
+2. **在单个浏览器会话中运行所有实时测试** — 一次 `launch_persistent_context` → 所有测试 → 一次 `close`。ChatGPT 使用短期 Cookie，浏览器关闭即失效，因此不要在测试步骤之间关闭和重新打开浏览器。
+3. **Playwright 必需的启动参数：**
+   ```python
+   ctx = pw.chromium.launch_persistent_context(
+       'tests/.test-profile',
+       headless=False,
+       args=[
+           f'--disable-extensions-except={ext_path}',
+           f'--load-extension={ext_path}',
+           '--disable-blink-features=AutomationControlled',
+       ],
+       ignore_default_args=['--enable-automation', '--disable-extensions'],
+   )
+   ```
+   `ignore_default_args` **必须**同时包含 `--enable-automation` 和 `--disable-extensions`。
 
 ## License
 

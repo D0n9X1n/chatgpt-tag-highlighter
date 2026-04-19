@@ -27,6 +27,16 @@ When you use ChatGPT for many ongoing tasks, the sidebar quickly becomes noisy. 
   - add/remove tags
   - choose match type: `startsWith` (recommended) or `includes`
   - choose color from a preset palette or use a custom `#RRGGBB`
+  - **per-rule overlay toggle** — show/hide the overlay banner for each tag individually
+- **Drag-to-reorder rules** — use the ≡ drag handle to rearrange rule priority
+- **Import/Export settings** — Export copies your config JSON to clipboard; Import parses pasted JSON
+- **Sidebar tag filter bar** — pill-shaped toggles at the top of `#history`; click multiple pills to multi-select tags
+- **Theme-aware overlay** — the floating overlay adapts to ChatGPT dark/light mode automatically
+- **Dim untagged conversations** — reduces opacity on sidebar items that don't match any rule
+- **Extension badge counter** — shows a count of tagged conversations on the extension icon
+- **Keyboard shortcuts**:
+  - `Alt+H` toggles hidden conversations
+  - `Alt+F` focuses the filter bar
 - **Selected vs. unselected styles**:
   - selected chat gets a stronger background + thicker stripe
 - **Performance-first implementation**:
@@ -35,6 +45,10 @@ When you use ChatGPT for many ongoing tasks, the sidebar quickly becomes noisy. 
   - batches DOM updates and handles dynamic loading
 - **Hide right navigation bar** for faster loading on long conversations
 - **Chat turn pruning** — limit visible turns to reduce DOM overhead
+- **Rule tester** — debug section in Settings to test which rule matches a typed title
+- **Row numbers** — numbered rules in the options table for easy reference
+- **Rule explainer** — inline explanation of `startsWith` vs `includes` in Settings
+- **Save hint** — a yellow warning appears only when unsaved changes exist
 
 ---
 
@@ -84,9 +98,11 @@ Open extension **Options / Settings**, then configure:
 
 ## Default rules
 
-Out of the box, ChatGPT Tag Highlighter seeds these rules:
-- **[TODO]** → Bright Yellow
-- **[BUG]** → Bright Red
+Out of the box, ChatGPT Tag Highlighter seeds four demo rules:
+- **[TODO]** → Bright Yellow (`startsWith`)
+- **[BUG]** → Bright Red (`startsWith`)
+- **code** → Bright Blue (`includes`)
+- **help** → Bright Green (`includes`)
 
 You can modify or remove them anytime in Settings.
 
@@ -138,18 +154,20 @@ All runtime code lives in `src/`. Chrome and Firefox share the same JS/HTML/CSS 
 Key files:
 | File | Role |
 |------|------|
-| `content.js` | Content script injected into `chatgpt.com`. Scans sidebar, applies highlights, hides chats, prunes turns, manages overlay. |
-| `background.js` | Service worker. Seeds default config on install, migrates schema. |
-| `options.js` + `options.html` | Settings page. Renders tag rules, persists config. |
+| `content.js` | Content script injected into `chatgpt.com`. Scans sidebar, applies highlights, hides chats, prunes turns, manages theme-aware overlay, filter bar, badge counter, keyboard shortcuts (`Alt+H`/`Alt+F`), and dims untagged items. |
+| `background.js` | Service worker. Seeds default config on install, migrates schema, handles badge counter messages from content script. |
+| `options.js` + `options.html` | Settings page. Renders numbered tag rules with drag-to-reorder, import/export, rule tester, rule explainer, save hint, and persists config. |
 
 ### Data flow
 
 All scripts share the storage key `tagHighlighterConfigV1`:
 ```json
 {
-  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false }],
+  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false, "overlay": true }],
   "maxChatTurns": 0,
-  "hideNavBar": true
+  "hideNavBar": true,
+  "dimUntagged": false,
+  "showBadge": true
 }
 ```
 - `background.js` seeds defaults and migrates on install
@@ -182,9 +200,9 @@ Since this is a browser extension with no build step, testing is done via Playwr
 
 ```sh
 # Setup (one-time)
-python3 -m venv /tmp/pw-env
-source /tmp/pw-env/bin/activate
-pip install playwright
+python3 -m venv .venv
+source .venv/bin/activate
+pip install playwright pytest
 playwright install chromium
 ```
 
@@ -194,7 +212,7 @@ from playwright.sync_api import sync_playwright
 
 pw = sync_playwright().start()
 ext_path = '/path/to/chatgpt-tag-highligher/dist/chrome'
-profile_dir = '/tmp/pw-test-profile'
+profile_dir = 'tests/.test-profile'
 
 context = pw.chromium.launch_persistent_context(
     profile_dir,
@@ -204,7 +222,7 @@ context = pw.chromium.launch_persistent_context(
         f'--load-extension={ext_path}',
         '--disable-blink-features=AutomationControlled',
     ],
-    ignore_default_args=['--enable-automation'],
+    ignore_default_args=['--enable-automation', '--disable-extensions'],
 )
 
 page = context.pages[0]
@@ -241,18 +259,6 @@ page.goto('https://chatgpt.com')
 
 6. **Live config reload** — change config via storage, wait 1–2s, verify DOM updated without `page.reload()`.
 
-### Future: Automated test suite
-
-| Test | Action | Assertion |
-|------|--------|-----------|
-| Sidebar highlights | Set rules, navigate to ChatGPT | `data-cth="1"` on matching anchors |
-| Hide tags | Set `hide: true` for a tag | Matching anchors get `data-cth-hidden="1"` |
-| Live config reload | Change config via `storage.onChanged` | DOM updates without page reload |
-| Turn pruning | Set `maxChatTurns: 10` on a 100+ turn chat | `article` count ≤ 10 |
-| Nav bar hiding | Set `hideNavBar: true` | `html.cth-hide-navbar` class present |
-| Options page | Load options, modify rules, save | Config in storage matches UI state |
-| Migration | Start with old config (missing fields) | `background.js` adds missing fields |
-
 The test suite lives in `tests/` and can be run with:
 
 ```sh
@@ -263,8 +269,27 @@ pytest tests/test_extension.py -v
 ```
 
 Tests include:
-- **Unit tests** (`tests/unit_test.html`) — 40+ assertions for color normalization, config compilation, and rule matching, run in-browser via Playwright
-- **E2E tests** (`tests/test_extension.py`) — options page rendering, config persistence, save/reset, add/delete rows, migration of missing fields
+- **Unit tests** (`tests/unit_test.html`) — 50+ assertions for color normalization, config compilation, rule matching, and overlay logic, run in-browser via Playwright
+- **E2E tests** (`tests/test_extension.py`) — 25 tests covering options page rendering, config persistence, save/reset, add/delete rows, drag-to-reorder, import/export, rule tester, migration of missing fields, and more
+
+**CRITICAL — session management for live tests:**
+
+1. **Never delete `tests/.test-profile/`.** It contains your ChatGPT login cookies and session data.
+2. **Run ALL live tests in a single browser session** — one `launch_persistent_context` → all tests → one `close`. ChatGPT uses short-lived cookies that expire when the browser closes, so do NOT close and reopen the browser between test steps.
+3. **Required Playwright launch args:**
+   ```python
+   ctx = pw.chromium.launch_persistent_context(
+       'tests/.test-profile',
+       headless=False,
+       args=[
+           f'--disable-extensions-except={ext_path}',
+           f'--load-extension={ext_path}',
+           '--disable-blink-features=AutomationControlled',
+       ],
+       ignore_default_args=['--enable-automation', '--disable-extensions'],
+   )
+   ```
+   `ignore_default_args` **must** include both `--enable-automation` and `--disable-extensions`.
 
 ## License
 See [License](./LICENSE)

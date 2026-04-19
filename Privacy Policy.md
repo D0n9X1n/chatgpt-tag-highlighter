@@ -1,6 +1,6 @@
 # Privacy Policy — ChatGPT Tag Highlighter
 
-**Last updated:** 2025-12-26
+**Last updated:** 2026-04-19
 
 ChatGPT Tag Highlighter (“the Extension”) highlights ChatGPT sidebar conversations based on tags in the conversation title (e.g., **[TODO]**, **[BUG]**). This policy explains what the Extension accesses and how it handles data.
 
@@ -10,8 +10,8 @@ ChatGPT Tag Highlighter (“the Extension”) highlights ChatGPT sidebar convers
 
 To provide highlighting, the Extension runs on supported ChatGPT domains (e.g., `chatgpt.com` and optionally `chat.openai.com`) and **reads limited on-page content**:
 
-- **Website content accessed:** the **visible conversation titles** shown in the **sidebar chat list** (the text you see in the left navigation).
-- **Purpose:** to check whether a title matches your configured tags and apply styling (colored left stripe and background).
+- **Website content accessed:** the **visible conversation titles** shown in the **sidebar chat list** (the text you see in the left navigation), and the **current theme state** (dark or light mode, detected via the `class` attribute on the `<html>` element).
+- **Purpose:** to check whether a title matches your configured tags and apply styling (colored left stripe and background), and to adapt the overlay appearance to the active ChatGPT theme.
 
 **The Extension does not read or process:**
 - the message content inside a chat
