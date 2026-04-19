@@ -43,7 +43,17 @@
 		importCancel: $('importCancel'),
 		debugTitle: $('debugTitle'),
 		debugResult: $('debugResult'),
+		saveHint: $('saveHint'),
 	};
+
+	// ---- Dirty state tracking ----
+	function markDirty() {
+		els.saveHint.style.display = '';
+	}
+
+	function markClean() {
+		els.saveHint.style.display = 'none';
+	}
 
 	// ---- Palette (display only; stored as hex) ----
 	const PALETTE = [
@@ -313,6 +323,8 @@
 			return;
 		}
 
+		markDirty();
+
 		if (e.target.classList.contains('color')) {
 			// Preset selected -> update hex + preview
 			const hex = e.target.value ? toHex(e.target.value) : toHex(tr.querySelector('.hex').value);
@@ -335,6 +347,7 @@
 		if (e.target.classList.contains('del')) {
 			tr.remove();
 			updateRowNumbers();
+			markDirty();
 			return;
 		}
 
@@ -362,14 +375,15 @@
 		});
 		els.rows.append(tr);
 		updateRowNumbers();
+		markDirty();
 		tr.querySelector('.tag').focus();
 	});
 
 	els.reset.addEventListener('click', async () => {
 		const cfg = DEFAULT_CFG();
-		// Persist defaults as hex
 		await set({[STORAGE_KEY]: cfg});
 		render(cfg);
+		markClean();
 		toast('Reset ✓');
 	});
 
@@ -380,14 +394,13 @@
 			return;
 		}
 
-		// Final enforcement: make sure we only save #RRGGBB
 		for (let i = 0; i < cfg.rules.length; i++) {
 			cfg.rules[i].color = toHex(cfg.rules[i].color);
 		}
 
 		await set({[STORAGE_KEY]: cfg});
-		// Re-render to reflect normalized values in UI
 		render(cfg);
+		markClean();
 		toast('Saved ✓');
 	});
 
@@ -396,6 +409,19 @@
 		if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 's') {
 			e.preventDefault();
 			els.save.click();
+		}
+	});
+
+	// ---- General section dirty tracking ----
+	els.maxChatTurns.addEventListener('input', markDirty);
+	els.hideNavBar.addEventListener('change', markDirty);
+	els.dimUntagged.addEventListener('change', markDirty);
+	els.showBadge.addEventListener('change', markDirty);
+
+	// Tag input typing also marks dirty
+	els.rows.addEventListener('input', e => {
+		if (e.target.classList.contains('tag') || e.target.classList.contains('hex')) {
+			markDirty();
 		}
 	});
 
@@ -457,6 +483,7 @@
 		render(cfg);
 		els.importPanel.style.display = 'none';
 		els.importText.value = '';
+		markClean();
 		toast('Imported ✓');
 	});
 
@@ -498,6 +525,7 @@
 		} else {
 			els.rows.insertBefore(draggedRow, targetRow.nextElementSibling);
 		}
+		markDirty();
 	});
 
 	els.rows.addEventListener('dragend', () => {
