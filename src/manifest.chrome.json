@@ -3,6 +3,14 @@
   "name": "ChatGPT Tag Highlighter",
   "version": "0.0.3",
   "description": "Highlight ChatGPT sidebar chats by tags like [TODO] with custom colors.",
+  "icons": {
+    "128": "icon-128.png"
+  },
+  "action": {
+    "default_icon": {
+      "128": "icon-128.png"
+    }
+  },
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"

@@ -515,23 +515,32 @@
 		}
 
 		const trs = els.rows.querySelectorAll('tr');
+		let winnerIdx = -1;
+		const lines = [];
+
 		for (let i = 0; i < trs.length; i++) {
 			const tag = String(trs[i].querySelector('.tag').value || '').trim();
 			if (!tag) continue;
 			const match = safeMatch(trs[i].querySelector('.match').value);
 			const hit = match === 'startsWith' ? title.startsWith(tag) : title.includes(tag);
-			if (hit) {
-				const hex = toHex(trs[i].querySelector('.hex').value);
-				els.debugResult.innerHTML =
-					`<span class="matchHit">✓ Rule #${i + 1}</span> — ` +
-					`tag <code>${tag}</code> (${match}) matches ` +
-					`"<b>${title}</b>" ` +
-					`<span class="swatch" style="background:${hex};width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin-left:4px"></span>`;
-				return;
+			const hex = toHex(trs[i].querySelector('.hex').value);
+			const swatch = `<span class="swatch" style="background:${hex};width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin:0 4px"></span>`;
+
+			if (hit && winnerIdx === -1) {
+				winnerIdx = i;
+				lines.push(`<div class="matchHit">✓ #${i + 1} ${swatch} <code>${tag}</code> (${match}) — <b>WINNER</b></div>`);
+			} else if (hit) {
+				lines.push(`<div class="matchSkipped">✓ #${i + 1} ${swatch} <code>${tag}</code> (${match}) — matches but skipped (rule #${winnerIdx + 1} won)</div>`);
+			} else {
+				lines.push(`<div class="matchMiss">✗ #${i + 1} ${swatch} <code>${tag}</code> (${match})</div>`);
 			}
 		}
 
-		els.debugResult.innerHTML = `<span class="matchNone">✗ No rule matches "${title}"</span>`;
+		if (winnerIdx === -1) {
+			lines.push(`<div class="matchNone">✗ No rule matches "${title}"</div>`);
+		}
+
+		els.debugResult.innerHTML = lines.join('');
 	}
 
 	els.debugTitle.addEventListener('input', runDebugTest);

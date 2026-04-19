@@ -13,7 +13,7 @@
 	const STYLE_ID = 'cth-style';
 	const OVERLAY_ID = 'cth-overlay';
 	const FILTER_BAR_ID = 'cth-filter-bar';
-	const DEBUG = true; // Flip to false when stable
+	const DEBUG = false;
 
 	const log = (...a) => DEBUG && console.log('[CTH]', ...a);
 	const warn = (...a) => DEBUG && console.warn('[CTH]', ...a);
@@ -544,7 +544,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			} else {
 				const title = getChatTitleText(a);
 				const r = matchRule(title, compiled.rules);
-				if (r && activeFilters.has(r.tag)) {
+				if (r && activeFilters.has(r.tag) && !r.hide) {
 					a.style.removeProperty('display');
 				} else {
 					a.style.display = 'none';
@@ -987,6 +987,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			scheduleOverlayLayout();
 
 			if (compiled.maxChatTurns > 0) {
+				turnObserver.disconnect();
 				turnObserver.observe(document.documentElement, {childList: true, subtree: true});
 				schedulePrune();
 			} else {

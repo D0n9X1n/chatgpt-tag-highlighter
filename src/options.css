@@ -230,8 +230,29 @@ th{
   font-weight: 600;
 }
 
+.debugResult .matchSkipped{
+  color: #fabd2f;
+  opacity: 0.7;
+}
+
+.debugResult .matchMiss{
+  color: var(--muted);
+  opacity: 0.5;
+}
+
 .debugResult .matchNone{
   color: var(--muted);
+}
+
+.debugResult div{
+  padding: 2px 0;
+}
+
+.debugResult code{
+  background: rgba(255,255,255,.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 .toast{
