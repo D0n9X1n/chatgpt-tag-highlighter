@@ -315,6 +315,12 @@
 		toast('Auto-saved ✓');
 	}
 
+	function onRulesChanged() {
+		updateRowNumbers();
+		runDebugTest();
+		autoSave();
+	}
+
 	// ---- Event delegation for best performance ----
 	els.rows.addEventListener('change', e => {
 		const tr = e.target.closest('tr');
@@ -323,17 +329,15 @@
 		}
 
 		if (e.target.classList.contains('color')) {
-			// Preset selected -> update hex + preview
 			const hex = e.target.value ? toHex(e.target.value) : toHex(tr.querySelector('.hex').value);
 			setRowColor(tr, hex);
 		}
 
 		if (e.target.classList.contains('hex')) {
-			// Normalize on change for instant feedback
 			setRowColor(tr, e.target.value);
 		}
 
-		autoSave();
+		onRulesChanged();
 	});
 
 	els.rows.addEventListener('click', e => {
@@ -344,13 +348,12 @@
 
 		if (e.target.classList.contains('del')) {
 			tr.remove();
-			updateRowNumbers();
-			autoSave();
+			onRulesChanged();
 			return;
 		}
 	});
 
-	// Normalize hex on blur (covers paste + partial input) and auto-save
+	// Normalize hex on blur (covers paste + partial input)
 	els.rows.addEventListener('blur', e => {
 		const tr = e.target.closest('tr');
 		if (!tr) {
@@ -362,7 +365,7 @@
 		}
 
 		if (e.target.classList.contains('tag') || e.target.classList.contains('hex')) {
-			autoSave();
+			onRulesChanged();
 		}
 	}, true);
 
@@ -372,9 +375,8 @@
 			tag: '', match: 'startsWith', color: PALETTE[0][1], hide: false, overlay: true,
 		});
 		els.rows.append(tr);
-		updateRowNumbers();
+		onRulesChanged();
 		tr.querySelector('.tag').focus();
-		setTimeout(() => autoSave(), 50);
 	});
 
 	// ---- General section auto-save ----
@@ -488,7 +490,7 @@
 	els.rows.addEventListener('dragend', () => {
 		if (draggedRow) { draggedRow.classList.remove('dragging'); draggedRow = null; }
 		for (const tr of els.rows.querySelectorAll('.drag-over')) tr.classList.remove('drag-over');
-		updateRowNumbers();
+		onRulesChanged();
 	});
 
 	// ---- Rule tester ----
