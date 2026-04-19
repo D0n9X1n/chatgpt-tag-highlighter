@@ -94,6 +94,12 @@
 			{
 				tag: '[BUG]', match: 'startsWith', color: '#fb4934', hide: false, overlay: true,
 			},
+			{
+				tag: 'code', match: 'includes', color: '#83a598', hide: false, overlay: true,
+			},
+			{
+				tag: 'help', match: 'includes', color: '#8ec07c', hide: false, overlay: true,
+			},
 		],
 		maxChatTurns: 0,
 		hideNavBar: true,

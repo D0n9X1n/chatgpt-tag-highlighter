@@ -17,6 +17,12 @@
 		{
 			tag: '[BUG]', color: '#fb4934', match: 'startsWith', hide: false, overlay: true,
 		}, // BrightRed
+		{
+			tag: 'code', color: '#83a598', match: 'includes', hide: false, overlay: true,
+		}, // Demo: highlights chats containing "code"
+		{
+			tag: 'help', color: '#8ec07c', match: 'includes', hide: false, overlay: true,
+		}, // Demo: highlights chats containing "help"
 	];
 
 	const DEFAULT_MAX_CHAT_TURNS = 0;
