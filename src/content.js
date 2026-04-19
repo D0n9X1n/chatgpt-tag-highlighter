@@ -468,7 +468,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	}
 
 	// ---- Filter bar ----
-	let activeFilter = null;
+	let activeFilters = new Set();
 
 	function ensureFilterBar() {
 		let bar = document.getElementById(FILTER_BAR_ID);
@@ -495,11 +495,11 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		bar.innerHTML = '';
 
 		const allPill = document.createElement('span');
-		allPill.className = 'cth-pill' + (activeFilter === null ? ' active' : '');
+		allPill.className = 'cth-pill' + (activeFilters.size === 0 ? ' active' : '');
 		allPill.textContent = 'All';
 		allPill.tabIndex = 0;
 		allPill.addEventListener('click', () => {
-			activeFilter = null;
+			activeFilters.clear();
 			renderFilterBar();
 			applyFilter();
 		});
@@ -507,17 +507,21 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 		for (const r of visibleRules) {
 			const pill = document.createElement('span');
-			pill.className = 'cth-pill' + (activeFilter === r.tag ? ' active' : '');
+			pill.className = 'cth-pill' + (activeFilters.has(r.tag) ? ' active' : '');
 			pill.textContent = r.tag;
 			pill.tabIndex = 0;
 			pill.style.setProperty('--pill-color', r.color);
 			pill.style.setProperty('--pill-bg', hexToRgba(r.color, 0.18));
-			if (activeFilter === r.tag) {
+			if (activeFilters.has(r.tag)) {
 				pill.style.borderColor = r.color;
 				pill.style.background = hexToRgba(r.color, 0.18);
 			}
 			pill.addEventListener('click', () => {
-				activeFilter = activeFilter === r.tag ? null : r.tag;
+				if (activeFilters.has(r.tag)) {
+					activeFilters.delete(r.tag);
+				} else {
+					activeFilters.add(r.tag);
+				}
 				renderFilterBar();
 				applyFilter();
 			});
@@ -532,7 +536,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
 		for (const a of anchors) {
-			if (activeFilter === null) {
+			if (activeFilters.size === 0) {
 				a.style.removeProperty('display');
 				if (a.dataset.cthHidden === '1') {
 					a.style.display = 'none';
@@ -540,7 +544,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			} else {
 				const title = getChatTitleText(a);
 				const r = matchRule(title, compiled.rules);
-				if (r && r.tag === activeFilter) {
+				if (r && activeFilters.has(r.tag)) {
 					a.style.removeProperty('display');
 				} else {
 					a.style.display = 'none';
@@ -587,7 +591,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			applyRuleToAnchor(a, title);
 		}
 
-		if (activeFilter !== null) {
+		if (activeFilters.size > 0) {
 			applyFilter();
 		}
 
@@ -967,7 +971,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			log('storage.onChanged fired — reloading config', {areaName});
 			compiled = compileConfig(newCfg);
 			itemCache = new WeakMap();
-			activeFilter = null;
+			activeFilters.clear();
 			renderFilterBar();
 
 			if (!historyRoot) {
