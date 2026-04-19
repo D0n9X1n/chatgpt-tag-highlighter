@@ -12,18 +12,14 @@
     <div class="title">
       <h1>ChatGPT Tag Highlighter</h1>
       <p class="sub">
-        Configure sidebar tag rules, hide tags, and optionally prune chat turns.
+        Auto-saves on every change.
       </p>
     </div>
 
     <div class="actions">
       <button id="exportCfg" type="button" class="ghost">Export</button>
       <button id="importCfg" type="button" class="ghost">Import</button>
-      <button id="addRow" type="button">+ Add Tag</button>
-      <button id="reset" type="button" class="ghost">Reset</button>
-      <button id="save" type="button" class="primary save-btn">💾 Save Changes</button>
     </div>
-    <p id="saveHint" class="saveHint" style="display:none">⚠️ Changes are not applied until you click <b>Save Changes</b> (or press Ctrl/⌘+S).</p>
   </header>
 
   <div id="importPanel" class="importPanel" style="display:none">
@@ -105,6 +101,10 @@
 
         <tbody id="rows"></tbody>
       </table>
+
+      <div class="addRow-wrap">
+        <button id="addRow" type="button">+ Add Tag</button>
+      </div>
 
       <p class="hint">
         Tip: Use <b>startsWith</b> for best performance. Rules are matched top-to-bottom.

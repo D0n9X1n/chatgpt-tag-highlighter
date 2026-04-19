@@ -28,8 +28,6 @@
 		rows: $('rows'),
 		tpl: $('rowTemplate'),
 		addRow: $('addRow'),
-		reset: $('reset'),
-		save: $('save'),
 		maxChatTurns: $('maxChatTurns'),
 		hideNavBar: $('hideNavBar'),
 		dimUntagged: $('dimUntagged'),
@@ -43,17 +41,7 @@
 		importCancel: $('importCancel'),
 		debugTitle: $('debugTitle'),
 		debugResult: $('debugResult'),
-		saveHint: $('saveHint'),
 	};
-
-	// ---- Dirty state tracking ----
-	function markDirty() {
-		els.saveHint.style.display = '';
-	}
-
-	function markClean() {
-		els.saveHint.style.display = 'none';
-	}
 
 	// ---- Palette (display only; stored as hex) ----
 	const PALETTE = [
@@ -316,6 +304,17 @@
 		};
 	}
 
+	// ---- Auto-save ----
+	async function autoSave() {
+		const cfg = collectConfig();
+		if (cfg.rules.length === 0) return;
+		for (let i = 0; i < cfg.rules.length; i++) {
+			cfg.rules[i].color = toHex(cfg.rules[i].color);
+		}
+		await set({[STORAGE_KEY]: cfg});
+		toast('Auto-saved ✓');
+	}
+
 	// ---- Event delegation for best performance ----
 	els.rows.addEventListener('change', e => {
 		const tr = e.target.closest('tr');
@@ -323,19 +322,18 @@
 			return;
 		}
 
-		markDirty();
-
 		if (e.target.classList.contains('color')) {
 			// Preset selected -> update hex + preview
 			const hex = e.target.value ? toHex(e.target.value) : toHex(tr.querySelector('.hex').value);
 			setRowColor(tr, hex);
-			return;
 		}
 
 		if (e.target.classList.contains('hex')) {
 			// Normalize on change for instant feedback
 			setRowColor(tr, e.target.value);
 		}
+
+		autoSave();
 	});
 
 	els.rows.addEventListener('click', e => {
@@ -347,25 +345,25 @@
 		if (e.target.classList.contains('del')) {
 			tr.remove();
 			updateRowNumbers();
-			markDirty();
+			autoSave();
 			return;
 		}
-
-
 	});
 
-	// Normalize hex on blur (covers paste + partial input)
+	// Normalize hex on blur (covers paste + partial input) and auto-save
 	els.rows.addEventListener('blur', e => {
-		if (!e.target.classList.contains('hex')) {
-			return;
-		}
-
 		const tr = e.target.closest('tr');
 		if (!tr) {
 			return;
 		}
 
-		setRowColor(tr, e.target.value);
+		if (e.target.classList.contains('hex')) {
+			setRowColor(tr, e.target.value);
+		}
+
+		if (e.target.classList.contains('tag') || e.target.classList.contains('hex')) {
+			autoSave();
+		}
 	}, true);
 
 	// ---- Buttons ----
@@ -375,55 +373,15 @@
 		});
 		els.rows.append(tr);
 		updateRowNumbers();
-		markDirty();
 		tr.querySelector('.tag').focus();
+		setTimeout(() => autoSave(), 50);
 	});
 
-	els.reset.addEventListener('click', async () => {
-		const cfg = DEFAULT_CFG();
-		await set({[STORAGE_KEY]: cfg});
-		render(cfg);
-		markClean();
-		toast('Reset ✓');
-	});
-
-	els.save.addEventListener('click', async () => {
-		const cfg = collectConfig();
-		if (cfg.rules.length === 0) {
-			toast('No rules to save');
-			return;
-		}
-
-		for (let i = 0; i < cfg.rules.length; i++) {
-			cfg.rules[i].color = toHex(cfg.rules[i].color);
-		}
-
-		await set({[STORAGE_KEY]: cfg});
-		render(cfg);
-		markClean();
-		toast('Saved ✓');
-	});
-
-	// Ctrl/Cmd+S => Save
-	globalThis.addEventListener('keydown', e => {
-		if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 's') {
-			e.preventDefault();
-			els.save.click();
-		}
-	});
-
-	// ---- General section dirty tracking ----
-	els.maxChatTurns.addEventListener('input', markDirty);
-	els.hideNavBar.addEventListener('change', markDirty);
-	els.dimUntagged.addEventListener('change', markDirty);
-	els.showBadge.addEventListener('change', markDirty);
-
-	// Tag input typing also marks dirty
-	els.rows.addEventListener('input', e => {
-		if (e.target.classList.contains('tag') || e.target.classList.contains('hex')) {
-			markDirty();
-		}
-	});
+	// ---- General section auto-save ----
+	els.maxChatTurns.addEventListener('input', () => autoSave());
+	els.hideNavBar.addEventListener('change', () => autoSave());
+	els.dimUntagged.addEventListener('change', () => autoSave());
+	els.showBadge.addEventListener('change', () => autoSave());
 
 	// ---- Import / Export ----
 	els.exportCfg.addEventListener('click', async () => {
@@ -483,7 +441,6 @@
 		render(cfg);
 		els.importPanel.style.display = 'none';
 		els.importText.value = '';
-		markClean();
 		toast('Imported ✓');
 	});
 
@@ -525,7 +482,7 @@
 		} else {
 			els.rows.insertBefore(draggedRow, targetRow.nextElementSibling);
 		}
-		markDirty();
+		autoSave();
 	});
 
 	els.rows.addEventListener('dragend', () => {

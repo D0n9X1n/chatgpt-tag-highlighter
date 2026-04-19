@@ -161,7 +161,7 @@ class TestOptionsPage:
         page.close()
 
     def test_save_persists_config(self, browser_context, ext_id):
-        """Clicking Save should persist the current UI state to storage."""
+        """Changes should auto-save to storage."""
         page = self._open_options()
 
         # Set a clean config
@@ -175,10 +175,10 @@ class TestOptionsPage:
 
         # Modify maxChatTurns in UI
         page.fill('#maxChatTurns', '20')
+        page.evaluate("document.getElementById('maxChatTurns').dispatchEvent(new Event('change', {bubbles: true}))")
+        page.wait_for_timeout(500)
         # Check hideNavBar
         page.check('#hideNavBar')
-        # Click Save
-        page.click('#save')
         page.wait_for_timeout(500)
 
         cfg = self._get_config(page)
@@ -205,38 +205,17 @@ class TestOptionsPage:
 
         # Add a row
         page.click('#addRow')
+        page.wait_for_timeout(500)
         after_add = page.evaluate("document.querySelectorAll('#rows tr').length")
         assert after_add == 2, f'Expected 2 rows after add, got {after_add}'
 
         # Delete the first row
         page.click('#rows tr:first-child .del')
+        page.wait_for_timeout(500)
         after_delete = page.evaluate("document.querySelectorAll('#rows tr').length")
         assert after_delete == 1, f'Expected 1 row after delete, got {after_delete}'
 
         page.close()
-
-    def test_reset_restores_defaults(self, browser_context, ext_id):
-        """Reset button should restore default config."""
-        page = self._open_options()
-
-        # Set non-default config
-        self._set_config(page, {
-            'rules': [{'tag': '[CUSTOM]', 'match': 'includes', 'color': '#111111', 'hide': True}],
-            'maxChatTurns': 99,
-            'hideNavBar': False,
-        })
-        page.reload()
-        page.wait_for_timeout(1500)
-
-        # Click Reset
-        page.click('#reset')
-        page.wait_for_timeout(500)
-
-        cfg = self._get_config(page)
-        page.close()
-
-        assert cfg['rules'][0]['tag'] == '[TODO]', 'Reset should restore [TODO] rule'
-        assert cfg['maxChatTurns'] == 0, 'Reset should restore maxChatTurns=0'
 
     def test_import_applies_config(self, browser_context, ext_id):
         """Import should parse JSON, persist, and re-render."""
@@ -271,7 +250,7 @@ class TestOptionsPage:
         assert 'Invalid' in toast_text
 
     def test_drag_reorder_saves(self, browser_context, ext_id):
-        """Reordering rows and saving should persist new order."""
+        """Reordering rows should auto-save the new order."""
         page = self._open_options()
         self._set_config(page, {
             'rules': [
@@ -286,15 +265,17 @@ class TestOptionsPage:
         tag0 = page.evaluate("document.querySelectorAll('#rows tr .tag')[0].value")
         assert tag0 == '[FIRST]'
 
-        # Simulate reorder via JS (drag API is hard in Playwright)
+        # Simulate reorder via JS (drag API is hard in Playwright) then trigger auto-save
         page.evaluate("""
             const rows = document.getElementById('rows');
             const trs = rows.querySelectorAll('tr');
             rows.insertBefore(trs[1], trs[0]);
+            // Trigger change from a child element so event delegation works
+            rows.querySelectorAll('tr')[0].querySelector('.tag')
+                .dispatchEvent(new Event('change', {bubbles: true}));
         """)
-
-        page.click('#save')
         page.wait_for_timeout(500)
+
         cfg = self._get_config(page)
         page.close()
         assert cfg['rules'][0]['tag'] == '[SECOND]'
@@ -333,7 +314,6 @@ class TestOptionsPage:
         page.wait_for_timeout(1500)
 
         page.uncheck('#rows tr:first-child .overlay')
-        page.click('#save')
         page.wait_for_timeout(500)
 
         cfg = self._get_config(page)
@@ -476,28 +456,6 @@ class TestOptionsPage:
         assert cfg['hideNavBar'] is False
         assert cfg['maxChatTurns'] == 5
 
-    def test_reset_has_four_default_rules(self, browser_context, ext_id):
-        """Reset should restore 4 default rules including demo rules."""
-        page = self._open_options()
-
-        self._set_config(page, {
-            'rules': [{'tag': '[CUSTOM]', 'match': 'includes', 'color': '#111111', 'hide': True}],
-            'maxChatTurns': 99, 'hideNavBar': False,
-        })
-        page.reload()
-        page.wait_for_timeout(1500)
-
-        page.click('#reset')
-        page.wait_for_timeout(500)
-
-        cfg = self._get_config(page)
-        page.close()
-        assert len(cfg['rules']) == 4, f'Reset should have 4 rules, got {len(cfg["rules"])}'
-        assert cfg['rules'][0]['tag'] == '[TODO]'
-        assert cfg['rules'][2]['tag'] == 'code'
-        assert cfg['rules'][2]['match'] == 'includes'
-        assert cfg['rules'][3]['tag'] == 'help'
-
 
 # ============================================================
 # Background Script Migration Tests
@@ -570,7 +528,6 @@ class TestMigration:
         page.wait_for_timeout(1500)
 
         page.check('#dimUntagged')
-        page.click('#save')
         page.wait_for_timeout(500)
 
         cfg = json.loads(page.evaluate(
@@ -593,7 +550,6 @@ class TestMigration:
         page.wait_for_timeout(1500)
 
         page.uncheck('#showBadge')
-        page.click('#save')
         page.wait_for_timeout(500)
 
         cfg = json.loads(page.evaluate(

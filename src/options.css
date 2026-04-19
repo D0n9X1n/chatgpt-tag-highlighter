@@ -62,19 +62,6 @@ button.primary{
   background: rgba(96,165,250,.18);
 }
 
-button.save-btn{
-  padding: 10px 20px;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.saveHint{
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: #fabd2f;
-  text-align: right;
-}
-
 button.ghost{
   background: transparent;
 }
@@ -351,5 +338,9 @@ tr.dragging{
 
 tr.drag-over td{
   border-top: 2px solid var(--accent);
+}
+
+.addRow-wrap{
+  margin-top: 8px;
 }
 
