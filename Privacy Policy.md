@@ -1,6 +1,6 @@
 # Privacy Policy — ChatGPT Tag Highlighter
 
-**Last updated:** 2026-04-19
+**Last updated:** 2026-04-21
 
 ChatGPT Tag Highlighter (“the Extension”) highlights ChatGPT sidebar conversations based on tags in the conversation title (e.g., **[TODO]**, **[BUG]**). This policy explains what the Extension accesses and how it handles data.
 

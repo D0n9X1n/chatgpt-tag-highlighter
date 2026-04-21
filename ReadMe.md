@@ -48,7 +48,7 @@ When you use ChatGPT for many ongoing tasks, the sidebar quickly becomes noisy. 
 - **Rule tester** — debug section in Settings to test which rule matches a typed title
 - **Row numbers** — numbered rules in the options table for easy reference
 - **Rule explainer** — inline explanation of `startsWith` vs `includes` in Settings
-- **Save hint** — a yellow warning appears only when unsaved changes exist
+- **Auto-save** — every change auto-saves immediately with an "Auto-saved ✓" toast; no Save/Reset buttons
 
 ---
 
@@ -156,7 +156,7 @@ Key files:
 |------|------|
 | `content.js` | Content script injected into `chatgpt.com`. Scans sidebar, applies highlights, hides chats, prunes turns, manages theme-aware overlay, filter bar, badge counter, keyboard shortcuts (`Alt+H`/`Alt+F`), and dims untagged items. |
 | `background.js` | Service worker. Seeds default config on install, migrates schema, handles badge counter messages from content script. |
-| `options.js` + `options.html` | Settings page. Renders numbered tag rules with drag-to-reorder, import/export, rule tester, rule explainer, save hint, and persists config. |
+| `options.js` + `options.html` | Settings page. Auto-saves on every change. Renders numbered tag rules with drag-to-reorder, import/export, rule tester, rule explainer, and persists config. Header has title + Export/Import; "+ Add Tag" is below the table. |
 
 ### Data flow
 
@@ -270,7 +270,7 @@ pytest tests/test_extension.py -v
 
 Tests include:
 - **Unit tests** (`tests/unit_test.html`) — 50+ assertions for color normalization, config compilation, rule matching, and overlay logic, run in-browser via Playwright
-- **E2E tests** (`tests/test_extension.py`) — 25 tests covering options page rendering, config persistence, save/reset, add/delete rows, drag-to-reorder, import/export, rule tester, migration of missing fields, and more
+- **E2E tests** (`tests/test_extension.py`) — 23 tests covering options page rendering, config persistence, auto-save, add/delete rows, drag-to-reorder, import/export, rule tester, migration of missing fields, and more
 
 **CRITICAL — session management for live tests:**
 
