@@ -1,7 +1,18 @@
 # ChatGPT Tag Highlighter
 
+[![Tests](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml)
+[![CodeQL](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml)
+[![GitHub release](https://img.shields.io/github/v/release/D0n9X1n/chatgpt-tag-highlighter?include_prereleases&logo=github&label=release&color=brightgreen)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/releases)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=chrome%20web%20store&color=brightgreen)](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm)
+[![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=users)](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm)
+[![Firefox Add-ons](https://img.shields.io/amo/v/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=firefox%20add-ons&color=brightgreen)](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/)
+[![Firefox users](https://img.shields.io/amo/users/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=users)](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/)
+[![License: MIT](https://img.shields.io/github/license/D0n9X1n/chatgpt-tag-highlighter?color=brightgreen)](./LICENSE)
+
 Yet, just another lightweight browser extension that highlights ChatGPT sidebar conversations based on **title tags** like **[TODO]** and **[BUG]**. 
 It adds a **colored left stripe** + subtle background so tagged chats are easy to scan and jump to.
+
+[中文说明 / Chinese](./ReadMe.CN.md)
 
 ![LOGO](./src/icon.png)
 
