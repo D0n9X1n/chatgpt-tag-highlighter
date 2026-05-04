@@ -16,6 +16,8 @@ Usage:
 
 import json
 import os
+import re
+import tempfile
 import time
 import pytest
 from pathlib import Path
@@ -26,40 +28,75 @@ EXT_PATH = str(ROOT / 'dist' / 'chrome')
 UNIT_TEST_PATH = str(ROOT / 'tests' / 'unit_test.html')
 STORAGE_KEY = 'tagHighlighterConfigV1'
 
+# CI detection — GitHub Actions and most CI providers set CI=true.
+# In CI we use a throwaway profile dir under tempfile so each run is clean.
+# Locally we keep the persistent .test-profile so contributors can reuse
+# extension state (and, for live ChatGPT tests, login cookies).
+IS_CI = os.environ.get('CI', '').lower() in ('1', 'true', 'yes')
+
+
+def _profile_dir():
+    if IS_CI:
+        # tmp_path_factory would also work, but we want a stable per-session
+        # path so a single browser_context is reused across the whole run.
+        return tempfile.mkdtemp(prefix='cth-ci-profile-')
+    return str(Path(__file__).parent / '.test-profile')
+
 
 @pytest.fixture(scope='session')
 def browser_context():
-    """Launch Chromium with the extension loaded in a temporary profile."""
+    """Launch Chromium with the extension loaded.
+
+    Local dev: persistent profile at tests/.test-profile, headed window.
+    CI: throwaway temp profile, headed-via-Xvfb (extensions still don't
+    load reliably in --headless=new across all Chromium builds, so we keep
+    headless=False and rely on Xvfb in CI — see .github/workflows/test.yml).
+    """
     pw = sync_playwright().start()
-    profile_dir = str(Path(__file__).parent / '.test-profile')
     context = pw.chromium.launch_persistent_context(
-        profile_dir,
+        _profile_dir(),
         headless=False,
         args=[
             f'--disable-extensions-except={EXT_PATH}',
             f'--load-extension={EXT_PATH}',
             '--disable-blink-features=AutomationControlled',
+            # Make the headed window deterministic in CI/Xvfb.
+            '--window-size=1280,900',
         ],
-        ignore_default_args=['--enable-automation'],
+        ignore_default_args=['--enable-automation', '--disable-extensions'],
     )
     yield context
     context.close()
     pw.stop()
 
 
+# Match the 32-char lowercase a–p extension ID portion of an extension URL.
+_EXT_ID_RE = re.compile(r'chrome-extension://([a-p]{32})/')
+
+
 @pytest.fixture(scope='session')
 def ext_id(browser_context):
-    """Discover the extension ID at runtime."""
-    page = browser_context.new_page()
-    page.goto('chrome://extensions')
-    page.wait_for_timeout(2000)
-    eid = page.evaluate(
-        'document.querySelector("extensions-manager")'
-        '.shadowRoot.querySelector("extensions-item-list")'
-        '.shadowRoot.querySelector("extensions-item").id'
-    )
-    page.close()
-    return eid
+    """Discover the extension ID from the loaded service worker URL.
+
+    More robust than scraping chrome://extensions shadow DOM, which breaks
+    on Chrome UI updates. The MV3 service worker registers as soon as the
+    extension loads — we either find it already registered or wait for the
+    'serviceworker' event.
+    """
+    sw = next(iter(browser_context.service_workers), None)
+    if sw is None:
+        try:
+            sw = browser_context.wait_for_event('serviceworker', timeout=10_000)
+        except Exception as exc:
+            raise RuntimeError(
+                'Could not discover extension service worker. '
+                f'EXT_PATH={EXT_PATH}'
+            ) from exc
+
+    m = _EXT_ID_RE.match(sw.url)
+    if not m:
+        raise RuntimeError(f'Unexpected service worker URL: {sw.url}')
+    return m.group(1)
 
 
 # ============================================================
