@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/D0n9X1n/chatgpt-tag-highlighter/discussions
+    about: Ask questions, share ideas, or get help with configuration.
+  - name: 🔒 Security report
+    url: https://github.com/D0n9X1n/chatgpt-tag-highlighter/security/advisories/new
+    about: Report a security vulnerability privately. Do NOT open a public issue.

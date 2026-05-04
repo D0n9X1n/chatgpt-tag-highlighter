@@ -1,0 +1,42 @@
+name: CodeQL
+
+# Static security analysis for the extension's JavaScript. Browser
+# extensions run privileged code, so DOM/storage/messaging bugs matter.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly catch for newly published CodeQL queries (Mondays 03:17 UTC).
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          # Restrict scanning to actual extension source — skip dist/, tests/.
+          source-root: src
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript'

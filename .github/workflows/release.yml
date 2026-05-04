@@ -1,0 +1,112 @@
+name: Release
+
+# Tag-driven release. Push a `v*` tag (e.g. `v0.2.0`) on `main` to:
+#   1. Build chrome + firefox bundles at exactly that version
+#   2. Run the full Tests workflow against the build
+#   3. Attach the .zip + .xpi to a GitHub Release
+#
+# Store-side publishing (Chrome Web Store / Firefox AMO) is still a manual
+# step — see CONTRIBUTING.md. Adding it here would require store API tokens
+# and a protected environment with manual approval; out of scope for now.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+# Never cancel a half-completed release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Derive a clean SemVer string from the tag (strip leading "v") and
+  # validate it matches both source manifests before doing any work.
+  prepare:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not SemVer (expected vX.Y.Z or vX.Y.Z-prerelease)"
+            exit 1
+          fi
+          # Chrome rejects pre-release suffixes like "-beta.1" — release builds
+          # must be strictly numeric. Surface that early instead of failing
+          # mid-pipeline.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Chrome manifests reject pre-release suffixes; use vX.Y.Z only."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag version matches both source manifests
+        # Source manifests are the source of truth. They MUST be bumped
+        # (and committed) in lock-step with the tag — this prevents silent
+        # drift between published artifacts and the repo state.
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          for f in src/manifest.chrome.json src/manifest.firefox.json; do
+            FILE_VER=$(python3 -c "import json; print(json.load(open('$f'))['version'])")
+            if [ "$FILE_VER" != "$VERSION" ]; then
+              echo "::error::$f version ($FILE_VER) does not match tag ($VERSION)"
+              exit 1
+            fi
+          done
+
+  # Reuse the standard test pipeline. Build version comes from the tag.
+  tests:
+    name: Tests on tagged build
+    needs: prepare
+    uses: ./.github/workflows/test.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+    permissions:
+      contents: read
+
+  release:
+    name: Publish GitHub Release ${{ github.ref_name }}
+    needs: [prepare, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (needed for `gh release` to read the repo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download packaged archives from tests workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-archives
+          path: release-artifacts
+
+      - name: List artifacts to publish
+        run: ls -la release-artifacts/
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.prepare.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ needs.prepare.outputs.tag }}" \
+            --generate-notes \
+            release-artifacts/*.zip \
+            release-artifacts/*.xpi

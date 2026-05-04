@@ -1,0 +1,3 @@
+# Default reviewer for all PRs. Branch protection rules can require this
+# review before merging.
+* @D0n9X1n
