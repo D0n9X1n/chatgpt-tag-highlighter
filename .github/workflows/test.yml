@@ -107,7 +107,7 @@ jobs:
           done
 
       - name: Upload chrome bundle (unpacked)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-chrome
           path: dist/chrome/
@@ -115,7 +115,7 @@ jobs:
           retention-days: 14
 
       - name: Upload firefox bundle (unpacked)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-firefox
           path: dist/firefox/
@@ -123,7 +123,7 @@ jobs:
           retention-days: 14
 
       - name: Upload packaged archives (.zip + .xpi)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-archives
           path: |
@@ -180,7 +180,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-results
           path: test-results.xml
@@ -189,7 +189,7 @@ jobs:
 
       - name: Upload Playwright failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-failures
           path: |
