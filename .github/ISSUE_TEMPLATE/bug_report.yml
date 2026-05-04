@@ -14,7 +14,7 @@ body:
     attributes:
       label: Extension version
       description: From `chrome://extensions` (Chrome) or `about:addons` (Firefox).
-      placeholder: e.g. 0.1.3
+      placeholder: e.g. 1.0.0
     validations:
       required: true
 

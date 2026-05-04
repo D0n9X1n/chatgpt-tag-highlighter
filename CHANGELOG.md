@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-04
+
+First stable release. The extension is now considered feature-complete
+for v1: tag-based highlighting, sidebar filter, hide / dim / overlay
+controls, multi-select filter persistence, and a hardened CI/release
+pipeline.
+
 ### Added
 - Continuous Integration pipeline (`.github/workflows/test.yml`) that
   builds the Chrome and Firefox bundles, runs the Playwright suite under
@@ -34,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editing rules in the Options page no longer wipes the active filter
   selection; instead, the selection is pruned to the new visible-rule
   set and persisted.
+- `LICENSE` replaced with the canonical SPDX `MIT License` header so
+  GitHub now reports the repository as MIT.
 
 ## [0.1.3] — 2026-04-19
 
@@ -85,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.3...v1.0.0
 [0.1.3]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.0...v0.1.1

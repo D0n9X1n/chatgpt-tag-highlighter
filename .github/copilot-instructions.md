@@ -48,10 +48,10 @@ All three scripts detect the extension API at runtime (`browser` vs `chrome`) an
 ## Build & publish
 
 ```sh
-./publish.sh --version 0.1.3
+./publish.sh --version 1.0.0
 ```
 
-This produces `dist/chatgpt-tag-highlighter-chrome-0.1.3.zip` and `dist/chatgpt-tag-highlighter-firefox-0.1.3.xpi`. Requires `python3` and `zip`.
+This produces `dist/chatgpt-tag-highlighter-chrome-1.0.0.zip` and `dist/chatgpt-tag-highlighter-firefox-1.0.0.xpi`. Requires `python3` and `zip`.
 
 There is no build step for development — load `src/` directly as an unpacked extension in Chrome, or as a temporary add-on in Firefox.
 
@@ -73,7 +73,7 @@ Open `tests/unit_test.html` in a browser. Tests pure functions (`toHex`, `hexToR
 ### E2E tests (automated, options page)
 
 ```sh
-./publish.sh --version 0.1.3          # build dist/chrome/ first
+./publish.sh --version 1.0.0          # build dist/chrome/ first
 source .venv/bin/activate
 pytest tests/test_extension.py -v
 ```
