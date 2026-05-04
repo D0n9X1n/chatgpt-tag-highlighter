@@ -91,6 +91,16 @@
     return null;
   }
 
+  // Mirror of buildPrunedFilterSet() from content.js. The filter bar is hidden
+  // when fewer than 2 visible rules exist, so persisted filters must clamp to
+  // empty in that case (otherwise users could be stuck filtered with no UI).
+  function buildPrunedFilterSet(inputTags, compiled) {
+    const visible = compiled ? compiled.rules.filter(r => !r.hide) : [];
+    if (visible.length < 2) return new Set();
+    const visSet = new Set(visible.map(r => r.tag));
+    return new Set((inputTags || []).filter(t => visSet.has(t)));
+  }
+
   // ========================================================
   // Test runner
   // ========================================================
@@ -263,6 +273,50 @@
   group('matchRule — edge cases');
   assert('empty title', matchRule('', rules), null);
   assert('empty rules', matchRule('[TODO] test', []), null);
+
+  // ---- buildPrunedFilterSet ----
+  group('buildPrunedFilterSet — valid tags preserved');
+  const fcfg = compileConfig({
+    rules: [
+      { tag: '[TODO]', color: '#fabd2f' },
+      { tag: '[BUG]',  color: '#fb4934' },
+      { tag: '[FOO]',  color: '#83a598' },
+    ],
+  });
+  assert('all valid', [...buildPrunedFilterSet(['[TODO]', '[BUG]'], fcfg)], ['[TODO]', '[BUG]']);
+  assert('order preserved', [...buildPrunedFilterSet(['[BUG]', '[TODO]'], fcfg)], ['[BUG]', '[TODO]']);
+
+  group('buildPrunedFilterSet — stale tags dropped');
+  assert('unknown tag dropped', [...buildPrunedFilterSet(['[TODO]', '[GONE]'], fcfg)], ['[TODO]']);
+  assert('all stale → empty', [...buildPrunedFilterSet(['[X]', '[Y]'], fcfg)], []);
+
+  group('buildPrunedFilterSet — hidden rules excluded');
+  const fcfg2 = compileConfig({
+    rules: [
+      { tag: '[TODO]', color: '#fabd2f', hide: false },
+      { tag: '[BUG]',  color: '#fb4934', hide: true  },
+      { tag: '[FOO]',  color: '#83a598', hide: false },
+    ],
+  });
+  assert('hidden tag dropped', [...buildPrunedFilterSet(['[TODO]', '[BUG]', '[FOO]'], fcfg2)], ['[TODO]', '[FOO]']);
+
+  group('buildPrunedFilterSet — clamps when bar is hidden (<2 visible)');
+  const fcfg3 = compileConfig({ rules: [{ tag: '[ONLY]', color: '#fabd2f' }] });
+  assert('1 rule → empty', [...buildPrunedFilterSet(['[ONLY]'], fcfg3)], []);
+  const fcfg4 = compileConfig({
+    rules: [
+      { tag: '[A]', color: '#fabd2f', hide: false },
+      { tag: '[B]', color: '#fb4934', hide: true  },
+    ],
+  });
+  assert('1 visible + 1 hidden → empty', [...buildPrunedFilterSet(['[A]'], fcfg4)], []);
+  assert('null compiled → empty', [...buildPrunedFilterSet(['[A]'], null)], []);
+
+  group('buildPrunedFilterSet — input edge cases');
+  assert('empty input → empty', [...buildPrunedFilterSet([], fcfg)], []);
+  assert('null input → empty', [...buildPrunedFilterSet(null, fcfg)], []);
+  assert('undefined input → empty', [...buildPrunedFilterSet(undefined, fcfg)], []);
+  assert('duplicates dedup', [...buildPrunedFilterSet(['[TODO]', '[TODO]'], fcfg)], ['[TODO]']);
 
   // ---- Theme detection (DOM-based) ----
   group('Theme detection');
