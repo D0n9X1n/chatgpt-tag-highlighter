@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template.
 - `CONTRIBUTING.md` and `SECURITY.md`.
 - Pinned test dependencies in `tests/requirements.txt`.
+- Persisted multi-select filter selection: pills clicked above the
+  ChatGPT sidebar now survive page refresh and live-sync across tabs.
+  Stored under a new `tagHighlighterUiStateV1` key in `storage.local`.
+  Stale tags (deleted from rules) are pruned silently on load.
 
 ### Changed
 - Hardened the Playwright fixture in `tests/test_extension.py` to derive
@@ -27,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scraping the `chrome://extensions` shadow DOM. The CI environment
   uses a throwaway profile under `/tmp` while local development keeps
   the persistent `tests/.test-profile/`.
+- Editing rules in the Options page no longer wipes the active filter
+  selection; instead, the selection is pruned to the new visible-rule
+  set and persisted.
 
 ## [0.1.3] — 2026-04-19
 

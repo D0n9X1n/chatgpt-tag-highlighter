@@ -10,6 +10,10 @@
 
 	// ---- Config ----
 	const STORAGE_KEY = 'tagHighlighterConfigV1';
+	// Persisted UI state (multi-select filter selection). Lives in storage.local
+	// so frequent pill toggles never compete with sync rate limits, and so that
+	// options.js full-config writes can never clobber it.
+	const UI_STATE_KEY = 'tagHighlighterUiStateV1';
 	const STYLE_ID = 'cth-style';
 	const OVERLAY_ID = 'cth-overlay';
 	const FILTER_BAR_ID = 'cth-filter-bar';
@@ -50,6 +54,25 @@
 					store.get(key, resolve);
 				} catch {
 					resolve({});
+				}
+			}
+		});
+	}
+
+	function storageSet(store, object) {
+		return new Promise(resolve => {
+			try {
+				const r = store.set(object);
+				if (r && typeof r.then === 'function') {
+					r.catch(() => resolve()).then(() => resolve());
+				} else {
+					store.set(object, () => resolve());
+				}
+			} catch {
+				try {
+					store.set(object, () => resolve());
+				} catch {
+					resolve();
 				}
 			}
 		});
@@ -470,6 +493,88 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	// ---- Filter bar ----
 	let activeFilters = new Set();
 
+	// ---- Persistence of multi-select filter selection ----
+	// `bootReady` gates the live storage.onChanged handler so we don't apply UI
+	// state changes that arrive before main() has finished loading config.
+	// Any UI state change observed before boot is stashed here and replayed once.
+	let bootReady = false;
+	let pendingUiState; // undefined = nothing stashed
+	let saveFiltersTimer = null;
+	const SAVE_DEBOUNCE_MS = 400;
+
+	function getVisibleRules() {
+		return compiled ? compiled.rules.filter(r => !r.hide) : [];
+	}
+
+	// Returns true iff the new Set differs in size or contents.
+	function setActiveFiltersTo(nextSet) {
+		if (nextSet.size === activeFilters.size && [...nextSet].every(t => activeFilters.has(t))) {
+			return false;
+		}
+		activeFilters = nextSet;
+		return true;
+	}
+
+	// Builds a pruned-and-clamped Set from input tags:
+	//   - drop any tag not in the current visible-rule set (stale-tag cleanup)
+	//   - if fewer than 2 visible rules exist, the filter bar is hidden, so we
+	//     force-clear (otherwise users could be stuck with an active filter and
+	//     no UI to clear it).
+	function buildPrunedFilterSet(inputTags) {
+		const visible = getVisibleRules();
+		if (visible.length < 2) return new Set();
+		const visSet = new Set(visible.map(r => r.tag));
+		return new Set((inputTags || []).filter(t => visSet.has(t)));
+	}
+
+	function scheduleSaveActiveFilters() {
+		if (saveFiltersTimer) clearTimeout(saveFiltersTimer);
+		saveFiltersTimer = setTimeout(flushSaveActiveFilters, SAVE_DEBOUNCE_MS);
+	}
+
+	function flushSaveActiveFilters() {
+		if (saveFiltersTimer) {
+			clearTimeout(saveFiltersTimer);
+			saveFiltersTimer = null;
+		}
+
+		if (!storeLocal) return;
+
+		const tags = [...activeFilters];
+		try {
+			storageSet(storeLocal, {[UI_STATE_KEY]: {activeFilters: tags}});
+		} catch {}
+	}
+
+	// Re-prune existing activeFilters against the current rule set. Persists
+	// the cleaned-up value if anything was dropped. Used after rule edits.
+	function pruneActiveFiltersAndPersistIfChanged() {
+		const next = buildPrunedFilterSet([...activeFilters]);
+		if (setActiveFiltersTo(next)) {
+			scheduleSaveActiveFilters();
+		}
+	}
+
+	// Apply a UI-state change (from boot replay or live storage event).
+	function applyPersistedUiState(newValue) {
+		const tags = (newValue && Array.isArray(newValue.activeFilters)) ? newValue.activeFilters : [];
+		const next = buildPrunedFilterSet(tags);
+		if (setActiveFiltersTo(next)) {
+			renderFilterBar();
+			applyFilter();
+		}
+	}
+
+	// Flush any pending debounced save when the page is being unloaded so a
+	// click + immediate refresh can't lose the selection.
+	const flushOnHide = () => {
+		if (saveFiltersTimer) flushSaveActiveFilters();
+	};
+	window.addEventListener('pagehide', flushOnHide, {capture: true});
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') flushOnHide();
+	}, {capture: true});
+
 	function ensureFilterBar() {
 		let bar = document.getElementById(FILTER_BAR_ID);
 		if (bar) return bar;
@@ -502,6 +607,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			activeFilters.clear();
 			renderFilterBar();
 			applyFilter();
+			scheduleSaveActiveFilters();
 		});
 		bar.append(allPill);
 
@@ -524,6 +630,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 				}
 				renderFilterBar();
 				applyFilter();
+				scheduleSaveActiveFilters();
 			});
 			bar.append(pill);
 		}
@@ -909,6 +1016,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 		if (!cfg) {
 			log('No settings found. Early return by design.');
+			bootReady = true;
 			return;
 		}
 
@@ -917,7 +1025,34 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 		if (compiled.rules.length === 0) {
 			log('No rules in config. Early return by design.');
+			bootReady = true;
 			return;
+		}
+
+		// ---- Hydrate persisted filter selection (UI state) ----
+		// Read from storage.local; prune stale tags; clamp to empty when filter
+		// bar would be hidden. If pruning dropped tags, write back the clean set.
+		if (storeLocal) {
+			try {
+				const uiData = await storageGet(storeLocal, UI_STATE_KEY);
+				const persisted = uiData?.[UI_STATE_KEY];
+				const persistedTags = Array.isArray(persisted?.activeFilters) ? persisted.activeFilters : [];
+				const pruned = buildPrunedFilterSet(persistedTags);
+				activeFilters = pruned;
+				if (pruned.size !== persistedTags.length) {
+					scheduleSaveActiveFilters();
+				}
+			} catch (e) {
+				warn('Failed to load persisted filter state', e);
+			}
+		}
+
+		bootReady = true;
+		// Replay the most-recent UI state event that arrived during boot.
+		if (pendingUiState !== undefined) {
+			const stashed = pendingUiState;
+			pendingUiState = undefined;
+			applyPersistedUiState(stashed);
 		}
 
 		// Find history root (ChatGPT sidebar chat list)
@@ -964,34 +1099,48 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	// ---- Live-reload config when options page saves changes ----
 	function listenForConfigChanges() {
 		const handler = (changes, areaName) => {
-			if (!changes[STORAGE_KEY]) return;
-			const newCfg = changes[STORAGE_KEY].newValue;
-			if (!newCfg) return;
+			if (changes[STORAGE_KEY]) {
+				const newCfg = changes[STORAGE_KEY].newValue;
+				if (newCfg) {
+					log('storage.onChanged fired — reloading config', {areaName});
+					compiled = compileConfig(newCfg);
+					itemCache = new WeakMap();
+					// Preserve the user's filter selection across rule edits.
+					// Prune stale tags and clamp to empty if fewer than 2 visible rules remain.
+					pruneActiveFiltersAndPersistIfChanged();
+					renderFilterBar();
 
-			log('storage.onChanged fired — reloading config', {areaName});
-			compiled = compileConfig(newCfg);
-			itemCache = new WeakMap();
-			activeFilters.clear();
-			renderFilterBar();
+					if (!historyRoot) {
+						historyRoot = document.querySelector('#history') || null;
+					}
 
-			if (!historyRoot) {
-				historyRoot = document.querySelector('#history') || null;
+					if (historyRoot) {
+						scheduleSidebarScan();
+						scheduleOverlayUpdate();
+						updateBadgeCount();
+					}
+
+					scheduleOverlayLayout();
+
+					if (compiled.maxChatTurns > 0) {
+						turnObserver.disconnect();
+						turnObserver.observe(document.documentElement, {childList: true, subtree: true});
+						schedulePrune();
+					} else {
+						turnObserver.disconnect();
+					}
+				}
 			}
 
-			if (historyRoot) {
-				scheduleSidebarScan();
-				scheduleOverlayUpdate();
-				updateBadgeCount();
-			}
+			if (changes[UI_STATE_KEY]) {
+				const newVal = changes[UI_STATE_KEY].newValue || null;
+				if (!bootReady) {
+					// Boot hasn't loaded compiled config yet; stash latest and replay later.
+					pendingUiState = newVal;
+					return;
+				}
 
-			scheduleOverlayLayout();
-
-			if (compiled.maxChatTurns > 0) {
-				turnObserver.disconnect();
-				turnObserver.observe(document.documentElement, {childList: true, subtree: true});
-				schedulePrune();
-			} else {
-				turnObserver.disconnect();
+				applyPersistedUiState(newVal);
 			}
 		};
 
