@@ -1,0 +1,224 @@
+name: Tests
+
+# Reusable workflow: build the extension once, then run JS syntax checks,
+# Playwright tests against the Chrome bundle, and web-ext lint against the
+# Firefox bundle. The same artifacts that pass tests can be promoted to a
+# release by `release.yml` (which calls this workflow with workflow_call).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          Extension version to inject into manifests during build.
+          Must be Chrome-compatible (1–4 dot-separated unsigned integers).
+        required: false
+        type: string
+        default: ''
+    outputs:
+      version:
+        description: The actual version string used for the build.
+        value: ${{ jobs.build.outputs.version }}
+
+# Cancel superseded runs on the same ref to save CI minutes.
+# Releases (workflow_call from a tag) get their own group below.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build once — all downstream jobs consume the same artifacts.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (chrome + firefox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve build version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Synthetic version for CI builds: 0.0.<run_number>. Three
+            # numeric parts keep both publish.sh's SemVer check and Chrome's
+            # manifest validator happy. (Run number is monotonically
+            # increasing per repo, so each CI build gets a unique version.)
+            VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building with version: $VERSION"
+
+      - name: Validate manifests parse
+        run: |
+          python3 -c "import json; json.load(open('src/manifest.chrome.json'))"
+          python3 -c "import json; json.load(open('src/manifest.firefox.json'))"
+
+      - name: Setup Node.js (for syntax check + web-ext)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: JS syntax check (no execution, no lint config required)
+        run: |
+          for f in src/*.js; do
+            node --check "$f"
+          done
+
+      - name: Build chrome + firefox bundles
+        run: ./publish.sh --version "${{ steps.version.outputs.version }}"
+
+      - name: Verify Chrome manifest version is numeric (Chrome rejects pre-release tags)
+        run: |
+          VER=$(python3 -c "import json; print(json.load(open('dist/chrome/manifest.json'))['version'])")
+          echo "Chrome manifest.json version: $VER"
+          python3 -c "
+          import re, sys
+          v = '$VER'
+          # Chrome accepts 1–4 dot-separated unsigned integers, each 0–65535.
+          if not re.fullmatch(r'\d{1,5}(\.\d{1,5}){0,3}', v):
+              sys.exit(f'Invalid Chrome manifest version: {v!r}')
+          for part in v.split('.'):
+              if int(part) > 65535:
+                  sys.exit(f'Chrome version part out of range: {part}')
+          "
+
+      - name: Verify required files are present in built bundles
+        run: |
+          for d in dist/chrome dist/firefox; do
+            for f in manifest.json content.js background.js options.html options.js options.css icon.png icon-128.png; do
+              if [ ! -f "$d/$f" ]; then
+                echo "::error::Missing $d/$f"
+                exit 1
+              fi
+            done
+          done
+
+      - name: Upload chrome bundle (unpacked)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-chrome
+          path: dist/chrome/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload firefox bundle (unpacked)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-firefox
+          path: dist/firefox/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload packaged archives (.zip + .xpi)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-archives
+          path: |
+            dist/*.zip
+            dist/*.xpi
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Run the Playwright/pytest suite against the built Chrome bundle.
+  # ---------------------------------------------------------------------------
+  test-chrome:
+    name: Test (chrome / playwright)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download chrome bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-chrome
+          path: dist/chrome
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Install python deps
+        run: pip install -r tests/requirements.txt
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('tests/requirements.txt') }}
+
+      - name: Install Playwright Chromium (with system deps)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run pytest under Xvfb
+        # Chrome MV3 service workers + --load-extension still don't initialize
+        # reliably under --headless=new across all builds, so we keep
+        # headless=False (set in tests/test_extension.py) and provide a
+        # virtual display via Xvfb.
+        run: xvfb-run -a --server-args="-screen 0 1280x900x24" pytest tests/test_extension.py -v --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: test-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: |
+            tests/screenshots/
+            tests/.test-profile/Crash Reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Static validation of the Firefox bundle. Runtime extension testing in
+  # Firefox via Playwright is unreliable (Playwright Firefox doesn't load
+  # WebExtensions), so we lean on `web-ext lint` for now.
+  # ---------------------------------------------------------------------------
+  lint-firefox:
+    name: Lint (firefox / web-ext)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download firefox bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-firefox
+          path: dist/firefox
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: web-ext lint (warnings as warnings, errors fail the build)
+        run: npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted

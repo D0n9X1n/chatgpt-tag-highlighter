@@ -1,0 +1,85 @@
+name: Bug report
+description: Something isn't working as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please provide
+        as much detail as possible so we can reproduce and fix it.
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: From `chrome://extensions` (Chrome) or `about:addons` (Firefox).
+      placeholder: e.g. 0.1.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome
+        - Edge
+        - Brave
+        - Arc
+        - Other Chromium
+        - Firefox
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: input
+    id: browser-version
+    attributes:
+      label: Browser version
+      placeholder: e.g. 131.0.6778.85
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15.2 / Windows 11 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. Screenshots help a lot.
+      placeholder: |
+        I expected ... but I saw ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ChatGPT
+        2. Configure rules with `[BUG]` startsWith
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (optional)
+      description: Open DevTools → Console while on chatgpt.com and paste any red errors.
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Extension config (optional)
+      description: Settings page → Export → paste here. Redact anything sensitive.
+      render: json
