@@ -33,7 +33,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Parse tag
         id: tag
@@ -87,7 +87,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout (needed for `gh release` to read the repo)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
