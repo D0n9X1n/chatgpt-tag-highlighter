@@ -329,6 +329,111 @@
   assert('no class → not light', document.documentElement.classList.contains('light'), false);
   document.documentElement.className = origClass;
 
+  // ============================================================
+  // Overlay scroll-button + chevron-click + z-index fix tests
+  // (PR fix/overlay-scroll-and-zindex)
+  // Builds a minimal DOM fixture, injects the same selectors / handler
+  // logic from src/content.js, and asserts behavior.
+  // ============================================================
+  group('Overlay fix — duplicate scroll button hidden by stable selectors');
+  {
+    const root = document.createElement('div');
+    root.id = 'cth-fix-test';
+    root.innerHTML = `
+      <main id="cth-test-main" style="height:200px; overflow-y:auto;">
+        <button id="cth-test-native1" data-testid="scroll-to-bottom-button" aria-label="Scroll to bottom">↓</button>
+        <button id="cth-test-native2" aria-label="Scroll to bottom">↓</button>
+        <button id="cth-test-native3" aria-label="Scroll to the bottom">↓</button>
+        <button id="cth-test-other"   aria-label="Move bottom panel">other</button>
+        <article data-testid="conversation-turn-1" style="padding:300px 0;">turn</article>
+        <article data-testid="conversation-turn-2" style="padding:300px 0;">turn</article>
+      </main>
+    `;
+    document.body.append(root);
+
+    const style = document.createElement('style');
+    style.id = 'cth-fix-test-style';
+    style.textContent = `
+      #cth-fix-test main button[data-testid="scroll-to-bottom-button"],
+      #cth-fix-test main button[aria-label="Scroll to bottom"],
+      #cth-fix-test main button[aria-label="Scroll to the bottom"] {
+        display: none !important;
+      }
+    `;
+    document.head.append(style);
+
+    assert('native button (data-testid) hidden',
+      getComputedStyle(document.getElementById('cth-test-native1')).display, 'none');
+    assert('native button (aria-label "Scroll to bottom") hidden',
+      getComputedStyle(document.getElementById('cth-test-native2')).display, 'none');
+    assert('native button (aria-label "Scroll to the bottom") hidden',
+      getComputedStyle(document.getElementById('cth-test-native3')).display, 'none');
+    assert('unrelated button with "bottom" in aria-label NOT hidden (no overreach)',
+      getComputedStyle(document.getElementById('cth-test-other')).display !== 'none', true);
+  }
+
+  group('Overlay fix — chevron click triggers scrollToBottom');
+  {
+    const root = document.getElementById('cth-fix-test');
+    const main = document.getElementById('cth-test-main');
+
+    const overlay = document.createElement('div');
+    overlay.id = 'cth-overlay';
+    Object.assign(overlay.style, {
+      position: 'absolute', left: '0', top: '0', zIndex: '30',
+      display: 'flex', cursor: 'pointer',
+    });
+    overlay.innerHTML = `
+      <div class="cth-title">title</div>
+      <div class="cth-arrow" style="pointer-events:auto; cursor:pointer;">
+        <svg style="pointer-events:none;" width="16" height="16"><path d="M0 0"/></svg>
+      </div>
+    `;
+    root.append(overlay);
+
+    function getScrollContainer() {
+      const turn = root.querySelector('article[data-testid^="conversation-turn-"]');
+      let n = turn ? turn.parentElement : null;
+      while (n && n !== document.body) {
+        const s = getComputedStyle(n);
+        if ((s.overflowY === 'auto' || s.overflowY === 'scroll') &&
+            n.scrollHeight > n.clientHeight + 20) return n;
+        n = n.parentElement;
+      }
+      const m = root.querySelector('main');
+      if (m && m.scrollHeight > m.clientHeight + 20) return m;
+      return null;
+    }
+    let scrollCalls = 0;
+    function scrollToBottom() {
+      scrollCalls++;
+      const sc = getScrollContainer();
+      if (sc) sc.scrollTop = sc.scrollHeight;
+    }
+    const onClick = e => { e.preventDefault(); e.stopPropagation(); scrollToBottom(); };
+    overlay.addEventListener('click', onClick);
+    overlay.querySelector('.cth-arrow').addEventListener('click', onClick);
+
+    main.scrollTop = 0;
+    overlay.querySelector('.cth-arrow').click();
+    assert('chevron click invokes scrollToBottom exactly once', scrollCalls, 1);
+    assert('scroller scrolled to bottom',
+      main.scrollTop >= main.scrollHeight - main.clientHeight - 5, true);
+
+    scrollCalls = 0;
+    main.scrollTop = 0;
+    overlay.querySelector('.cth-arrow svg').dispatchEvent(
+      new MouseEvent('click', { bubbles: true })
+    );
+    assert('SVG click bubbles to arrow handler exactly once', scrollCalls, 1);
+
+    assert('overlay z-index is low (30) so popovers can stack above',
+      getComputedStyle(overlay).zIndex, '30');
+
+    document.getElementById('cth-fix-test').remove();
+    document.getElementById('cth-fix-test-style').remove();
+  }
+
   // ---- Summary ----
   const summary = document.getElementById('summary');
   const total = passed + failed;

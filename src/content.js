@@ -151,13 +151,15 @@
 		style.id = STYLE_ID;
 
 		// The scroll-to-bottom floating button you asked to hide.
-		// ChatGPT keeps shuffling utility-class chains, so we target stable
-		// attributes first (aria-label / data-testid) and keep the legacy
-		// utility-class selector as a fallback.
+		// ChatGPT keeps shuffling utility-class chains, so prefer stable
+		// attribute selectors. Use exact-match aria-label / data-testid
+		// (not substring) to avoid hiding unrelated buttons whose label
+		// merely contains the word "bottom" (audit catch). Keep the legacy
+		// utility-class selector as a last-resort fallback.
 		const hideScrollBtnCss = `
-main button[aria-label*="bottom" i],
-main button[data-testid*="scroll-to-bottom" i],
-button[aria-label*="scroll to bottom" i],
+main button[data-testid="scroll-to-bottom-button"],
+main button[aria-label="Scroll to bottom"],
+main button[aria-label="Scroll to the bottom"],
 button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-token-text-secondary.border-token-border-default.end-1\\/2.translate-x-1\\/2.print\\:hidden {
   display: none !important;
 }
