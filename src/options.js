@@ -493,6 +493,10 @@
 		onRulesChanged();
 	});
 
+	// ---- HTML escape (prevents XSS via user-controlled tag/title) ----
+	const ESC_MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+	const escapeHtml = s => String(s ?? '').replaceAll(/[&<>"']/g, c => ESC_MAP[c]);
+
 	// ---- Rule tester ----
 	function runDebugTest() {
 		const title = els.debugTitle.value.trim();
@@ -511,20 +515,22 @@
 			const match = safeMatch(trs[i].querySelector('.match').value);
 			const hit = match === 'startsWith' ? title.startsWith(tag) : title.includes(tag);
 			const hex = toHex(trs[i].querySelector('.hex').value);
+			const safeTag = escapeHtml(tag);
+			// hex is normalized to /^#[0-9a-f]{6}$/ by toHex() and match is whitelisted by safeMatch() — both safe to interpolate.
 			const swatch = `<span class="swatch" style="background:${hex};width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin:0 4px"></span>`;
 
 			if (hit && winnerIdx === -1) {
 				winnerIdx = i;
-				lines.push(`<div class="matchHit">✓ #${i + 1} ${swatch} <code>${tag}</code> (${match}) — <b>WINNER</b></div>`);
+				lines.push(`<div class="matchHit">✓ #${i + 1} ${swatch} <code>${safeTag}</code> (${match}) — <b>WINNER</b></div>`);
 			} else if (hit) {
-				lines.push(`<div class="matchSkipped">✓ #${i + 1} ${swatch} <code>${tag}</code> (${match}) — matches but skipped (rule #${winnerIdx + 1} won)</div>`);
+				lines.push(`<div class="matchSkipped">✓ #${i + 1} ${swatch} <code>${safeTag}</code> (${match}) — matches but skipped (rule #${winnerIdx + 1} won)</div>`);
 			} else {
-				lines.push(`<div class="matchMiss">✗ #${i + 1} ${swatch} <code>${tag}</code> (${match})</div>`);
+				lines.push(`<div class="matchMiss">✗ #${i + 1} ${swatch} <code>${safeTag}</code> (${match})</div>`);
 			}
 		}
 
 		if (winnerIdx === -1) {
-			lines.push(`<div class="matchNone">✗ No rule matches "${title}"</div>`);
+			lines.push(`<div class="matchNone">✗ No rule matches "${escapeHtml(title)}"</div>`);
 		}
 
 		els.debugResult.innerHTML = lines.join('');

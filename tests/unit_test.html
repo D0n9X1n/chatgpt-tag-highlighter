@@ -91,6 +91,11 @@
     return null;
   }
 
+  // Mirror of escapeHtml() from options.js — used by the rule tester to prevent
+  // XSS via user-controlled tag/title text (CodeQL js/xss-through-dom).
+  const ESC_MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+  const escapeHtml = s => String(s ?? '').replaceAll(/[&<>"']/g, c => ESC_MAP[c]);
+
   // Mirror of buildPrunedFilterSet() from content.js. The filter bar is hidden
   // when fewer than 2 visible rules exist, so persisted filters must clamp to
   // empty in that case (otherwise users could be stuck filtered with no UI).
@@ -317,6 +322,57 @@
   assert('null input → empty', [...buildPrunedFilterSet(null, fcfg)], []);
   assert('undefined input → empty', [...buildPrunedFilterSet(undefined, fcfg)], []);
   assert('duplicates dedup', [...buildPrunedFilterSet(['[TODO]', '[TODO]'], fcfg)], ['[TODO]']);
+
+  // ---- escapeHtml (XSS prevention in rule tester) ----
+  group('escapeHtml — basic chars');
+  assert('& escaped', escapeHtml('a&b'), 'a&amp;b');
+  assert('< escaped', escapeHtml('a<b'), 'a&lt;b');
+  assert('> escaped', escapeHtml('a>b'), 'a&gt;b');
+  assert('" escaped', escapeHtml('a"b'), 'a&quot;b');
+  assert("' escaped", escapeHtml("a'b"), 'a&#39;b');
+  assert('all chars together', escapeHtml(`<&>"'`), '&lt;&amp;&gt;&quot;&#39;');
+
+  group('escapeHtml — XSS payloads');
+  assert('script tag neutralized',
+    escapeHtml('<script>alert(1)</' + 'script>'),
+    '&lt;script&gt;alert(1)&lt;/script&gt;');
+  assert('img onerror neutralized',
+    escapeHtml('<img src=x onerror=alert(1)>'),
+    '&lt;img src=x onerror=alert(1)&gt;');
+  assert('svg onload neutralized',
+    escapeHtml(`<svg onload="alert('xss')">`),
+    '&lt;svg onload=&quot;alert(&#39;xss&#39;)&quot;&gt;');
+  assert('attribute-break neutralized',
+    escapeHtml('" onmouseover="alert(1)'),
+    '&quot; onmouseover=&quot;alert(1)');
+
+  group('escapeHtml — edge cases');
+  assert('empty string', escapeHtml(''), '');
+  assert('null → empty', escapeHtml(null), '');
+  assert('undefined → empty', escapeHtml(undefined), '');
+  assert('plain text unchanged', escapeHtml('[TODO] hello'), '[TODO] hello');
+  assert('number coerced', escapeHtml(42), '42');
+  assert('no double-escape on re-entry',
+    escapeHtml(escapeHtml('<a>')),
+    '&amp;lt;a&amp;gt;');
+
+  // Functional: simulate what runDebugTest produces and verify the
+  // resulting innerHTML does NOT materialize attacker-controlled elements.
+  group('escapeHtml — runDebugTest sink behavior');
+  const _sink = document.createElement('div');
+  const _tag = '<img src=x onerror=alert(1)>';
+  _sink.innerHTML = `<div class="matchHit"><code>${escapeHtml(_tag)}</code></div>`;
+  assert('no <img> materialized from escaped tag',
+    _sink.querySelector('img'), null);
+  assert('literal text preserved in textContent',
+    _sink.querySelector('code').textContent, _tag);
+
+  const _sink2 = document.createElement('div');
+  const _title = '<script>window.__pwned=true</' + 'script>';
+  _sink2.innerHTML = `<div>No rule matches "${escapeHtml(_title)}"</div>`;
+  assert('no <script> materialized from escaped title',
+    _sink2.querySelector('script'), null);
+  assert('window.__pwned never set', window.__pwned, undefined);
 
   // ---- Theme detection (DOM-based) ----
   group('Theme detection');
