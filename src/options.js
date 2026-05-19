@@ -493,21 +493,47 @@
 		onRulesChanged();
 	});
 
-	// ---- HTML escape (prevents XSS via user-controlled tag/title) ----
-	const ESC_MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
-	const escapeHtml = s => String(s ?? '').replaceAll(/[&<>"']/g, c => ESC_MAP[c]);
+	// Build the small swatch span used by the rule tester. `hex` is already
+	// normalized to /^#[0-9a-f]{6}$/ by toHex(), so .style.background is safe.
+	// Sizing/alignment live in options.css under .debugResult .swatch.
+	function buildSwatch(hex) {
+		const sw = document.createElement('span');
+		sw.className = 'swatch';
+		sw.style.background = hex;
+		return sw;
+	}
+
+	// Build one result row. `tag` is user-controlled — only ever assigned via
+	// textContent (never innerHTML), so XSS payloads render as literal text.
+	// `marker` is the leading glyph (✓ or ✗) — passed in rather than mutated
+	// after the fact, so the caller never has to reach into .firstChild.
+	function buildResultRow(className, marker, idx, hex, tag, matchKind, suffix) {
+		const div = document.createElement('div');
+		div.className = className;
+		div.append(document.createTextNode(`${marker} #${idx + 1} `));
+		div.append(buildSwatch(hex));
+		div.append(document.createTextNode(' '));
+		const code = document.createElement('code');
+		code.textContent = tag;
+		div.append(code);
+		div.append(document.createTextNode(` (${matchKind})`));
+		if (suffix) {
+			div.append(suffix);
+		}
+		return div;
+	}
 
 	// ---- Rule tester ----
 	function runDebugTest() {
 		const title = els.debugTitle.value.trim();
 		if (!title) {
-			els.debugResult.innerHTML = 'Type a title above to see which rule matches.';
+			els.debugResult.textContent = 'Type a title above to see which rule matches.';
 			return;
 		}
 
 		const trs = els.rows.querySelectorAll('tr');
 		let winnerIdx = -1;
-		const lines = [];
+		const nodes = [];
 
 		for (let i = 0; i < trs.length; i++) {
 			const tag = String(trs[i].querySelector('.tag').value || '').trim();
@@ -515,25 +541,32 @@
 			const match = safeMatch(trs[i].querySelector('.match').value);
 			const hit = match === 'startsWith' ? title.startsWith(tag) : title.includes(tag);
 			const hex = toHex(trs[i].querySelector('.hex').value);
-			const safeTag = escapeHtml(tag);
-			// hex is normalized to /^#[0-9a-f]{6}$/ by toHex() and match is whitelisted by safeMatch() — both safe to interpolate.
-			const swatch = `<span class="swatch" style="background:${hex};width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin:0 4px"></span>`;
 
 			if (hit && winnerIdx === -1) {
 				winnerIdx = i;
-				lines.push(`<div class="matchHit">✓ #${i + 1} ${swatch} <code>${safeTag}</code> (${match}) — <b>WINNER</b></div>`);
+				const winner = document.createElement('span');
+				winner.append(document.createTextNode(' — '));
+				const b = document.createElement('b');
+				b.textContent = 'WINNER';
+				winner.append(b);
+				nodes.push(buildResultRow('matchHit', '✓', i, hex, tag, match, winner));
 			} else if (hit) {
-				lines.push(`<div class="matchSkipped">✓ #${i + 1} ${swatch} <code>${safeTag}</code> (${match}) — matches but skipped (rule #${winnerIdx + 1} won)</div>`);
+				const suffix = document.createTextNode(` — matches but skipped (rule #${winnerIdx + 1} won)`);
+				nodes.push(buildResultRow('matchSkipped', '✓', i, hex, tag, match, suffix));
 			} else {
-				lines.push(`<div class="matchMiss">✗ #${i + 1} ${swatch} <code>${safeTag}</code> (${match})</div>`);
+				nodes.push(buildResultRow('matchMiss', '✗', i, hex, tag, match, null));
 			}
 		}
 
 		if (winnerIdx === -1) {
-			lines.push(`<div class="matchNone">✗ No rule matches "${escapeHtml(title)}"</div>`);
+			const noneDiv = document.createElement('div');
+			noneDiv.className = 'matchNone';
+			// textContent guarantees `title` is rendered as literal text.
+			noneDiv.textContent = `✗ No rule matches "${title}"`;
+			nodes.push(noneDiv);
 		}
 
-		els.debugResult.innerHTML = lines.join('');
+		els.debugResult.replaceChildren(...nodes);
 	}
 
 	els.debugTitle.addEventListener('input', runDebugTest);
