@@ -147,7 +147,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download chrome bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-chrome
           path: dist/chrome
@@ -210,7 +210,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download firefox bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-firefox
           path: dist/firefox
