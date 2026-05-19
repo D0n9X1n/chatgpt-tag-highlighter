@@ -471,6 +471,72 @@ class TestOptionsPage:
         page.close()
         assert '#2' in result and 'WINNER' in result, f'Should match rule #2 (code includes), got: {result}'
 
+    def test_rule_tester_does_not_execute_injected_html(self, browser_context, ext_id):
+        """CodeQL #1 (js/xss-through-dom): rule tester must escape user input.
+
+        The debugTitle field and rule .tag inputs both flow into innerHTML in
+        runDebugTest(). A payload that would execute (e.g. <img onerror=>) must
+        be rendered as literal text, never materialized as DOM elements.
+        """
+        page = self._open_options()
+        page.evaluate("window.__pwned = false")
+
+        # 1) Malicious title in the 'no match' branch.
+        self._set_config(page, {
+            'rules': [{'tag': '[TODO]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page.reload()
+        page.wait_for_timeout(1500)
+
+        payload_title = '<img src=x onerror="window.__pwned=true">'
+        page.fill('#debugTitle', payload_title)
+        page.wait_for_timeout(400)
+
+        injected_imgs = page.evaluate(
+            "document.getElementById('debugResult').querySelectorAll('img').length"
+        )
+        result_text = page.evaluate("document.getElementById('debugResult').textContent")
+        pwned_after_title = page.evaluate("window.__pwned")
+
+        assert injected_imgs == 0, f'Title payload materialized {injected_imgs} <img> elements'
+        assert not pwned_after_title, f'XSS via title executed (window.__pwned={pwned_after_title!r})'
+        assert payload_title in result_text, (
+            f'Payload should appear as literal text, got: {result_text!r}'
+        )
+
+        # 2) Malicious tag in the 'winner' branch (via Import — the realistic
+        # vector since users paste shared configs from untrusted sources).
+        page.evaluate("window.__pwned = false")
+        page.click('#importCfg')
+        page.wait_for_timeout(200)
+        payload_tag = '<svg onload="window.__pwned=true">'
+        import_cfg = {
+            'rules': [{'tag': payload_tag, 'match': 'startsWith',
+                       'color': '#fabd2f', 'hide': False, 'overlay': True}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        }
+        page.fill('#importText', json.dumps(import_cfg))
+        page.click('#importApply')
+        page.wait_for_timeout(400)
+
+        # Type something that triggers the matchHit branch (startsWith payload_tag).
+        page.fill('#debugTitle', payload_tag + ' some chat title')
+        page.wait_for_timeout(400)
+
+        injected_svgs = page.evaluate(
+            "document.getElementById('debugResult').querySelectorAll('svg').length"
+        )
+        result_text2 = page.evaluate("document.getElementById('debugResult').textContent")
+        pwned_after_tag = page.evaluate("window.__pwned")
+        page.close()
+
+        assert injected_svgs == 0, f'Tag payload materialized {injected_svgs} <svg> elements'
+        assert not pwned_after_tag, f'XSS via imported tag executed (window.__pwned={pwned_after_tag!r})'
+        assert payload_tag in result_text2, (
+            f'Tag payload should appear as literal text, got: {result_text2!r}'
+        )
+
     def test_import_with_all_fields(self, browser_context, ext_id):
         """Import should handle all config fields including overlay, dimUntagged, showBadge."""
         page = self._open_options()
