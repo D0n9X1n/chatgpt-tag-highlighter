@@ -493,27 +493,24 @@
 		onRulesChanged();
 	});
 
-	// ---- HTML escape (kept for any future template literal use; runDebugTest
-	// uses DOM nodes + textContent so CodeQL recognizes the sanitization.) ----
-	const ESC_MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
-	const escapeHtml = s => String(s ?? '').replaceAll(/[&<>"']/g, c => ESC_MAP[c]);
-
 	// Build the small swatch span used by the rule tester. `hex` is already
 	// normalized to /^#[0-9a-f]{6}$/ by toHex(), so .style.background is safe.
+	// Sizing/alignment live in options.css under .debugResult .swatch.
 	function buildSwatch(hex) {
 		const sw = document.createElement('span');
 		sw.className = 'swatch';
-		sw.style.cssText = 'width:12px;height:12px;display:inline-block;border-radius:3px;vertical-align:middle;margin:0 4px';
 		sw.style.background = hex;
 		return sw;
 	}
 
 	// Build one result row. `tag` is user-controlled — only ever assigned via
 	// textContent (never innerHTML), so XSS payloads render as literal text.
-	function buildResultRow(className, idx, hex, tag, matchKind, suffix) {
+	// `marker` is the leading glyph (✓ or ✗) — passed in rather than mutated
+	// after the fact, so the caller never has to reach into .firstChild.
+	function buildResultRow(className, marker, idx, hex, tag, matchKind, suffix) {
 		const div = document.createElement('div');
 		div.className = className;
-		div.append(document.createTextNode(`✓ #${idx + 1} `));
+		div.append(document.createTextNode(`${marker} #${idx + 1} `));
 		div.append(buildSwatch(hex));
 		div.append(document.createTextNode(' '));
 		const code = document.createElement('code');
@@ -552,16 +549,12 @@
 				const b = document.createElement('b');
 				b.textContent = 'WINNER';
 				winner.append(b);
-				nodes.push(buildResultRow('matchHit', i, hex, tag, match, winner));
+				nodes.push(buildResultRow('matchHit', '✓', i, hex, tag, match, winner));
 			} else if (hit) {
 				const suffix = document.createTextNode(` — matches but skipped (rule #${winnerIdx + 1} won)`);
-				nodes.push(buildResultRow('matchSkipped', i, hex, tag, match, suffix));
+				nodes.push(buildResultRow('matchSkipped', '✓', i, hex, tag, match, suffix));
 			} else {
-				// Miss rows render the same shape but with a leading ✗ marker.
-				const div = buildResultRow('matchMiss', i, hex, tag, match, null);
-				// Replace the leading "✓ #N " text node with "✗ #N ".
-				div.firstChild.textContent = `✗ #${i + 1} `;
-				nodes.push(div);
+				nodes.push(buildResultRow('matchMiss', '✗', i, hex, tag, match, null));
 			}
 		}
 
