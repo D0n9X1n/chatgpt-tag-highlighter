@@ -150,9 +150,16 @@
 		const style = document.createElement('style');
 		style.id = STYLE_ID;
 
-		// The scroll-to-bottom floating button you asked to hide
-		// (Selector uses multiple stable utility classes; keep minimal)
+		// The scroll-to-bottom floating button you asked to hide.
+		// ChatGPT keeps shuffling utility-class chains, so prefer stable
+		// attribute selectors. Use exact-match aria-label / data-testid
+		// (not substring) to avoid hiding unrelated buttons whose label
+		// merely contains the word "bottom" (audit catch). Keep the legacy
+		// utility-class selector as a last-resort fallback.
 		const hideScrollBtnCss = `
+main button[data-testid="scroll-to-bottom-button"],
+main button[aria-label="Scroll to bottom"],
+main button[aria-label="Scroll to the bottom"],
 button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-token-text-secondary.border-token-border-default.end-1\\/2.translate-x-1\\/2.print\\:hidden {
   display: none !important;
 }
@@ -204,7 +211,9 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 > div.flex.w-9
 		const overlayCss = `
 #${OVERLAY_ID}{
   position: fixed;
-  z-index: 2147483647;
+  /* Sit above page content but BELOW ChatGPT's popovers/menus
+     (model picker, thinking window, etc.) so they aren't occluded. */
+  z-index: 30;
   left: 0; top: 0;
   display: none;
   box-sizing: border-box;
@@ -255,6 +264,12 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 > div.flex.w-9
   background: rgba(255,255,255,0.06);
   color: rgba(255,255,255,0.90);
   flex: 0 0 auto;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#${OVERLAY_ID} .cth-arrow * {
+  pointer-events: none;
 }
 
 #${OVERLAY_ID}:hover{
@@ -407,8 +422,21 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
     `;
 		document.body.append(element);
 
-		// Click overlay => scroll to bottom
-		element.addEventListener('click', () => scrollToBottom(), {passive: true});
+		// Click overlay (or arrow) => scroll to bottom.
+		// Bind both on the container and the arrow so the chevron is reliably
+		// clickable even when other handlers swallow bubbled events.
+		const onScrollClick = e => {
+			e.preventDefault();
+			e.stopPropagation();
+			log('Overlay click -> scrollToBottom');
+			scrollToBottom();
+		};
+
+		element.addEventListener('click', onScrollClick);
+		const arrow = element.querySelector('.cth-arrow');
+		if (arrow) {
+			arrow.addEventListener('click', onScrollClick);
+		}
 
 		log('Overlay created');
 		return element;
@@ -901,7 +929,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			return scrollContainer;
 		}
 
-		// Heuristic: find a conversation turn, then walk up to a scrollable parent.
+		// Heuristic 1: find a conversation turn, then walk up to a scrollable parent.
 		const turn = document.querySelector('article[data-testid^="conversation-turn-"]');
 		let node = turn ? turn.parentElement : null;
 
@@ -914,6 +942,22 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			}
 
 			node = node.parentElement;
+		}
+
+		// Heuristic 2: <main> itself is sometimes the scroller on current ChatGPT builds.
+		const main = document.querySelector('main');
+		if (main && main.scrollHeight > main.clientHeight + 20) {
+			scrollContainer = main;
+			return main;
+		}
+
+		// Heuristic 3: any element flagged as overflow-y-auto containing a turn.
+		const candidates = document.querySelectorAll('[class*="overflow-y-auto"], [class*="overflow-auto"]');
+		for (const c of candidates) {
+			if (c.scrollHeight > c.clientHeight + 20 && c.querySelector('article[data-testid^="conversation-turn-"]')) {
+				scrollContainer = c;
+				return c;
+			}
 		}
 
 		scrollContainer = null;
