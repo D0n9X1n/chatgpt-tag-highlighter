@@ -1,4 +1,4 @@
 # Pinned dev/test dependencies for the Playwright-based suite in tests/.
 # Pinning protects CI from surprise upstream releases. Bump deliberately.
-playwright==1.60.0
+playwright==1.62.0
 pytest==9.0.3
