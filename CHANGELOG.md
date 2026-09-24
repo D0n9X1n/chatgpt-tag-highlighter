@@ -56,6 +56,17 @@ Compatibility and performance release for the current ChatGPT layout.
   without a color; it stores `#b8bb26`.
 
 ### Changed
+- CI hardened: every action is pinned to a commit SHA, every job and
+  step has a timeout, the Playwright cache is only saved from `main`,
+  and a single `CI status` check aggregates build, Chrome tests, Firefox
+  lint, and the wiki/release-tooling checks.
+- Releases now require the tagged commit to be on `main` with a green
+  `Tests` run, validate the tag against both manifests and the CHANGELOG
+  (`scripts/release-check.py`), attach SHA-256 checksums, use the
+  CHANGELOG section as release notes, and mark `-suffix` tags as
+  prereleases. Only the publish job can write.
+- The wiki now lives in `wiki/` (English + Simplified Chinese) and is
+  published to the GitHub wiki from `main`.
 - Privacy Policy now says settings use browser sync storage, and
   explains the long-chat options.
 - README redesigned with new light/dark screenshots (demo titles only)

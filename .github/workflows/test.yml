@@ -1,121 +1,77 @@
 name: Tests
 
-# Reusable workflow: build the extension once, then run JS syntax checks,
-# Playwright tests against the Chrome bundle, and web-ext lint against the
-# Firefox bundle. The same artifacts that pass tests can be promoted to a
-# release by `release.yml` (which calls this workflow with workflow_call).
+# CI for every pull request and every push to main: build both bundles once,
+# then run the Playwright suite on the Chrome bundle, lint the Firefox bundle,
+# and check the wiki + release tooling. `CI status` is the single aggregate
+# check to require in branch protection.
+#
+# The release workflow does not re-run this; it requires a green run of this
+# workflow on main for the exact tagged commit.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_call:
-    inputs:
-      version:
-        description: >-
-          Extension version to inject into manifests during build.
-          Must be Chrome-compatible (1–4 dot-separated unsigned integers).
-        required: false
-        type: string
-        default: ''
-    outputs:
-      version:
-        description: The actual version string used for the build.
-        value: ${{ jobs.build.outputs.version }}
-
-# Cancel superseded runs on the same ref to save CI minutes.
-# Releases (workflow_call from a tag) get their own group below.
-concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # ---------------------------------------------------------------------------
-  # Build once — all downstream jobs consume the same artifacts.
-  # ---------------------------------------------------------------------------
   build:
     name: Build (chrome + firefox)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
 
-      - name: Resolve build version
+      - name: Check manifests and CHANGELOG agree
         id: version
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            # Synthetic version for CI builds: 0.0.<run_number>. Three
-            # numeric parts keep both publish.sh's SemVer check and Chrome's
-            # manifest validator happy. (Run number is monotonically
-            # increasing per repo, so each CI build gets a unique version.)
-            VERSION="0.0.${GITHUB_RUN_NUMBER}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building with version: $VERSION"
+        timeout-minutes: 1
+        run: python3 scripts/release-check.py --github-output
 
-      - name: Validate manifests parse
-        run: |
-          python3 -c "import json; json.load(open('src/manifest.chrome.json'))"
-          python3 -c "import json; json.load(open('src/manifest.firefox.json'))"
-
-      - name: Setup Node.js (for syntax check + web-ext)
-        uses: actions/setup-node@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        timeout-minutes: 2
         with:
           node-version: '20'
 
-      - name: JS syntax check (no execution, no lint config required)
-        run: |
-          for f in src/*.js; do
-            node --check "$f"
-          done
+      - name: JS syntax check
+        timeout-minutes: 1
+        run: for f in src/*.js; do node --check "$f"; done
 
       - name: Build chrome + firefox bundles
+        timeout-minutes: 2
         run: ./publish.sh --version "${{ steps.version.outputs.version }}"
 
-      - name: Verify Chrome manifest version is numeric (Chrome rejects pre-release tags)
-        run: |
-          VER=$(python3 -c "import json; print(json.load(open('dist/chrome/manifest.json'))['version'])")
-          echo "Chrome manifest.json version: $VER"
-          python3 -c "
-          import re, sys
-          v = '$VER'
-          # Chrome accepts 1–4 dot-separated unsigned integers, each 0–65535.
-          if not re.fullmatch(r'\d{1,5}(\.\d{1,5}){0,3}', v):
-              sys.exit(f'Invalid Chrome manifest version: {v!r}')
-          for part in v.split('.'):
-              if int(part) > 65535:
-                  sys.exit(f'Chrome version part out of range: {part}')
-          "
-
       - name: Verify required files are present in built bundles
+        timeout-minutes: 1
         run: |
           for d in dist/chrome dist/firefox; do
             for f in manifest.json content.js background.js options.html options.js options.css icon.png icon-128.png; do
-              if [ ! -f "$d/$f" ]; then
-                echo "::error::Missing $d/$f"
-                exit 1
-              fi
+              [ -f "$d/$f" ] || { echo "::error::Missing $d/$f"; exit 1; }
             done
           done
 
-      - name: Upload chrome bundle (unpacked)
-        uses: actions/upload-artifact@v7
+      - name: Upload chrome bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 3
         with:
           name: dist-chrome
           path: dist/chrome/
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload firefox bundle (unpacked)
-        uses: actions/upload-artifact@v7
+      - name: Upload firefox bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 3
         with:
           name: dist-firefox
           path: dist/firefox/
@@ -123,7 +79,8 @@ jobs:
           retention-days: 14
 
       - name: Upload packaged archives (.zip + .xpi)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 3
         with:
           name: dist-archives
           path: |
@@ -132,93 +89,138 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # ---------------------------------------------------------------------------
-  # Run the Playwright/pytest suite against the built Chrome bundle.
-  # ---------------------------------------------------------------------------
   test-chrome:
     name: Test (chrome / playwright)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CI: 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
 
       - name: Download chrome bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        timeout-minutes: 3
         with:
           name: dist-chrome
           path: dist/chrome
 
       - name: Setup Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        timeout-minutes: 3
         with:
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: tests/requirements.txt
 
       - name: Install python deps
+        timeout-minutes: 3
         run: pip install -r tests/requirements.txt
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
+      - name: Restore Playwright browsers
+        id: pw-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('tests/requirements.txt') }}
+          key: ci-v1-${{ runner.os }}-playwright-${{ hashFiles('tests/requirements.txt') }}
 
       - name: Install Playwright Chromium (with system deps)
+        timeout-minutes: 8
         run: python -m playwright install --with-deps chromium
 
+      - name: Save Playwright browsers (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.pw-cache.outputs.cache-primary-key }}
+
       - name: Run pytest under Xvfb
-        # Chrome MV3 service workers + --load-extension still don't initialize
-        # reliably under --headless=new across all builds, so we keep
-        # headless=False (set in tests/test_extension.py) and provide a
-        # virtual display via Xvfb.
+        # MV3 extensions don't load reliably under --headless=new, so the
+        # suite runs headed against a virtual display.
+        timeout-minutes: 10
         run: xvfb-run -a --server-args="-screen 0 1280x900x24" pytest tests/test_extension.py -v --junitxml=test-results.xml
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 3
         with:
           name: pytest-results
           path: test-results.xml
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload Playwright failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-failures
-          path: |
-            tests/screenshots/
-            tests/.test-profile/Crash Reports/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  # Static validation of the Firefox bundle. Runtime extension testing in
-  # Firefox via Playwright is unreliable (Playwright Firefox doesn't load
-  # WebExtensions), so we lean on `web-ext lint` for now.
-  # ---------------------------------------------------------------------------
   lint-firefox:
     name: Lint (firefox / web-ext)
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Download firefox bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        timeout-minutes: 3
         with:
           name: dist-firefox
           path: dist/firefox
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        timeout-minutes: 2
         with:
           node-version: '20'
 
-      - name: web-ext lint (warnings as warnings, errors fail the build)
+      - name: web-ext lint (errors fail the build)
+        timeout-minutes: 5
         run: npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted
+
+  docs:
+    name: Wiki + release tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
+
+      - name: Check wiki pages
+        timeout-minutes: 1
+        run: python3 scripts/check-wiki.py wiki
+
+      - name: Self-test wiki publishing
+        timeout-minutes: 2
+        run: bash scripts/test-wiki-publish.sh
+
+      - name: Self-test release checks
+        timeout-minutes: 1
+        run: |
+          set -e
+          version=$(python3 -c "import json; print(json.load(open('src/manifest.chrome.json'))['version'])")
+          python3 scripts/release-check.py --tag "v$version" --notes "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md"
+          python3 scripts/release-check.py --tag "v$version-rc.1" | grep -q 'prerelease=true'
+          if python3 scripts/release-check.py --tag v0.0.0 2>/dev/null; then
+            echo "::error::release-check accepted a tag that doesn't match the manifests"; exit 1
+          fi
+
+  ci-status:
+    name: CI status
+    if: always()
+    needs: [build, test-chrome, lint-firefox, docs]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every job to succeed
+        timeout-minutes: 1
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a CI job did not succeed ($r)"; exit 1; }
+          done

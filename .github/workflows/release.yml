@@ -1,112 +1,154 @@
 name: Release
 
-# Tag-driven release. Push a `v*` tag (e.g. `v0.2.0`) on `main` to:
-#   1. Build chrome + firefox bundles at exactly that version
-#   2. Run the full Tests workflow against the build
-#   3. Attach the .zip + .xpi to a GitHub Release
+# Tag-driven release. Push a `v*` tag on a commit that is already on main and
+# has a green `Tests` run:
+#   1. validate  - tag matches both manifests and a CHANGELOG section; the
+#                  commit is on main and passed CI (no re-run here)
+#   2. build     - build .zip + .xpi at that version, with SHA-256 checksums
+#   3. publish   - create the GitHub Release (the only job that can write)
 #
-# Store-side publishing (Chrome Web Store / Firefox AMO) is still a manual
-# step — see CONTRIBUTING.md. Adding it here would require store API tokens
-# and a protected environment with manual approval; out of scope for now.
+# `vX.Y.Z-suffix` tags publish a prerelease; the manifest stays X.Y.Z because
+# Chrome requires numeric versions. Store uploads (Chrome Web Store, AMO) are
+# still manual - see .github/CONTRIBUTING.md.
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
   contents: read
 
-# Never cancel a half-completed release.
+# Never cancel a half-finished release.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # Derive a clean SemVer string from the tag (strip leading "v") and
-  # validate it matches both source manifests before doing any work.
-  prepare:
+  validate:
     name: Validate tag
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      version: ${{ steps.tag.outputs.version }}
-      tag: ${{ steps.tag.outputs.tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Parse tag
-        id: tag
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag '$TAG' is not SemVer (expected vX.Y.Z or vX.Y.Z-prerelease)"
-            exit 1
-          fi
-          # Chrome rejects pre-release suffixes like "-beta.1" — release builds
-          # must be strictly numeric. Surface that early instead of failing
-          # mid-pipeline.
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Chrome manifests reject pre-release suffixes; use vX.Y.Z only."
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify tag version matches both source manifests
-        # Source manifests are the source of truth. They MUST be bumped
-        # (and committed) in lock-step with the tag — this prevents silent
-        # drift between published artifacts and the repo state.
-        run: |
-          VERSION="${{ steps.tag.outputs.version }}"
-          for f in src/manifest.chrome.json src/manifest.firefox.json; do
-            FILE_VER=$(python3 -c "import json; print(json.load(open('$f'))['version'])")
-            if [ "$FILE_VER" != "$VERSION" ]; then
-              echo "::error::$f version ($FILE_VER) does not match tag ($VERSION)"
-              exit 1
-            fi
-          done
-
-  # Reuse the standard test pipeline. Build version comes from the tag.
-  tests:
-    name: Tests on tagged build
-    needs: prepare
-    uses: ./.github/workflows/test.yml
-    with:
-      version: ${{ needs.prepare.outputs.version }}
+    timeout-minutes: 5
     permissions:
       contents: read
-
-  release:
-    name: Publish GitHub Release ${{ github.ref_name }}
-    needs: [prepare, tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
-      - name: Checkout (needed for `gh release` to read the repo)
-        uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
         with:
           fetch-depth: 0
 
-      - name: Download packaged archives from tests workflow
-        uses: actions/download-artifact@v8
-        with:
-          name: dist-archives
-          path: release-artifacts
+      - name: Tag matches manifests and CHANGELOG
+        id: check
+        timeout-minutes: 1
+        run: python3 scripts/release-check.py --tag "$GITHUB_REF_NAME" --github-output
 
-      - name: List artifacts to publish
-        run: ls -la release-artifacts/
+      - name: Tagged commit is on main
+        timeout-minutes: 1
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"; exit 1; }
 
-      - name: Create GitHub Release with auto-generated notes
+      - name: Tagged commit passed CI on main
+        timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ needs.prepare.outputs.tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "${{ needs.prepare.outputs.tag }}" \
-            --generate-notes \
-            release-artifacts/*.zip \
-            release-artifacts/*.xpi
+          # Filter on conclusion in jq: the API's status=success filter doesn't
+          # combine reliably with branch/event and can return 0 for a green run.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/test.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          if [ "${runs:-0}" -lt 1 ]; then
+            echo "::error::No successful 'Tests' run on main for $GITHUB_SHA. Merge to main, wait for CI, then tag that commit."
+            exit 1
+          fi
+          echo "found $runs successful Tests run(s) for $GITHUB_SHA"
+
+  build:
+    name: Build release assets
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
+
+      - name: Build chrome + firefox bundles
+        timeout-minutes: 2
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./publish.sh --version "$VERSION"
+
+      - name: Verify built manifests and write checksums
+        timeout-minutes: 1
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -e
+          for f in dist/chrome/manifest.json dist/firefox/manifest.json; do
+            v=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$f")
+            [ "$v" = "$VERSION" ] || { echo "::error::$f has version $v, expected $VERSION"; exit 1; }
+          done
+          mkdir -p release
+          cp "dist/chatgpt-tag-highlighter-chrome-$VERSION.zip" "dist/chatgpt-tag-highlighter-firefox-$VERSION.xpi" release/
+          (cd release && sha256sum *.zip *.xpi > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Write release notes from CHANGELOG
+        timeout-minutes: 1
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -e
+          python3 scripts/release-check.py --tag "$TAG" --notes release/notes.md
+          {
+            echo
+            echo '### Checksums (SHA-256)'
+            echo
+            echo '```'
+            cat release/SHA256SUMS.txt
+            echo '```'
+          } >> release/notes.md
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 3
+        with:
+          name: release-assets
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        timeout-minutes: 3
+        with:
+          name: release-assets
+          path: release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        timeout-minutes: 3
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: ${{ needs.validate.outputs.tag }}
+          body_path: release/notes.md
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            release/*.zip
+            release/*.xpi
+            release/SHA256SUMS.txt

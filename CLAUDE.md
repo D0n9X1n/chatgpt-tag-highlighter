@@ -75,6 +75,10 @@ Keep new DOM work inside these schedulers, and avoid writing attributes the hist
 
 ## Releasing
 
-`publish.sh --version` only writes the version into the staged `dist/*/manifest.json`. For a release, also bump `version` in **both** `src/manifest.*.json` and update `CHANGELOG.md`; `.github/workflows/release.yml` validates the tag against the manifests. Store uploads are manual.
+`publish.sh --version` only writes the version into the staged `dist/*/manifest.json`. For a release, bump `version` in **both** `src/manifest.*.json` and add a `## [X.Y.Z]` CHANGELOG section; `python3 scripts/release-check.py` verifies they agree (CI runs it on every PR). Tag `vX.Y.Z` only on a `main` commit with a green `Tests` run: `release.yml` validates the tag, manifests, CHANGELOG, main ancestry and CI result, builds with checksums, and publishes notes from the CHANGELOG. `-suffix` tags become prereleases (manifests stay numeric). Store uploads are manual.
 
-The privacy docs describe settings as local, but the code prefers `storage.sync`; don't restate "local-only" as fact.
+CI (`test.yml`): all actions are SHA-pinned with a version comment, every job and step has `timeout-minutes`, and `CI status` is the single aggregate check. Keep that pattern when adding steps.
+
+Wiki: `wiki/` is the source; the GitHub wiki is a generated mirror published by `publish-wiki.yml` on push to `main`. Every page is an English + `-zh-CN` pair with matching headings; links use bare page names (no `.md`); Home lists every page. Run `python3 scripts/check-wiki.py wiki` after editing.
+
+Settings use `storage.sync` (browser sync may copy them across devices); don't describe them as local-only.
