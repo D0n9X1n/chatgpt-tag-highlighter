@@ -1,6 +1,6 @@
 # Privacy Policy — ChatGPT Tag Highlighter
 
-**Last updated:** 2026-04-21
+**Last updated:** 2026-09-24
 
 ChatGPT Tag Highlighter (“the Extension”) highlights ChatGPT sidebar conversations based on tags in the conversation title (e.g., **[TODO]**, **[BUG]**). This policy explains what the Extension accesses and how it handles data.
 
@@ -12,6 +12,7 @@ To provide highlighting, the Extension runs on supported ChatGPT domains (e.g., 
 
 - **Website content accessed:** the **visible conversation titles** shown in the **sidebar chat list** (the text you see in the left navigation), and the **current theme state** (dark or light mode, detected via the `class` attribute on the `<html>` element).
 - **Purpose:** to check whether a title matches your configured tags and apply styling (colored left stripe and background), and to adapt the overlay appearance to the active ChatGPT theme.
+- **Page layout (optional features):** the on-screen **size** of conversation messages, used by “Speed up long chats” so the browser can skip rendering messages that are off-screen; and, only if you set “Max chat turns”, the message elements themselves, which are removed from the page (not from your account) until you reload. Message text is not read.
 
 **The Extension does not read or process:**
 - the message content inside a chat
@@ -38,12 +39,14 @@ The Extension may observe **UI events on the page** (such as when the sidebar li
 
 ## 3) Data the Extension stores
 
-The Extension stores only **non-sensitive settings** locally in your browser using the browser’s extension storage API, such as:
+The Extension stores only **non-sensitive settings** using the browser’s extension storage API (`storage.sync`, with `storage.local` as a fallback), such as:
 - tag rules (e.g., `[TODO]`, `[BUG]`)
 - match type (`startsWith` / `includes`)
-- color choices (preset names or `#RRGGBB`)
+- color choices (`#RRGGBB`)
+- general options (for example “Speed up long chats”)
+- which tag filters are selected (kept in `storage.local`)
 
-This configuration is used only to apply your chosen highlighting.
+If browser sync is turned on, your browser may copy these settings to your other signed-in devices through its own sync service. The Extension itself never sends them anywhere. This configuration is used only to apply your chosen highlighting.
 
 ---
 
@@ -64,7 +67,7 @@ This configuration is used only to apply your chosen highlighting.
 
 ## 6) Data retention
 
-- Your settings remain in your browser until you change them or remove the Extension.
+- Your settings remain in your browser (and your browser’s sync storage, if enabled) until you change them or remove the Extension.
 - The Extension does not retain copies of website content or user activity logs.
 
 ---

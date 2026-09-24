@@ -695,3 +695,568 @@ class TestMigration:
         assert 'hideNavBar' in cfg
         assert 'dimUntagged' in cfg
         assert 'showBadge' in cfg
+        assert cfg.get('lazyRenderTurns') is True, 'lazyRenderTurns should default to true'
+
+    def test_lazy_render_turns_persists(self, browser_context, ext_id):
+        """The 'Speed up long chats' checkbox should persist in config."""
+        self._set_raw_config({
+            'rules': [{'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_timeout(1500)
+        assert page.evaluate("document.getElementById('lazyRenderTurns').checked") is True
+        page.uncheck('#lazyRenderTurns')
+        page.wait_for_timeout(500)
+        cfg = json.loads(page.evaluate(
+            f"new Promise(r => chrome.storage.sync.get('{STORAGE_KEY}', "
+            f"d => r(JSON.stringify(d['{STORAGE_KEY}']))))"
+        ))
+        page.close()
+        assert cfg['lazyRenderTurns'] is False
+
+
+    def test_background_migration_writes_hex_for_missing_color(self, browser_context, ext_id):
+        """background.js must never persist a non-hex color (e.g. the name 'Green')."""
+        page = browser_context.new_page()
+        page.set_content('<html><body></body></html>')
+        page.evaluate("""() => {
+            window.__store = {tagHighlighterConfigV1: {rules: [{tag: '[X]', match: 'startsWith'}], maxChatTurns: 0}};
+            const ev = {addListener() {}};
+            // background.js prefers `browser` over `chrome`; window.chrome can't be redefined.
+            window.browser = ({
+                runtime: {onInstalled: ev, onStartup: ev, onMessage: ev},
+                storage: {sync: {
+                    get(k, cb) { const v = {[k]: window.__store[k]}; return cb ? cb(v) : Promise.resolve(v); },
+                    set(o, cb) { Object.assign(window.__store, o); return cb ? cb() : Promise.resolve(); },
+                }},
+            });
+        }""")
+        page.add_script_tag(content=(Path(EXT_PATH) / 'background.js').read_text())
+        page.wait_for_function("() => window.__store.tagHighlighterConfigV1.rules[0].hide === false", timeout=5000)
+        color = page.evaluate("window.__store.tagHighlighterConfigV1.rules[0].color")
+        page.close()
+        assert re.fullmatch(r'#[0-9a-f]{6}', color or ''), f'migration stored non-hex color {color!r}'
+
+
+# ============================================================
+# Content Script Tests — the packaged content.js against synthetic
+# ChatGPT markup served at https://chatgpt.com/ via request routing.
+# Fixtures mirror the DOM hooks observed on the live site (Sep 2026):
+# #history > a[data-sidebar-item], .truncate span[dir=auto],
+# empty-string data-active, form[data-type=unified-composer], and
+# <section data-testid="conversation-turn-N"> inside an overflow-auto
+# scroll root above <main>. No real account data is used.
+# ============================================================
+
+import html as _html
+
+CONTENT_RULES = [
+    {'tag': '[TODO]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False, 'overlay': True},
+    {'tag': '[BUG]', 'match': 'startsWith', 'color': '#fb4934', 'hide': False, 'overlay': True},
+    {'tag': '[ARCHIVE]', 'match': 'startsWith', 'color': '#928374', 'hide': True, 'overlay': True},
+    {'tag': 'code', 'match': 'includes', 'color': '#83a598', 'hide': False, 'overlay': True},
+]
+
+DEFAULT_CHATS = [
+    ('c1', '[TODO] ship release'),
+    ('c2', '[BUG] code crash'),   # first match wins: [BUG], not "code"
+    ('c3', 'refactor code path'),
+    ('c4', '[ARCHIVE] old notes'),
+    ('c5', 'plain chat'),
+]
+
+
+def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
+                  turn_tag='section', turns=6):
+    """Build a minimal ChatGPT-shaped page.
+
+    active: None, a chat id (empty-string data-active, as on live), or a
+            dict {chat_id: data-active value}.
+    composer: 'current' (unified-composer form), 'legacy'
+              (div.bg-token-bg-primary), or 'none'.
+    """
+    if isinstance(active, str):
+        active = {active: ''}
+    active = active or {}
+
+    links = []
+    for cid, title in chats:
+        attr = f' data-active="{_html.escape(active[cid])}"' if cid in active else ''
+        links.append(
+            f'<a href="/c/{cid}" data-sidebar-item="true"{attr}>'
+            f'<div class="flex min-w-0 grow items-center"><div class="truncate">'
+            f'<span dir="auto">{_html.escape(title)}</span></div></div></a>'
+        )
+
+    turn_html = ''.join(
+        f'<{turn_tag} data-testid="conversation-turn-{i}" class="turn">turn {i}'
+        f'<button data-testid="copy-turn-action-button">copy</button></{turn_tag}>'
+        for i in range(1, turns + 1)
+    )
+
+    if composer == 'current':
+        composer_html = (
+            '<form id="composer" class="group/composer w-full relative z-1" data-type="unified-composer">'
+            '<div class="relative"><div class="surface">'
+            '<div id="prompt-textarea" contenteditable="true" role="textbox"></div>'
+            '</div></div></form>'
+        )
+    elif composer == 'legacy':
+        composer_html = (
+            '<div id="composer" class="bg-token-bg-primary">'
+            '<div id="prompt-textarea" contenteditable="true"></div></div>'
+        )
+    else:
+        composer_html = ''
+
+    return f'''<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>ChatGPT fixture</title>
+<style>
+  html, body {{ margin: 0; height: 100%; }}
+  body {{ display: flex; }}
+  #sidebar {{ width: 260px; height: 100vh; overflow-y: auto; }}
+  #history a {{ display: block; padding: 8px 12px; }}
+  #stage {{ flex: 1; display: flex; flex-direction: column; height: 100vh; }}
+  #scroll-root {{ flex: 1; min-height: 0; overflow-y: auto; position: relative; }}
+  #main {{ display: block; }}
+  .turn {{ display: block; height: 300px; }}
+  #composer {{ display: block; margin: 12px auto; width: 600px; min-height: 52px; }}
+  #native-scroll {{ position: fixed; right: 40px; bottom: 120px; }}
+</style></head>
+<body>
+  <aside id="sidebar"><nav aria-label="Sidebar"><div id="history">{''.join(links)}</div></nav></aside>
+  <div id="stage">
+    <div id="scroll-root" class="overflow-y-auto">
+      <main id="main"><div id="thread">{turn_html}
+        <button id="native-scroll" aria-label="Scroll to bottom">down</button>
+        <div class="flex h-0 items-end justify-center group-[:not([data-scroll-from-end])]/scroll-root:scale-0">
+          <button id="native-scroll-current" aria-hidden="true" tabindex="-1" class="rounded-full btn-secondary">v</button>
+        </div>
+      </div></main>
+    </div>
+    {composer_html}
+  </div>
+</body></html>'''
+
+
+class TestContentScript:
+    """Exercise the real packaged content.js on synthetic ChatGPT pages."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, browser_context, ext_id):
+        self.context = browser_context
+        self.ext_id = ext_id
+        self._pages = []
+        yield
+        for p in self._pages:
+            try:
+                p.close()
+            except Exception:
+                pass
+
+    def _configure(self, rules=None, active_filters=None, **overrides):
+        cfg = {
+            'rules': rules if rules is not None else CONTENT_RULES,
+            'maxChatTurns': 0, 'hideNavBar': True,
+            'dimUntagged': False, 'showBadge': True,
+        }
+        cfg.update(overrides)
+        page = self.context.new_page()
+        page.goto(f'chrome-extension://{self.ext_id}/options.html')
+        page.wait_for_timeout(800)  # let options.js init/migration settle
+        page.evaluate(
+            """([key, cfg, uiKey, filters]) => Promise.all([
+                new Promise(r => chrome.storage.sync.set({[key]: cfg}, r)),
+                new Promise(r => chrome.storage.local.set({[uiKey]: {activeFilters: filters}}, r)),
+            ])""",
+            [STORAGE_KEY, cfg, 'tagHighlighterUiStateV1', active_filters or []],
+        )
+        page.close()
+
+    def _open_chat(self, path='/c/c1', **fixture_kwargs):
+        body = _chat_fixture(**fixture_kwargs)
+        page = self.context.new_page()
+        self._pages.append(page)
+        page.route('https://chatgpt.com/**', lambda route: route.fulfill(
+            status=200, content_type='text/html', body=body))
+        page.goto(f'https://chatgpt.com{path}')
+        # Proves the packaged content script injected before we assert anything.
+        page.wait_for_selector('#cth-style', state='attached', timeout=10_000)
+        page.wait_for_selector('#history a[data-cth="1"]', state='attached', timeout=10_000)
+        return page
+
+    @staticmethod
+    def _poll(page, expression, arg=None, timeout=3000):
+        try:
+            page.wait_for_function(expression, arg=arg, timeout=timeout)
+            return True
+        except Exception:
+            return False
+
+    def _overlay_visible(self, page, timeout=3000):
+        return self._poll(page, """() => {
+            const o = document.getElementById('cth-overlay');
+            return !!o && getComputedStyle(o).display !== 'none';
+        }""", timeout=timeout)
+
+    def _overlay_hidden(self, page, timeout=3000):
+        return self._poll(page, """() => {
+            const o = document.getElementById('cth-overlay');
+            return !o || getComputedStyle(o).display === 'none';
+        }""", timeout=timeout)
+
+    def _sidebar_state(self, page):
+        return page.evaluate("""() => Object.fromEntries(
+            [...document.querySelectorAll('#history a[data-sidebar-item]')].map(a => [
+                a.getAttribute('href').slice(3),
+                {cth: a.dataset.cth || null, hidden: a.dataset.cthHidden || null,
+                 color: a.style.getPropertyValue('--cth-color') || null,
+                 display: getComputedStyle(a).display},
+            ]))""")
+
+    # ---- Highlighting ----
+
+    def test_highlights_with_first_match_and_hides_rule_hidden(self):
+        self._configure()
+        page = self._open_chat()
+        s = self._sidebar_state(page)
+        assert s['c1']['cth'] == '1' and s['c1']['color'] == '#fabd2f'
+        assert s['c2']['color'] == '#fb4934', 'first matching rule ([BUG]) must win over "code"'
+        assert s['c3']['color'] == '#83a598'
+        assert s['c4']['hidden'] == '1' and s['c4']['display'] == 'none'
+        assert s['c5']['cth'] is None and s['c5']['display'] != 'none'
+
+    def test_dim_untagged_and_badge_count(self):
+        self._configure(dimUntagged=True)
+        page = self._open_chat()
+        opacity = page.evaluate(
+            "getComputedStyle(document.querySelector('#history a[href=\"/c/c5\"]')).opacity")
+        assert float(opacity) < 1, 'untagged chat should be dimmed'
+        opts = self.context.new_page()
+        self._pages.append(opts)
+        opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+        # Tagged, non-hidden chats: c1, c2, c3.
+        assert self._poll(opts, "async () => (await chrome.action.getBadgeText({})) === '3'",
+                          timeout=5000), 'badge should count 3 visible tagged chats'
+
+    # ---- Overlay ----
+
+    def test_overlay_positions_above_current_composer(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='current')
+        assert self._overlay_visible(page), 'overlay must appear above the unified-composer form'
+        geo = page.evaluate("""() => {
+            const o = document.getElementById('cth-overlay').getBoundingClientRect();
+            const c = document.getElementById('composer').getBoundingClientRect();
+            return {oBottom: o.bottom, cTop: c.top, oLeft: o.left, cLeft: c.left,
+                    oWidth: o.width, cWidth: c.width,
+                    title: document.querySelector('#cth-overlay .cth-title').textContent,
+                    z: getComputedStyle(document.getElementById('cth-overlay')).zIndex};
+        }""")
+        assert abs(geo['oBottom'] - geo['cTop']) <= 2
+        assert abs(geo['oLeft'] - geo['cLeft']) <= 2 and abs(geo['oWidth'] - geo['cWidth']) <= 2
+        assert geo['title'] == '[TODO] ship release'
+        assert geo['z'] == '30', 'overlay must stay below ChatGPT popovers'
+
+    def test_overlay_positions_above_legacy_composer(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+
+    def test_overlay_recovers_after_composer_remount(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+        page.evaluate("window.__composer = document.getElementById('composer'); window.__composer.remove()")
+        assert self._overlay_hidden(page), 'overlay must hide while composer is absent'
+        page.evaluate("document.getElementById('stage').append(window.__composer)")
+        assert self._overlay_visible(page), 'overlay must return when composer is re-mounted'
+
+    def test_overlay_skips_literal_false_active_marker(self):
+        self._configure()
+        page = self._open_chat(active={'c1': 'false', 'c2': ''}, composer='legacy')
+        assert self._overlay_visible(page)
+        title = page.evaluate("document.querySelector('#cth-overlay .cth-title').textContent")
+        assert title == '[BUG] code crash', f'data-active="false" must not count as selected, got {title!r}'
+
+    @pytest.mark.parametrize('turn_tag', ['section', 'article'])
+    def test_overlay_click_scrolls_conversation_to_bottom(self, turn_tag):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy', turn_tag=turn_tag)
+        assert self._overlay_visible(page)
+        page.click('#cth-overlay .cth-arrow')
+        assert self._poll(page, """() => {
+            const s = document.getElementById('scroll-root');
+            return s.scrollTop > 0 && s.scrollTop + s.clientHeight >= s.scrollHeight - 5;
+        }""", timeout=4000), f'chevron click must scroll the real scroller ({turn_tag} turns)'
+
+    def test_overlay_click_finishes_when_page_interrupts_smooth_scroll(self):
+        """If the smooth scroll is cut short (another scroll write, growing
+        content), the chevron must still land at the bottom."""
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+        page.evaluate("document.getElementById('scroll-root').scrollTop = 0")
+        page.wait_for_timeout(300)
+        # Simulate the page nudging scrollTop once, which aborts a smooth scroll.
+        page.evaluate("""() => {
+            const s = document.getElementById('scroll-root');
+            let fired = false;
+            s.addEventListener('scroll', () => {
+                if (fired) return;
+                fired = true;
+                s.scrollTop = s.scrollTop + 1;
+            });
+        }""")
+        page.click('#cth-overlay .cth-arrow')
+        assert self._poll(page, """() => {
+            const s = document.getElementById('scroll-root');
+            return s.scrollTop + s.clientHeight >= s.scrollHeight - 5;
+        }""", timeout=4000), 'chevron must finish at the bottom even if the smooth scroll is interrupted'
+
+    def test_overlay_click_respects_user_scroll_after_interruption(self):
+        """If the user scrolls while the chevron's scroll is stalled, the
+        fallback must not yank them to the bottom afterwards."""
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+        page.evaluate("document.getElementById('scroll-root').scrollTop = 0")
+        page.wait_for_timeout(300)
+        # Abort the smooth scroll and, at the same moment, simulate a user wheel.
+        page.evaluate("""() => {
+            const s = document.getElementById('scroll-root');
+            let fired = false;
+            s.addEventListener('scroll', () => {
+                if (fired) return;
+                fired = true;
+                s.scrollTop = s.scrollTop + 1;
+                s.dispatchEvent(new WheelEvent('wheel', {bubbles: true, deltaY: -10}));
+            });
+        }""")
+        page.click('#cth-overlay .cth-arrow')
+        page.wait_for_timeout(2200)  # past the 1.5 s fallback deadline
+        top, max_top = page.evaluate("""() => { const s = document.getElementById('scroll-root');
+            return [s.scrollTop, s.scrollHeight - s.clientHeight]; }""")
+        assert top < max_top - 50, f'user input must cancel the fallback jump (scrollTop={top}, max={max_top})'
+
+        # A later click still works normally.
+        page.click('#cth-overlay .cth-arrow')
+        assert self._poll(page, """() => { const s = document.getElementById('scroll-root');
+            return s.scrollTop + s.clientHeight >= s.scrollHeight - 5; }""", timeout=4000)
+
+    def test_overlay_click_keeps_composer_focus(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+        page.focus('#prompt-textarea')
+        page.click('#cth-overlay .cth-arrow')
+        page.wait_for_timeout(200)
+        assert page.evaluate("document.activeElement?.id") == 'prompt-textarea', \
+            'clicking the chevron should not steal focus from the composer'
+
+    def test_native_scroll_button_only_hidden_while_overlay_replaces_it(self):
+        self._configure()
+        page = self._open_chat(active='c5', composer='legacy')  # untagged -> no overlay
+        assert self._overlay_hidden(page)
+        page.wait_for_timeout(300)
+        assert page.evaluate("getComputedStyle(document.getElementById('native-scroll')).display") != 'none', \
+            'native scroll control must stay usable when no overlay replaces it'
+        assert page.evaluate("getComputedStyle(document.getElementById('native-scroll-current')).display") != 'none', \
+            'current (unlabelled) native scroll control must stay usable when no overlay replaces it'
+
+        page2 = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page2)
+        assert self._poll(page2, "() => getComputedStyle(document.getElementById('native-scroll')).display === 'none'"), \
+            'native scroll control should be de-duplicated while the overlay is shown'
+        assert self._poll(page2, "() => getComputedStyle(document.getElementById('native-scroll-current')).display === 'none'"), \
+            'current ChatGPT scroll button (no aria-label, data-scroll-from-end wrapper) must be de-duplicated too'
+
+    # ---- First run + keyboard ----
+
+    def test_config_arriving_after_boot_binds_sidebar(self):
+        """On first install the page can load before any settings exist."""
+        opts = self.context.new_page()
+        opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+        opts.wait_for_timeout(800)
+        opts.evaluate("k => new Promise(r => chrome.storage.sync.remove(k, r))", STORAGE_KEY)
+        opts.close()
+        body = _chat_fixture()
+        page = self.context.new_page()
+        self._pages.append(page)
+        page.route('https://chatgpt.com/**', lambda route: route.fulfill(
+            status=200, content_type='text/html', body=body))
+        page.goto('https://chatgpt.com/c/c1')
+        page.wait_for_selector('#cth-style', state='attached', timeout=10_000)
+        page.wait_for_timeout(500)
+        assert page.evaluate("document.querySelectorAll('#history a[data-cth=\"1\"]').length") == 0
+
+        self._configure()
+        assert self._poll(page, "() => document.querySelectorAll('#history a[data-cth=\"1\"]').length > 0"), \
+            'existing chats must be styled once settings arrive'
+        page.evaluate("""() => document.getElementById('history').insertAdjacentHTML('beforeend',
+            '<a href="/c/new" data-sidebar-item="true"><div class="truncate"><span dir="auto">[TODO] added later</span></div></a>')""")
+        assert self._poll(page, "() => document.querySelector('#history a[href=\"/c/new\"]')?.dataset.cth === '1'"), \
+            'chats added after late settings must be styled (sidebar observer attached)'
+        assert self._poll(page, "() => !!document.querySelector('#history #cth-filter-bar.cth-visible')"), \
+            'filter bar must appear once settings arrive'
+
+    def test_filter_pills_work_from_keyboard(self):
+        self._configure()
+        page = self._open_chat()
+        page.wait_for_selector('#cth-filter-bar.cth-visible')
+        active = "() => [...document.querySelectorAll('#cth-filter-bar .cth-pill.active')].map(p => p.textContent).join()"
+        page.keyboard.press('Alt+KeyF')
+        page.keyboard.press('Tab')
+        page.keyboard.press('Enter')
+        assert self._poll(page, active + " === '[TODO]'"), 'Enter must toggle the focused pill'
+        assert page.evaluate("document.activeElement?.textContent") == '[TODO]', \
+            'focus must stay on the pill after it re-renders'
+        page.keyboard.press('Space')
+        assert self._poll(page, active + " === 'All'"), 'Space must toggle it back off'
+        roles = page.evaluate("[...document.querySelectorAll('#cth-filter-bar .cth-pill')]"
+                              ".map(p => [p.getAttribute('role'), p.getAttribute('aria-pressed')])")
+        assert all(r == 'button' and ap in ('true', 'false') for r, ap in roles), roles
+
+    # ---- Long-chat rendering ----
+
+    LAZY_STATE = """() => [...document.querySelectorAll('[data-testid^="conversation-turn-"]')]
+        .filter(e => /^conversation-turn-\\d+$/.test(e.dataset.testid))
+        .map(e => ({lazy: e.dataset.cthLazy === '1', cv: getComputedStyle(e).contentVisibility,
+                    size: e.style.getPropertyValue('--cth-turn-h')}))"""
+
+    def _lazy_count(self, page):
+        return page.evaluate(f"({self.LAZY_STATE})().filter(t => t.lazy).length")
+
+    def test_long_chat_skips_rendering_offscreen_turns(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy', turns=30)
+        assert self._poll(page, f"() => ({self.LAZY_STATE})().filter(t => t.lazy).length === 26", timeout=4000), \
+            f'expected 26 older turns marked lazy, got {self._lazy_count(page)}'
+        state = page.evaluate(self.LAZY_STATE)
+        assert all(t['cv'] == 'auto' and t['size'] == '300px' for t in state[:26]), \
+            'lazy turns must use content-visibility:auto with their measured height as placeholder'
+        assert all(not t['lazy'] and t['cv'] == 'visible' for t in state[26:]), \
+            'the most recent turns must always render normally'
+
+        # A new message shifts the window: turn 27 becomes lazy, the newest 4 stay rendered.
+        page.evaluate("""() => { const t = document.createElement('section');
+            t.dataset.testid = 'conversation-turn-31'; t.className = 'turn'; t.textContent = 'turn 31';
+            document.getElementById('thread').append(t); }""")
+        assert self._poll(page, f"() => ({self.LAZY_STATE})().filter(t => t.lazy).length === 27", timeout=4000)
+        assert [t['lazy'] for t in page.evaluate(self.LAZY_STATE)[-4:]] == [False] * 4
+
+    def test_short_chat_is_not_lazy(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy', turns=10)
+        page.wait_for_timeout(600)
+        assert self._lazy_count(page) == 0, 'chats under the threshold must render normally'
+
+    def test_disabling_long_chat_rendering_applies_live(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy', turns=30)
+        assert self._poll(page, f"() => ({self.LAZY_STATE})().filter(t => t.lazy).length === 26", timeout=4000)
+        self._configure(lazyRenderTurns=False)
+        assert self._poll(page, f"""() => ({self.LAZY_STATE})().every(t => !t.lazy && t.cv === 'visible' && !t.size)""",
+                          timeout=4000), 'turning the option off must restore normal rendering without reload'
+
+    # ---- Pruning ----
+
+    @pytest.mark.parametrize('turn_tag', ['section', 'article'])
+    def test_prunes_oldest_turns(self, turn_tag):
+        self._configure(maxChatTurns=2)
+        page = self._open_chat(active='c1', composer='legacy', turn_tag=turn_tag, turns=5)
+        assert self._poll(page, """() =>
+            document.querySelectorAll('[data-testid^="conversation-turn-"]').length === 2""",
+            timeout=4000), f'expected 2 remaining {turn_tag} turns'
+        remaining = page.evaluate("""() => [...document.querySelectorAll('[data-testid^="conversation-turn-"]')]
+            .map(e => e.dataset.testid)""")
+        assert remaining == ['conversation-turn-4', 'conversation-turn-5']
+        assert page.evaluate("document.querySelectorAll('[data-testid=\"copy-turn-action-button\"]').length") == 2
+
+    # ---- Keyboard ----
+
+    def test_alt_h_toggles_rule_hidden_chats(self):
+        self._configure()
+        page = self._open_chat()
+        disp = "() => getComputedStyle(document.querySelector('#history a[href=\"/c/c4\"]')).display"
+        assert page.evaluate(disp) == 'none'
+        page.keyboard.press('Alt+KeyH')
+        assert self._poll(page, disp + " !== 'none'"), 'Alt+H must reveal rule-hidden chats'
+        page.keyboard.press('Alt+KeyH')
+        assert self._poll(page, disp + " === 'none'"), 'second Alt+H must hide them again'
+
+    # ---- Dynamic sidebar ----
+
+    def test_title_text_edit_restyles_chat(self):
+        self._configure()
+        page = self._open_chat()
+        page.evaluate("""() => {
+            document.querySelector('#history a[href="/c/c5"] span[dir="auto"]').firstChild.data = '[TODO] renamed';
+        }""")
+        assert self._poll(page, """() =>
+            document.querySelector('#history a[href="/c/c5"]').dataset.cth === '1'"""), \
+            'in-place title text edits must be re-evaluated'
+
+    def test_replaced_history_root_is_rebound(self):
+        self._configure()
+        page = self._open_chat()
+        page.evaluate("""() => {
+            const old = document.getElementById('history');
+            const fresh = document.createElement('div');
+            fresh.id = 'history';
+            fresh.innerHTML = '<a href="/c/n1" data-sidebar-item="true"><div class="truncate">' +
+                '<span dir="auto">[BUG] after remount</span></div></a>';
+            old.replaceWith(fresh);
+        }""")
+        assert self._poll(page, """() =>
+            document.querySelector('#history a[href="/c/n1"]')?.dataset.cth === '1'"""), \
+            'replacement #history must be observed and styled'
+        page.evaluate("""() => document.getElementById('history').insertAdjacentHTML('beforeend',
+            '<a href="/c/n2" data-sidebar-item="true"><div class="truncate"><span dir="auto">[TODO] later</span></div></a>')""")
+        assert self._poll(page, """() =>
+            document.querySelector('#history a[href="/c/n2"]')?.dataset.cth === '1'"""), \
+            'chats added after remount must be styled'
+
+    def test_overlay_clears_and_recovers_when_sidebar_unmounts(self):
+        self._configure()
+        page = self._open_chat(active='c1', composer='legacy')
+        assert self._overlay_visible(page)
+        assert self._poll(page, "() => getComputedStyle(document.getElementById('native-scroll')).display === 'none'")
+
+        page.evaluate("window.__history = document.getElementById('history'); window.__history.remove()")
+        assert self._overlay_hidden(page), 'overlay must not describe a detached sidebar'
+        assert self._poll(page, "() => getComputedStyle(document.getElementById('native-scroll')).display !== 'none'"), \
+            'native scroll control must return while the sidebar is gone'
+
+        page.evaluate("document.querySelector('nav[aria-label=\"Sidebar\"]').append(window.__history)")
+        assert self._overlay_visible(page), 'overlay must return when the sidebar re-mounts'
+        assert self._poll(page, "() => getComputedStyle(document.getElementById('native-scroll')).display === 'none'")
+
+    # ---- Filters + live config ----
+
+    def test_multiselect_filter_persists_across_reload(self):
+        self._configure()
+        page = self._open_chat()
+        page.wait_for_selector('#cth-filter-bar.cth-visible')
+        page.click('#cth-filter-bar .cth-pill:has-text("[TODO]")')
+        page.click('#cth-filter-bar .cth-pill:has-text("[BUG]")')
+        visible = """() => [...document.querySelectorAll('#history a[data-sidebar-item]')]
+            .filter(a => getComputedStyle(a).display !== 'none').map(a => a.getAttribute('href'))"""
+        assert page.evaluate(visible) == ['/c/c1', '/c/c2']
+        page.wait_for_timeout(700)  # > 400ms save debounce
+        page.reload()
+        page.wait_for_selector('#history a[data-cth="1"]', state='attached')
+        assert self._poll(page, visible + ".join() === '/c/c1,/c/c2'", timeout=4000), \
+            'filter selection must survive reload'
+
+    def test_live_config_change_restyles_without_reload(self):
+        self._configure()
+        page = self._open_chat()
+        assert self._sidebar_state(page)['c5']['cth'] is None
+        self._configure(rules=CONTENT_RULES + [
+            {'tag': 'plain', 'match': 'includes', 'color': '#d3869b', 'hide': False, 'overlay': True}])
+        assert self._poll(page, """() =>
+            document.querySelector('#history a[href="/c/c5"]').dataset.cth === '1'"""), \
+            'saved rule changes must apply live'

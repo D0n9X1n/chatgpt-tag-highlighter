@@ -150,17 +150,20 @@
 		const style = document.createElement('style');
 		style.id = STYLE_ID;
 
-		// The scroll-to-bottom floating button you asked to hide.
-		// ChatGPT keeps shuffling utility-class chains, so prefer stable
-		// attribute selectors. Use exact-match aria-label / data-testid
-		// (not substring) to avoid hiding unrelated buttons whose label
-		// merely contains the word "bottom" (audit catch). Keep the legacy
-		// utility-class selector as a last-resort fallback.
+		// ChatGPT's native scroll-to-bottom button duplicates the overlay's
+		// chevron, so hide it — but ONLY while the overlay is actually shown
+		// (html.cth-overlay-active). Otherwise the user would lose the only
+		// scroll-to-bottom control. Use exact-match aria-label / data-testid
+		// (not substring) to avoid hiding unrelated buttons. Current ChatGPT
+		// (Sep 2026) renders an unlabelled aria-hidden button inside a wrapper
+		// whose class carries the `data-scroll-from-end` scroll-root variant.
+		// Keep the legacy utility-class selector as a last-resort fallback.
 		const hideScrollBtnCss = `
-main button[data-testid="scroll-to-bottom-button"],
-main button[aria-label="Scroll to bottom"],
-main button[aria-label="Scroll to the bottom"],
-button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-token-text-secondary.border-token-border-default.end-1\\/2.translate-x-1\\/2.print\\:hidden {
+html.cth-overlay-active main button[data-testid="scroll-to-bottom-button"],
+html.cth-overlay-active main button[aria-label="Scroll to bottom"],
+html.cth-overlay-active main button[aria-label="Scroll to the bottom"],
+html.cth-overlay-active main [class*="data-scroll-from-end"] > button,
+html.cth-overlay-active button.cursor-pointer.absolute.z-30.rounded-full.bg-clip-padding.border.text-token-text-secondary.border-token-border-default.end-1\\/2.translate-x-1\\/2.print\\:hidden {
   display: none !important;
 }
 `;
@@ -175,8 +178,8 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 > div.flex.w-9
 
 		// Sidebar highlight + hide styles (bigger highlighted area)
 		const sidebarCss = `
-/* Hide chats matched by hide=true rules */
-#history a[data-cth-hidden="1"] { display: none !important; }
+/* Hide chats matched by hide=true rules (Alt+H sets cth-reveal-hidden) */
+html:not(.cth-reveal-hidden) #history a[data-cth-hidden="1"] { display: none !important; }
 
 /* Base highlighted row */
 #history a[data-cth="1"]{
@@ -196,12 +199,13 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 > div.flex.w-9
   pointer-events:none;
 }
 
-/* Selected row gets stronger background + thicker stripe */
-#history a[data-cth="1"][data-active],
+/* Selected row gets stronger background + thicker stripe.
+   Live ChatGPT marks the selected chat with an empty data-active attribute. */
+#history a[data-cth="1"][data-active]:not([data-active="false"]),
 #history a[data-cth="1"][aria-current="page"]{
   background: var(--cth-bg-strong, var(--cth-bg, transparent)) !important;
 }
-#history a[data-cth="1"][data-active]::before,
+#history a[data-cth="1"][data-active]:not([data-active="false"])::before,
 #history a[data-cth="1"][aria-current="page"]::before{
   width:6px;
 }
@@ -306,7 +310,7 @@ html.cth-light #${OVERLAY_ID}:hover .cth-arrow {
 html.cth-light #history a[data-cth="1"] {
   background: var(--cth-bg-light, var(--cth-bg, transparent)) !important;
 }
-html.cth-light #history a[data-cth="1"][data-active],
+html.cth-light #history a[data-cth="1"][data-active]:not([data-active="false"]),
 html.cth-light #history a[data-cth="1"][aria-current="page"] {
   background: var(--cth-bg-strong-light, var(--cth-bg-strong, transparent)) !important;
 }
@@ -374,7 +378,16 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}`;
+		// Long chats: let the browser skip rendering off-screen older turns.
+		// The measured height is the placeholder, so the scrollbar stays put.
+		const lazyCss = `
+html.cth-lazy-turns [data-cth-lazy="1"] {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto var(--cth-turn-h, 300px);
+}
+`;
+
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}\n${lazyCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -432,6 +445,9 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			scrollToBottom();
 		};
 
+		// Pressing the overlay must not blur the composer (keeps typing flow
+		// and avoids a focus change interrupting the scroll).
+		element.addEventListener('mousedown', e => e.preventDefault());
 		element.addEventListener('click', onScrollClick);
 		const arrow = element.querySelector('.cth-arrow');
 		if (arrow) {
@@ -444,11 +460,12 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 	// ---- Find active conversation title in sidebar ----
 	function getActiveChatAnchor(historyRoot) {
-		// ChatGPT uses data-active in many builds; aria-current covers others.
+		// ChatGPT marks the selected chat with data-active (an empty string on
+		// current builds); aria-current covers others. A literal "false" value
+		// is not a selection.
 		return (
-			historyRoot?.querySelector('a[data-sidebar-item="true"][data-active]')
+			historyRoot?.querySelector('a[data-sidebar-item="true"][data-active]:not([data-active="false"])')
 			|| historyRoot?.querySelector('a[data-sidebar-item="true"][aria-current="page"]')
-			|| historyRoot?.querySelector('a[data-sidebar-item="true"][data-active="true"]')
 			|| null
 		);
 	}
@@ -495,12 +512,15 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		const hideNavBar = cfg?.hideNavBar !== false; // default true
 		const dimUntagged = cfg?.dimUntagged === true;
 		const showBadge = cfg?.showBadge !== false; // default true
+		const lazyRenderTurns = cfg?.lazyRenderTurns !== false; // default true
 
 		// Toggle CSS class for nav bar visibility
 		document.documentElement.classList.toggle('cth-hide-navbar', hideNavBar);
 		document.documentElement.classList.toggle('cth-dim-untagged', dimUntagged);
 
-		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge};
+		document.documentElement.classList.toggle('cth-lazy-turns', lazyRenderTurns);
+
+		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns};
 	}
 
 	function matchRule(title, rules) {
@@ -608,6 +628,16 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		if (bar) return bar;
 		bar = document.createElement('div');
 		bar.id = FILTER_BAR_ID;
+		bar.setAttribute('role', 'group');
+		bar.setAttribute('aria-label', 'Filter chats by tag');
+		// Pills are spans, so make Enter/Space activate them like buttons.
+		bar.addEventListener('keydown', e => {
+			if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('cth-pill')) {
+				e.preventDefault();
+				e.stopPropagation();
+				e.target.click();
+			}
+		});
 		return bar;
 	}
 
@@ -625,12 +655,16 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			historyRoot.prepend(bar);
 		}
 
+		// Re-rendering replaces the pills; keep keyboard focus on the same one.
+		const focusedIndex = [...bar.children].indexOf(document.activeElement);
 		bar.innerHTML = '';
 
 		const allPill = document.createElement('span');
 		allPill.className = 'cth-pill' + (activeFilters.size === 0 ? ' active' : '');
 		allPill.textContent = 'All';
 		allPill.tabIndex = 0;
+		allPill.setAttribute('role', 'button');
+		allPill.setAttribute('aria-pressed', String(activeFilters.size === 0));
 		allPill.addEventListener('click', () => {
 			activeFilters.clear();
 			renderFilterBar();
@@ -644,6 +678,8 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			pill.className = 'cth-pill' + (activeFilters.has(r.tag) ? ' active' : '');
 			pill.textContent = r.tag;
 			pill.tabIndex = 0;
+			pill.setAttribute('role', 'button');
+			pill.setAttribute('aria-pressed', String(activeFilters.has(r.tag)));
 			pill.style.setProperty('--pill-color', r.color);
 			pill.style.setProperty('--pill-bg', hexToRgba(r.color, 0.18));
 			if (activeFilters.has(r.tag)) {
@@ -663,6 +699,10 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			bar.append(pill);
 		}
 
+		if (focusedIndex >= 0) {
+			bar.children[focusedIndex]?.focus();
+		}
+
 		bar.classList.add('cth-visible');
 	}
 
@@ -672,10 +712,8 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
 		for (const a of anchors) {
 			if (activeFilters.size === 0) {
+				// Rule-hidden chats are hidden by CSS so Alt+H can reveal them.
 				a.style.removeProperty('display');
-				if (a.dataset.cthHidden === '1') {
-					a.style.display = 'none';
-				}
 			} else {
 				const title = getChatTitleText(a);
 				const r = matchRule(title, compiled.rules);
@@ -799,14 +837,27 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		});
 	}
 
+	// overlayWanted: the active chat matches an overlay rule.
+	// Whether the overlay is actually shown also depends on finding a
+	// measurable composer box (layoutOverlayNow), so the two are tracked
+	// separately and the overlay recovers when the composer re-mounts.
+	let overlayWanted = false;
+
+	function setOverlayShown(shown) {
+		overlay.style.display = shown ? 'block' : 'none';
+		// Native scroll-to-bottom is only hidden while the overlay replaces it.
+		document.documentElement.classList.toggle('cth-overlay-active', shown);
+	}
+
 	function hideOverlay() {
-		if (overlayTitle === '' && overlay.style.display === 'none') {
+		if (!overlayWanted && overlay.style.display === 'none') {
 			return;
 		}
 
+		overlayWanted = false;
 		overlayTitle = '';
 		overlayColor = '#a7a7a7';
-		overlay.style.display = 'none';
+		setOverlayShown(false);
 	}
 
 	function updateOverlayNow() {
@@ -829,6 +880,8 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			return;
 		}
 
+		overlayWanted = true;
+
 		const nextTitle = title || '';
 		const nextColor = r.color;
 
@@ -844,18 +897,21 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		if (titleElement) {
 			titleElement.textContent = overlayTitle;
 		}
-
-		overlay.style.display = 'block';
 	}
 
 	function findComposerBox() {
-		// Most stable anchor: #prompt-textarea then closest background box
+		// Most stable anchor: #prompt-textarea, then its composer container.
+		// Current ChatGPT: form[data-type="unified-composer"].
+		// Older builds: div.bg-token-bg-primary.
 		const pt = document.querySelector('#prompt-textarea');
 		if (!pt) {
 			return null;
 		}
 
-		return pt.closest('div.bg-token-bg-primary') || null;
+		return pt.closest('form[data-type="unified-composer"]')
+			|| pt.closest('div.bg-token-bg-primary')
+			|| pt.closest('form')
+			|| null;
 	}
 
 	let overlayLayoutRAF = 0;
@@ -871,17 +927,19 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	}
 
 	function layoutOverlayNow() {
-		if (overlay.style.display === 'none') {
+		if (!overlayWanted) {
+			setOverlayShown(false);
 			return;
 		}
 
 		const box = findComposerBox();
-		if (!box) {
-			overlay.style.display = 'none';
+		const r = box?.getBoundingClientRect();
+		if (!r || r.width === 0 || r.height === 0) {
+			setOverlayShown(false);
 			return;
 		}
 
-		const r = box.getBoundingClientRect();
+		setOverlayShown(true);
 
 		// Set width/left first (so height is correct after wrap)
 		overlay.style.left = `${Math.round(r.left)}px`;
@@ -924,19 +982,34 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	// ---- Scroll-to-bottom action ----
 	let scrollContainer = null;
 
+	// Conversation turns keep data-testid="conversation-turn-N" across builds,
+	// but the element changed (older builds: <article>, current: <section>).
+	// Match on the attribute only, and ignore look-alikes such as
+	// "copy-turn-action-button".
+	const TURN_TESTID_RE = /^conversation-turn-\d+$/;
+
+	function getTurnElements() {
+		return [...document.querySelectorAll('[data-testid^="conversation-turn-"]')]
+			.filter(element => TURN_TESTID_RE.test(element.dataset.testid || ''));
+	}
+
+	function isScrollable(node) {
+		const oy = getComputedStyle(node).overflowY;
+		return (oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 20;
+	}
+
 	function getScrollContainer() {
 		if (scrollContainer && document.contains(scrollContainer)) {
 			return scrollContainer;
 		}
 
-		// Heuristic 1: find a conversation turn, then walk up to a scrollable parent.
-		const turn = document.querySelector('article[data-testid^="conversation-turn-"]');
+		// Heuristic 1: start from a conversation turn and walk up (past <main>
+		// if needed — current builds scroll an ancestor above it).
+		const turn = getTurnElements()[0];
 		let node = turn ? turn.parentElement : null;
 
 		while (node && node !== document.body) {
-			const s = getComputedStyle(node);
-			const oy = s.overflowY;
-			if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 20) {
+			if (isScrollable(node)) {
 				scrollContainer = node;
 				return node;
 			}
@@ -944,9 +1017,9 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			node = node.parentElement;
 		}
 
-		// Heuristic 2: <main> itself is sometimes the scroller on current ChatGPT builds.
+		// Heuristic 2: <main> itself, but only when it actually scrolls.
 		const main = document.querySelector('main');
-		if (main && main.scrollHeight > main.clientHeight + 20) {
+		if (main && isScrollable(main)) {
 			scrollContainer = main;
 			return main;
 		}
@@ -954,7 +1027,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		// Heuristic 3: any element flagged as overflow-y-auto containing a turn.
 		const candidates = document.querySelectorAll('[class*="overflow-y-auto"], [class*="overflow-auto"]');
 		for (const c of candidates) {
-			if (c.scrollHeight > c.clientHeight + 20 && c.querySelector('article[data-testid^="conversation-turn-"]')) {
+			if (isScrollable(c) && turn && c.contains(turn)) {
 				scrollContainer = c;
 				return c;
 			}
@@ -964,33 +1037,139 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		return null;
 	}
 
-	function scrollToBottom() {
-		const sc = getScrollContainer();
-		if (sc) {
-			sc.scrollTo({top: sc.scrollHeight, behavior: 'smooth'});
+	// Smooth scrolls can be aborted by the page (live ChatGPT sometimes stops
+	// them a few px in). Watch the scroll for a short while and jump the rest
+	// of the way if it stalls — unless the user scrolled or typed meanwhile.
+	let scrollWatch = null;
+
+	function stopScrollWatch() {
+		if (!scrollWatch) {
 			return;
 		}
 
-		// Fallback
-		window.scrollTo({top: document.documentElement.scrollHeight, behavior: 'smooth'});
+		cancelAnimationFrame(scrollWatch.raf);
+		for (const type of ['wheel', 'touchmove', 'keydown', 'pointerdown']) {
+			scrollWatch.target.removeEventListener(type, scrollWatch.onUser, true);
+		}
+
+		scrollWatch = null;
 	}
 
-	// ---- Chat turn pruning (maxChatTurns) ----
-	let pruneRAF = 0;
+	function scrollToBottom() {
+		stopScrollWatch();
+		const sc = getScrollContainer() || document.scrollingElement || document.documentElement;
+		const atBottom = () => sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;
+		sc.scrollTo({top: sc.scrollHeight, behavior: 'smooth'});
 
-	function schedulePrune() {
-		if (!compiled?.maxChatTurns) {
+		const watch = {target: window, raf: 0, last: sc.scrollTop, still: 0, deadline: performance.now() + 1500};
+		watch.onUser = () => stopScrollWatch();
+		for (const type of ['wheel', 'touchmove', 'keydown', 'pointerdown']) {
+			window.addEventListener(type, watch.onUser, {capture: true, passive: true});
+		}
+
+		const tick = now => {
+			if (scrollWatch !== watch) {
+				return;
+			}
+
+			if (atBottom()) {
+				stopScrollWatch();
+				return;
+			}
+
+			const moved = Math.abs(sc.scrollTop - watch.last) > 0.5;
+			watch.last = sc.scrollTop;
+			watch.still = moved ? 0 : watch.still + 1;
+			// Stalled for a few frames, or out of time: finish instantly.
+			if (watch.still >= 4 || now > watch.deadline) {
+				stopScrollWatch();
+				sc.scrollTop = sc.scrollHeight;
+				return;
+			}
+
+			watch.raf = requestAnimationFrame(tick);
+		};
+
+		scrollWatch = watch;
+		watch.raf = requestAnimationFrame(tick);
+	}
+
+	// ---- Long conversations: pruning (maxChatTurns) + lazy rendering ----
+	// Lazy rendering marks older turns with content-visibility:auto so the
+	// browser skips style/layout/paint for off-screen messages. Nothing is
+	// removed, so scrolling, Find and selection keep working. Each turn's
+	// measured height is its placeholder size, so the scrollbar doesn't jump.
+	const LAZY_MIN_TURNS = 20;
+	const LAZY_KEEP_RECENT = 4;
+	let turnWorkRAF = 0;
+
+	function turnWorkNeeded() {
+		return Boolean(compiled?.maxChatTurns) || compiled?.lazyRenderTurns === true;
+	}
+
+	function scheduleTurnWork() {
+		if (turnWorkRAF || !turnWorkNeeded()) {
 			return;
 		}
 
-		if (pruneRAF) {
-			return;
-		}
-
-		pruneRAF = requestAnimationFrame(() => {
-			pruneRAF = 0;
+		turnWorkRAF = requestAnimationFrame(() => {
+			turnWorkRAF = 0;
 			pruneTurnsNow();
+			updateLazyTurnsNow();
 		});
+	}
+
+	function clearLazyTurns() {
+		for (const t of document.querySelectorAll('[data-cth-lazy="1"]')) {
+			delete t.dataset.cthLazy;
+			t.style.removeProperty('--cth-turn-h');
+		}
+	}
+
+	function updateLazyTurnsNow() {
+		if (compiled?.lazyRenderTurns !== true) {
+			return;
+		}
+
+		const turns = getTurnElements();
+		const cutoff = turns.length >= LAZY_MIN_TURNS ? turns.length - LAZY_KEEP_RECENT : 0;
+
+		// Recent turns (or short chats) always render normally.
+		for (let i = cutoff; i < turns.length; i++) {
+			if (turns[i].dataset.cthLazy === '1') {
+				delete turns[i].dataset.cthLazy;
+				turns[i].style.removeProperty('--cth-turn-h');
+			}
+		}
+
+		// Read all heights first, then write, to avoid layout thrashing.
+		const pending = [];
+		for (let i = 0; i < cutoff; i++) {
+			if (turns[i].dataset.cthLazy !== '1') {
+				pending.push(turns[i]);
+			}
+		}
+
+		const heights = pending.map(t => Math.round(t.getBoundingClientRect().height));
+		for (const [i, t] of pending.entries()) {
+			if (heights[i] > 0) {
+				t.style.setProperty('--cth-turn-h', `${heights[i]}px`);
+			}
+
+			t.dataset.cthLazy = '1';
+		}
+	}
+
+	function syncTurnObserver() {
+		turnObserver.disconnect();
+		if (compiled?.lazyRenderTurns !== true) {
+			clearLazyTurns();
+		}
+
+		if (turnWorkNeeded()) {
+			turnObserver.observe(document.documentElement, {childList: true, subtree: true});
+			scheduleTurnWork();
+		}
 	}
 
 	function pruneTurnsNow() {
@@ -999,7 +1178,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			return;
 		}
 
-		const turns = document.querySelectorAll('article[data-testid^="conversation-turn-"]');
+		const turns = getTurnElements();
 		const extra = turns.length - keep;
 		if (extra <= 0) {
 			return;
@@ -1014,7 +1193,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	}
 
 	// Observe DOM for new turns (fast: one observer + rAF batch)
-	const turnObserver = new MutationObserver(() => schedulePrune());
+	const turnObserver = new MutationObserver(() => scheduleTurnWork());
 
 	// ---- History observer ----
 	let historyObserver = null;
@@ -1036,9 +1215,43 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 		historyObserver.observe(historyRoot, {
 			childList: true,
 			subtree: true,
+			// In-place title renames change a text node, not the child list.
+			characterData: true,
 			attributes: true,
 			attributeFilter: ['data-active', 'aria-current', 'class'],
 		});
+	}
+
+	// ---- Sidebar root binding ----
+	// (Re)binds #history. ChatGPT can mount it late, replace it on SPA
+	// navigation, or unmount it (collapsed sidebar). Safe to call repeatedly.
+	function bindHistoryRoot() {
+		const hr = document.querySelector('#history');
+		if (hr && hr !== historyRoot) {
+			historyRoot = hr;
+			attachHistoryObserver();
+			scheduleSidebarScan();
+			scheduleOverlayUpdate();
+			renderFilterBar();
+		} else if (!hr && historyRoot && !historyRoot.isConnected) {
+			// Drop the stale root so the overlay doesn't describe a detached list.
+			historyObserver?.disconnect();
+			historyRoot = null;
+			scheduleOverlayUpdate();
+		}
+	}
+
+	let rootObserver = null;
+	function startRootObserver() {
+		if (rootObserver) {
+			return;
+		}
+
+		rootObserver = new MutationObserver(() => {
+			bindHistoryRoot();
+			scheduleOverlayLayout();
+		});
+		rootObserver.observe(document.documentElement, {childList: true, subtree: true});
 	}
 
 	// ---- Boot ----
@@ -1099,45 +1312,20 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 			applyPersistedUiState(stashed);
 		}
 
-		// Find history root (ChatGPT sidebar chat list)
-		historyRoot = document.querySelector('#history');
+		// Find the sidebar chat list; it may also mount later (root observer).
+		bindHistoryRoot();
 		if (!historyRoot) {
-			// Fallback: sometimes history is lazily mounted
-			historyRoot = document.querySelector('#history') || null;
-		}
-
-		if (historyRoot) {
-			attachHistoryObserver();
-			scheduleSidebarScan();
-			scheduleOverlayUpdate();
-			renderFilterBar();
-		} else {
 			warn('Sidebar history root not found (#history).');
 		}
 
 		// Overlay alignment now
 		scheduleOverlayLayout();
 
-		// Pruning setup
-		if (compiled.maxChatTurns > 0) {
-			turnObserver.observe(document.documentElement, {childList: true, subtree: true});
-			schedulePrune();
-		}
+		// Long-conversation work (pruning + lazy rendering)
+		syncTurnObserver();
 
-		// If SPA navigation happens, #history can be recreated — rebind cheaply
-		const rootObserver = new MutationObserver(() => {
-			const hr = document.querySelector('#history');
-			if (hr && hr !== historyRoot) {
-				historyRoot = hr;
-				attachHistoryObserver();
-				scheduleSidebarScan();
-				scheduleOverlayUpdate();
-				renderFilterBar();
-			}
-
-			scheduleOverlayLayout();
-		});
-		rootObserver.observe(document.documentElement, {childList: true, subtree: true});
+		// If SPA navigation recreates #history, rebind cheaply.
+		startRootObserver();
 	}
 
 	// ---- Live-reload config when options page saves changes ----
@@ -1154,9 +1342,9 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 					pruneActiveFiltersAndPersistIfChanged();
 					renderFilterBar();
 
-					if (!historyRoot) {
-						historyRoot = document.querySelector('#history') || null;
-					}
+					// Settings can arrive after boot (first install): bind now.
+					bindHistoryRoot();
+					startRootObserver();
 
 					if (historyRoot) {
 						scheduleSidebarScan();
@@ -1166,13 +1354,7 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 
 					scheduleOverlayLayout();
 
-					if (compiled.maxChatTurns > 0) {
-						turnObserver.disconnect();
-						turnObserver.observe(document.documentElement, {childList: true, subtree: true});
-						schedulePrune();
-					} else {
-						turnObserver.disconnect();
-					}
+					syncTurnObserver();
 				}
 			}
 
@@ -1192,24 +1374,21 @@ html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
 	}
 
 	// ---- Keyboard shortcuts ----
+	// Match the physical key: on macOS, Option+H yields e.key "˙", not "h".
+	const isAltKey = (e, letter) => e.altKey
+		&& (e.code === `Key${letter.toUpperCase()}` || String(e.key || '').toLowerCase() === letter);
+
 	document.addEventListener('keydown', e => {
-		// Alt+H: Toggle hidden conversations visibility
-		if (e.altKey && e.key.toLowerCase() === 'h') {
+		// Alt+H: Toggle visibility of chats hidden by hide=true rules.
+		// Active tag filters still apply on top of this.
+		if (isAltKey(e, 'h')) {
 			e.preventDefault();
-			const hiddenAnchors = document.querySelectorAll('#history a[data-cth-hidden="1"]');
-			const anyVisible = [...hiddenAnchors].some(a => a.style.display !== 'none');
-			for (const a of hiddenAnchors) {
-				if (anyVisible) {
-					a.style.display = 'none';
-				} else {
-					a.style.removeProperty('display');
-				}
-			}
+			document.documentElement.classList.toggle('cth-reveal-hidden');
 			return;
 		}
 
 		// Alt+F: Focus filter bar
-		if (e.altKey && e.key.toLowerCase() === 'f') {
+		if (isAltKey(e, 'f')) {
 			e.preventDefault();
 			const bar = document.getElementById(FILTER_BAR_ID);
 			if (bar && bar.classList.contains('cth-visible')) {

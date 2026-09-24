@@ -7,25 +7,31 @@ runtime dependencies** — pure vanilla JS with two manifest templates.
 
 ## Getting Started
 
-### Development install (no build needed)
+### Development install
+
+`src/` contains only manifest templates, so build the unpacked bundles first:
+
+```sh
+./publish.sh --version 0.0.99
+```
 
 **Chrome / Edge / Brave / Arc:**
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the repo's `src/` directory.
+3. Click **Load unpacked** and select `dist/chrome/`.
 
 **Firefox:**
 
 1. Open `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on…** and select `src/manifest.firefox.json`.
+2. Click **Load Temporary Add-on…** and select `dist/firefox/manifest.json`.
 
-Reload the extension after edits.
+After edits, rebuild, reload the extension, and refresh the ChatGPT tab.
 
 ## Project Layout
 
 ```
-src/                    # The extension itself — load this directly
+src/                    # Extension source (build to dist/ before loading)
   content.js            # Sidebar scanning + highlighting
   background.js         # Service worker / background script
   options.{html,css,js} # Settings page
