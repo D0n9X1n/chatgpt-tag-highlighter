@@ -30,6 +30,12 @@ CI=true pytest tests/test_extension.py -k TestContentScript -v
 
 # Firefox bundle static lint (CI)
 npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted
+
+# Wiki + release tooling (CI docs job)
+python3 scripts/check-wiki.py wiki
+bash scripts/test-wiki-publish.sh
+python3 scripts/release-check.py            # manifests agree + CHANGELOG section exists
+bash scripts/test-release-check.sh
 ```
 
 Tests launch **headed** Chromium (extensions don't load reliably headless); CI wraps pytest in `xvfb-run -a --server-args="-screen 0 1280x900x24"`.
