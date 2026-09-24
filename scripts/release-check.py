@@ -19,8 +19,10 @@ import sys
 from pathlib import Path
 
 MANIFESTS = ('src/manifest.chrome.json', 'src/manifest.firefox.json')
-CHROME_VERSION = re.compile(r'\d{1,5}(\.\d{1,5}){0,3}')
-TAG = re.compile(r'v(\d+\.\d+\.\d+)(-[0-9A-Za-z.-]+)?')
+# Chrome: 1-4 dot-separated integers, each 0-65535, no leading zeros, not all zero.
+PART = r'(?:0|[1-9]\d{0,4})'
+CHROME_VERSION = re.compile(rf'{PART}(?:\.{PART}){{0,3}}')
+TAG = re.compile(rf'v({PART}\.{PART}\.{PART})(-[0-9A-Za-z.-]+)?')
 LINK_DEF = re.compile(r'^\[[^\]]+\]:\s+\S+\s*$', re.M)
 
 
@@ -56,8 +58,11 @@ def main():
     if len(set(versions.values())) != 1:
         fail(f'manifest versions differ: {versions}')
     version = next(iter(versions.values()))
-    if not CHROME_VERSION.fullmatch(version) or any(int(part) > 65535 for part in version.split('.')):
-        fail(f'manifest version {version!r} is not a valid Chrome version (1-4 numbers, each <= 65535)')
+    parts = version.split('.')
+    if (not CHROME_VERSION.fullmatch(version) or any(int(p) > 65535 for p in parts)
+            or all(int(p) == 0 for p in parts)):
+        fail(f'manifest version {version!r} is not a valid Chrome version '
+             '(1-4 numbers, each 0-65535, no leading zeros, not all zero)')
 
     tag, prerelease = f'v{version}', False
     if args.tag:

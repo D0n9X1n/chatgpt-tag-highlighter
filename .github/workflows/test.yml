@@ -199,6 +199,7 @@ jobs:
       - name: Self-test release checks
         timeout-minutes: 1
         run: |
+          bash scripts/test-release-check.sh
           set -e
           version=$(python3 -c "import json; print(json.load(open('src/manifest.chrome.json'))['version'])")
           python3 scripts/release-check.py --tag "v$version" --notes "$RUNNER_TEMP/notes.md"
