@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Delete untagged chats** (off by default,
+  [#46](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/46)).
+  Turn on “Show ‘Delete untagged chats’ button” in Options to get a
+  **Delete untagged…** button in the sidebar filter bar. It lists every
+  chat in your history whose title matches no rule, keeps pinned, starred,
+  archived and tagged chats, and deletes the rest one at a time only after
+  you type `delete`. The list is checked again right before deleting, so
+  chats tagged, pinned, starred, archived or deleted since the preview are
+  skipped. It sends the same request as ChatGPT's own Delete,
+  stops at the first error, and can be stopped between chats.
+
 ## [1.1.1] — 2026-09-24
 
 Maintenance release. No changes to the extension's behavior.

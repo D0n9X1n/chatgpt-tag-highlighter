@@ -13,6 +13,7 @@ To provide highlighting, the Extension runs on supported ChatGPT domains (e.g., 
 - **Website content accessed:** the **visible conversation titles** shown in the **sidebar chat list** (the text you see in the left navigation), and the **current theme state** (dark or light mode, detected via the `class` attribute on the `<html>` element).
 - **Purpose:** to check whether a title matches your configured tags and apply styling (colored left stripe and background), and to adapt the overlay appearance to the active ChatGPT theme.
 - **Page layout (optional features):** the on-screen **size** of conversation messages, used by “Speed up long chats” so the browser can skip rendering messages that are off-screen; and, only if you set “Max chat turns”, the message elements themselves, which are removed from the page (not from your account) until you reload. Message text is not read.
+- **Delete untagged chats (optional, off by default):** only when you open this dialog, the Extension asks ChatGPT, using your signed-in session, for your chat list (chat ids, titles, and whether each chat is pinned, starred or archived) and reads the session's access token to make those requests. The token is kept in memory for that one run and is never stored or logged. After you type “delete” and confirm, it asks ChatGPT to delete the listed chats, the same request ChatGPT's own Delete menu sends. These requests go only to ChatGPT.
 
 **The Extension does not read or process:**
 - the message content inside a chat
@@ -52,7 +53,7 @@ If browser sync is turned on, your browser may copy these settings to your other
 
 ## 4) Data collection, transmission, and sharing
 
-- **No external transmission:** The Extension does **not** send any website content or user activity data to any server.
+- **No external transmission:** The Extension does **not** send any website content or user activity data to any server of its own or to any third party. The only requests it makes are the optional “Delete untagged chats” requests described above, which go to ChatGPT itself.
 - **No third-party sharing:** The Extension does **not** sell, share, or transfer data to third parties.
 - **No analytics/telemetry:** The Extension does **not** include analytics, advertising, or telemetry services.
 

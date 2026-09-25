@@ -18,6 +18,17 @@ Tagged chats get a colored left stripe and background. The open chat gets a stro
 
 When at least two rules are not set to Hide, pills appear above the chat list. Click one or more tag pills to show only those chats (a chat shows if it matches any selected tag). **All** clears the selection. The selection survives a reload and is shared across ChatGPT tabs.
 
+## Delete untagged chats
+
+Off by default. Turn on **Show “Delete untagged chats” button** in [Configuration](Configuration), then click **Delete untagged…** at the end of the filter bar. The bar also appears for this button when there are too few rules for pills.
+
+1. The extension asks ChatGPT for your whole chat list, not just the chats loaded in the sidebar, and lists every chat whose title matches no rule. Nothing is deleted yet.
+2. Pinned, starred and archived chats are kept, and so is every chat that matches a rule, including rule-hidden ones. Untitled chats count as untagged.
+3. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends, and disappear from the sidebar as they go. **Stop** halts after the current chat, and the first error stops the run.
+4. **Reload page** refreshes ChatGPT's own list.
+
+ChatGPT's sidebar can't restore deleted chats, so check the list before you confirm. The feature relies on ChatGPT's private web endpoints, which can change without notice. Chats inside Projects aren't covered.
+
 ## The tag banner
 
 When the open chat matches a rule with **Overlay** on, a banner above the message box shows its tag color and title. Click it to jump to the latest message; the message box keeps focus. While the banner is shown, ChatGPT's own scroll-to-bottom button is hidden so there's only one. In untagged chats ChatGPT's button is left alone.

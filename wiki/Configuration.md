@@ -29,6 +29,7 @@ Rule changes apply live to open ChatGPT tabs.
 | Hide right navigation bar | On | Hides the message minimap on older ChatGPT layouts. The current layout has no minimap, so it has no effect there. |
 | Dim untagged conversations | Off | Fades chats that match no rule. |
 | Show badge counter | On | Shows the number of visible tagged chats on the extension icon. |
+| Show “Delete untagged chats” button | Off | Adds a **Delete untagged…** button to the filter bar. See [Usage](Usage). |
 
 ## Rule tester
 

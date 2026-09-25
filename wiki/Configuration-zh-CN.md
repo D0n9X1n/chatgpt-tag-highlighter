@@ -29,6 +29,7 @@
 | Hide right navigation bar（隐藏右侧导航栏） | 开 | 在旧版 ChatGPT 布局中隐藏消息缩略导航；当前布局没有这个导航栏，因此不起作用。 |
 | Dim untagged conversations（弱化无标签会话） | 关 | 淡化不匹配任何规则的会话。 |
 | Show badge counter（显示角标计数） | 开 | 在扩展图标上显示可见的已标记会话数量。 |
+| Show “Delete untagged chats” button（显示“删除无标签会话”按钮） | 关 | 在筛选栏添加 **Delete untagged…** 按钮。见 [使用](Usage-zh-CN)。 |
 
 ## 规则测试器
 

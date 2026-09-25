@@ -33,6 +33,7 @@
 		dimUntagged: $('dimUntagged'),
 		showBadge: $('showBadge'),
 		lazyRenderTurns: $('lazyRenderTurns'),
+		showDeleteUntagged: $('showDeleteUntagged'),
 		toast: $('toast'),
 		exportCfg: $('exportCfg'),
 		importCfg: $('importCfg'),
@@ -107,6 +108,7 @@
 		dimUntagged: false,
 		showBadge: true,
 		lazyRenderTurns: true,
+		showDeleteUntagged: false,
 	});
 
 	// ---- Storage helpers (promise + callback compatible) ----
@@ -261,6 +263,7 @@
 		els.dimUntagged.checked = cfg.dimUntagged === true;
 		els.showBadge.checked = cfg.showBadge !== false;
 		els.lazyRenderTurns.checked = cfg.lazyRenderTurns !== false;
+		els.showDeleteUntagged.checked = cfg.showDeleteUntagged === true;
 
 		const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
 		for (const rule of rules) {
@@ -305,6 +308,7 @@
 			dimUntagged: els.dimUntagged.checked,
 			showBadge: els.showBadge.checked,
 			lazyRenderTurns: els.lazyRenderTurns.checked,
+			showDeleteUntagged: els.showDeleteUntagged.checked,
 		};
 	}
 
@@ -389,6 +393,7 @@
 	els.dimUntagged.addEventListener('change', () => autoSave());
 	els.showBadge.addEventListener('change', () => autoSave());
 	els.lazyRenderTurns.addEventListener('change', () => autoSave());
+	els.showDeleteUntagged.addEventListener('change', () => autoSave());
 
 	// ---- Import / Export ----
 	els.exportCfg.addEventListener('click', async () => {
@@ -431,6 +436,7 @@
 			dimUntagged: parsed.dimUntagged === true,
 			showBadge: parsed.showBadge !== false,
 			lazyRenderTurns: parsed.lazyRenderTurns !== false,
+			showDeleteUntagged: parsed.showDeleteUntagged === true,
 		};
 		for (const r of parsed.rules) {
 			const tag = String(r?.tag || '').trim();
@@ -597,6 +603,7 @@
 			dimUntagged: cfg.dimUntagged === true,
 			showBadge: cfg.showBadge !== false,
 			lazyRenderTurns: cfg.lazyRenderTurns !== false,
+			showDeleteUntagged: cfg.showDeleteUntagged === true,
 		};
 
 		for (let i = 0; i < cfg.rules.length; i++) {
