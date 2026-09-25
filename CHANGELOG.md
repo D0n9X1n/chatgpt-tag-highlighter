@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-24
+
+Maintenance release. No changes to the extension's behavior.
+
+### Changed
+- CI uses `actions/setup-node` v7.0.0 and `actions/setup-python` v7.0.0,
+  still pinned to commit SHAs.
+- Test dependencies: Playwright 1.62.0 and pytest 9.1.1.
+
 ## [1.1.0] — 2026-09-24
 
 Compatibility and performance release for the current ChatGPT layout.
@@ -167,7 +176,8 @@ pipeline.
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.3...v1.0.0
 [0.1.3]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.2...v0.1.3
