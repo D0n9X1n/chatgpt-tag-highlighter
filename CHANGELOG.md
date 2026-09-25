@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-24
+
+Compatibility and performance release for the current ChatGPT layout.
+
+### Added
+- **Speed up long chats** (on by default). In chats with 20 or more
+  messages, off-screen older messages use `content-visibility: auto`
+  with their measured height as the placeholder, so the browser skips
+  their style/layout work and the scrollbar doesn't jump. The newest 4
+  always render normally. Nothing is removed, so scrolling and Find keep
+  working. On a ~200-message live thread: style recalculation across 4
+  resizes went from 2,059 ms to 449 ms, and the slowest scroll frame
+  from 120 ms to 27 ms.
+- `TestContentScript` Playwright tests that run the packaged
+  `content.js` against synthetic ChatGPT pages.
+- `CLAUDE.md` agent guidance.
+
+### Fixed
+- Active-chat overlay did not appear: the composer anchor is now found
+  via `form[data-type="unified-composer"]` (legacy
+  `div.bg-token-bg-primary` still supported).
+- Overlay now reappears when the composer is re-mounted instead of
+  staying hidden.
+- Overlay chevron scrolled nothing and turn pruning removed nothing:
+  conversation turns are now `<section>` elements, so turns are matched
+  by `data-testid` and the scroller search walks past `<main>`.
+- ChatGPT's native scroll-to-bottom button is only hidden while the
+  overlay is actually shown, so it is no longer lost on untagged chats.
+  The current unlabelled button (inside a `data-scroll-from-end`
+  wrapper) is now recognised too, so it no longer shows through the
+  overlay.
+- `data-active="false"` is no longer treated as the selected chat.
+- The overlay chevron finishes at the real bottom even if its smooth
+  scroll stops short (for example when a reply grows while scrolling);
+  it stops helping as soon as you scroll or type. Pressing the overlay
+  no longer steals focus from the composer.
+- `Alt+H` now actually reveals rule-hidden chats (it was overridden by
+  the extension's own CSS), and works with macOS Option key layouts.
+- Renaming a chat in place (text-only change) now re-applies styling.
+- On first install, chats added after the settings load are styled and
+  the filter bar appears without a reload (the sidebar observer now
+  attaches when settings arrive after the page).
+- Filter pills work from the keyboard: Enter or Space toggles the
+  focused pill, focus stays on it, and pills expose `role="button"` and
+  `aria-pressed`.
+- Settings migration no longer stores the color name `Green` for a rule
+  without a color; it stores `#b8bb26`.
+
+### Changed
+- CI hardened: every action is pinned to a commit SHA, every job and
+  step has a timeout, the Playwright cache is only saved from `main`,
+  and a single `CI status` check aggregates build, Chrome tests, Firefox
+  lint, and the wiki/release-tooling checks.
+- Releases now require the tagged commit to be on `main` with a green
+  `Tests` run, validate the tag against both manifests and the CHANGELOG
+  (`scripts/release-check.py`), attach SHA-256 checksums, use the
+  CHANGELOG section as release notes, and mark `-suffix` tags as
+  prereleases. Only the publish job can write.
+- The wiki now lives in `wiki/` (English + Simplified Chinese) and is
+  published to the GitHub wiki from `main`.
+- Privacy Policy now says settings use browser sync storage, and
+  explains the long-chat options.
+- README redesigned with new light/dark screenshots (demo titles only)
+  and measured long-chat numbers; the privacy text now says settings
+  use browser sync storage.
+- Settings hints: "Max chat turns" says messages are removed from the
+  page only until reload; "Hide right navigation bar" notes the current
+  ChatGPT layout has no minimap, so it has no effect there.
+- Development docs now say to build and load `dist/chrome/` or
+  `dist/firefox/manifest.json`; `src/` has no `manifest.json`.
+- Removed copied overlay assertions from `tests/unit_test.html` in
+  favour of the real content-script tests.
+
 ## [1.0.0] — 2026-05-04
 
 First stable release. The extension is now considered feature-complete
@@ -94,7 +167,8 @@ pipeline.
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.3...v1.0.0
 [0.1.3]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.1...v0.1.2

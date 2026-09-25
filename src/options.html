@@ -36,9 +36,18 @@
       <h2 class="sectionTitle">General</h2>
 
       <div class="generalRow">
+        <label class="checkboxWrap" title="Skip rendering off-screen messages in long chats">
+          <input id="lazyRenderTurns" type="checkbox" checked />
+          <span class="label">Speed up long chats
+            <span class="hintInline">In chats with 20+ messages, the browser skips rendering messages that are off-screen. Nothing is removed; scrolling and Find still work.</span>
+          </span>
+        </label>
+      </div>
+
+      <div class="generalRow">
         <label class="label">
           Max chat turns to keep (0 = disabled)
-          <span class="hintInline">Removes old conversation-turn DOM nodes for performance.</span>
+          <span class="hintInline">Removes older messages from the page (not from your account) until you reload or reopen the chat.</span>
         </label>
 
         <div class="generalInputWrap">
@@ -50,7 +59,7 @@
         <label class="checkboxWrap" title="Hide the right-side turn navigation bar for faster load">
           <input id="hideNavBar" type="checkbox" />
           <span class="label">Hide right navigation bar
-            <span class="hintInline">Removes the turn-minimap on the right side of long chats for better performance.</span>
+            <span class="hintInline">Hides the turn-minimap on older ChatGPT layouts. The current layout has no such bar, so this has no effect there.</span>
           </span>
         </label>
       </div>

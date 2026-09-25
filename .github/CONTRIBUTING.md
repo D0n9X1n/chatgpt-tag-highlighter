@@ -7,25 +7,31 @@ runtime dependencies** — pure vanilla JS with two manifest templates.
 
 ## Getting Started
 
-### Development install (no build needed)
+### Development install
+
+`src/` contains only manifest templates, so build the unpacked bundles first:
+
+```sh
+./publish.sh --version 0.0.99
+```
 
 **Chrome / Edge / Brave / Arc:**
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the repo's `src/` directory.
+3. Click **Load unpacked** and select `dist/chrome/`.
 
 **Firefox:**
 
 1. Open `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on…** and select `src/manifest.firefox.json`.
+2. Click **Load Temporary Add-on…** and select `dist/firefox/manifest.json`.
 
-Reload the extension after edits.
+After edits, rebuild, reload the extension, and refresh the ChatGPT tab.
 
 ## Project Layout
 
 ```
-src/                    # The extension itself — load this directly
+src/                    # Extension source (build to dist/ before loading)
   content.js            # Sidebar scanning + highlighting
   background.js         # Service worker / background script
   options.{html,css,js} # Settings page
@@ -103,23 +109,31 @@ Produces:
 
 ## Releasing (Maintainers Only)
 
-The release pipeline is fully automated — it runs the test suite against
-the exact bits that will be shipped, then attaches them to a GitHub
-Release.
+Releases are cut from a commit that is already on `main` and has a green
+`Tests` run. The release workflow checks this; it does not re-run tests.
 
-1. Bump the `version` field in **both** `src/manifest.chrome.json` and
-   `src/manifest.firefox.json`. They must match the tag.
-2. Commit on `main`.
-3. Tag and push:
+1. In a PR, bump the `version` field in **both** `src/manifest.chrome.json`
+   and `src/manifest.firefox.json`, and add a `## [X.Y.Z]` section to
+   `CHANGELOG.md`. `python3 scripts/release-check.py` must pass (CI runs it).
+2. Merge to `main` and wait for `Tests` to go green on that commit.
+3. Tag that commit and push:
    ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag vX.Y.Z          # vX.Y.Z-rc.1 publishes a prerelease
+   git push origin vX.Y.Z
    ```
-4. Wait for `.github/workflows/release.yml` to finish — the GitHub
-   Release will appear with both `.zip` and `.xpi` attached.
+4. `.github/workflows/release.yml` validates the tag, builds the `.zip`
+   and `.xpi` with SHA-256 checksums, and publishes a GitHub Release whose
+   notes are the matching CHANGELOG section.
 5. **Manually** upload the `.zip` to the Chrome Web Store dashboard and
    the `.xpi` to AMO. Store API publishing is intentionally not
    automated yet.
+
+## Wiki
+
+The GitHub wiki is generated from the tracked `wiki/` folder; don't edit
+it on github.com. Each page has an English file and a `-zh-CN` file with
+the same headings and facts. Check with `python3 scripts/check-wiki.py wiki`;
+`.github/workflows/publish-wiki.yml` publishes it on every push to `main`.
 
 ## Pull Requests
 
