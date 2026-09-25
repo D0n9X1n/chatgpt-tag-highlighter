@@ -160,6 +160,16 @@ th{
 .checkboxWrap input{
   width: 16px;
   height: 16px;
+  flex: 0 0 auto;
+}
+
+/* General options can have long descriptions that wrap; keep the checkbox
+   beside the first line instead of centered between lines. */
+.generalRow .checkboxWrap{
+  align-items: flex-start;
+}
+.generalRow .checkboxWrap input{
+  margin-top: 3px;
 }
 
 .hint{

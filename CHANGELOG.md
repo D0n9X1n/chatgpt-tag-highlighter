@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped. It sends the same request as ChatGPT's own Delete,
   stops at the first error, and can be stopped between chats.
 
+### Fixed
+- Options page: a General option whose description wraps onto a second
+  line now keeps its checkbox beside the first line instead of centered
+  between the lines.
+
 ## [1.1.1] — 2026-09-24
 
 Maintenance release. No changes to the extension's behavior.

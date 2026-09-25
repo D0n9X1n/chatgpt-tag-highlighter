@@ -22,6 +22,8 @@
 
 默认关闭。在 [设置](Configuration-zh-CN) 中开启 **Show “Delete untagged chats” button**，然后点击筛选栏末尾的 **Delete untagged…**。即使规则太少、不显示标签按钮，筛选栏也会为这个按钮显示出来。
 
+![删除无标签会话对话框：列出不匹配任何规则的会话](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/delete-untagged-light.png)
+
 1. 扩展向 ChatGPT 获取完整的会话列表（不只是侧边栏已加载的部分），列出所有标题不匹配任何规则的会话。此时还不会删除任何内容。
 2. 置顶、加星和已归档的会话会保留，所有命中规则的会话（包括被规则隐藏的）也会保留。没有标题的会话算作无标签。
 3. 输入 `delete` 并确认。删除前会再检查一次列表，预览之后被你加标签、置顶、加星、归档或删除的会话会被跳过。随后会话会逐个删除，使用的请求与 ChatGPT 自带的 **Delete** 相同，删除后立即从侧边栏消失。**Stop** 会在当前会话删除完后停止，遇到第一个错误也会停止。

@@ -85,6 +85,13 @@ The **Rule tester** tells you which rule a title would match. **Export** copies 
 
 Off by default. With **Show “Delete untagged chats” button** on, click **Delete untagged…** in the filter bar:
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./img/delete-untagged-dark.png">
+    <img src="./img/delete-untagged-light.png" alt="Delete untagged chats dialog listing the chats that match no rule, with the word delete typed into the confirmation box" width="760">
+  </picture>
+</p>
+
 1. The extension asks ChatGPT for your full chat list, not just the chats loaded in the sidebar, and lists every chat whose title matches no rule. Nothing is deleted yet.
 2. Pinned, starred and archived chats are kept, and so is every chat that matches a rule, including rule-hidden ones.
 3. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends. **Stop** halts after the current chat, and the first error stops the run.
