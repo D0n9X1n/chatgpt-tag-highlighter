@@ -546,6 +546,7 @@ class TestOptionsPage:
         new_cfg = {
             'rules': [{'tag': '[X]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False, 'overlay': False}],
             'maxChatTurns': 5, 'hideNavBar': False, 'dimUntagged': True, 'showBadge': False,
+            'showDeleteUntagged': True,
         }
         page.fill('#importText', json.dumps(new_cfg))
         page.click('#importApply')
@@ -556,6 +557,7 @@ class TestOptionsPage:
         assert cfg['rules'][0]['overlay'] is False
         assert cfg['dimUntagged'] is True
         assert cfg['showBadge'] is False
+        assert cfg['showDeleteUntagged'] is True
         assert cfg['hideNavBar'] is False
         assert cfg['maxChatTurns'] == 5
 
@@ -696,6 +698,29 @@ class TestMigration:
         assert 'dimUntagged' in cfg
         assert 'showBadge' in cfg
         assert cfg.get('lazyRenderTurns') is True, 'lazyRenderTurns should default to true'
+        assert cfg.get('showDeleteUntagged') is False, 'showDeleteUntagged must default to false'
+
+    def test_show_delete_untagged_defaults_off_and_persists(self, browser_context, ext_id):
+        """The 'Delete untagged chats' button is opt-in and its checkbox persists."""
+        self._set_raw_config({
+            'rules': [{'tag': '[A]', 'match': 'startsWith', 'color': '#fabd2f', 'hide': False}],
+            'maxChatTurns': 0, 'hideNavBar': True,
+        })
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_timeout(1500)
+        assert page.evaluate("document.getElementById('showDeleteUntagged').checked") is False
+        page.check('#showDeleteUntagged')
+        page.wait_for_timeout(500)
+        read = (f"new Promise(r => chrome.storage.sync.get('{STORAGE_KEY}', "
+                f"d => r(JSON.stringify(d['{STORAGE_KEY}']))))")
+        assert json.loads(page.evaluate(read))['showDeleteUntagged'] is True
+        page.reload()
+        page.wait_for_timeout(1500)
+        assert page.evaluate("document.getElementById('showDeleteUntagged').checked") is True, \
+            'options init migration must keep the setting'
+        assert json.loads(page.evaluate(read))['showDeleteUntagged'] is True
+        page.close()
 
     def test_lazy_render_turns_persists(self, browser_context, ext_id):
         """The 'Speed up long chats' checkbox should persist in config."""
@@ -736,7 +761,9 @@ class TestMigration:
         page.add_script_tag(content=(Path(EXT_PATH) / 'background.js').read_text())
         page.wait_for_function("() => window.__store.tagHighlighterConfigV1.rules[0].hide === false", timeout=5000)
         color = page.evaluate("window.__store.tagHighlighterConfigV1.rules[0].color")
+        show_delete = page.evaluate("window.__store.tagHighlighterConfigV1.showDeleteUntagged")
         page.close()
+        assert show_delete is False, 'background migration must add showDeleteUntagged=false'
         assert re.fullmatch(r'#[0-9a-f]{6}', color or ''), f'migration stored non-hex color {color!r}'
 
 
@@ -765,6 +792,30 @@ DEFAULT_CHATS = [
     ('c3', 'refactor code path'),
     ('c4', '[ARCHIVE] old notes'),
     ('c5', 'plain chat'),
+]
+
+
+def _api_chat(cid, title, **flags):
+    """A conversation-list item shaped like ChatGPT's (Sep 2026), with made-up data."""
+    item = {'id': cid, 'title': title, 'is_archived': False, 'pinned_time': None,
+            'is_starred': False, 'snippet': 'not used', 'mapping': None}
+    item.update(flags)
+    return item
+
+
+# 5 tagged, 3 untagged-but-kept (pinned / starred / archived), 3 untagged to delete.
+API_CHATS = [
+    _api_chat('a1', '[TODO] ship'),
+    _api_chat('a2', 'plain chat'),
+    _api_chat('a3', '[ARCHIVE] old notes'),          # rule-hidden chats are tagged too
+    _api_chat('a4', 'pinned plain', pinned_time='2026-09-01T00:00:00Z'),
+    _api_chat('a5', 'starred plain', is_starred=True),
+    _api_chat('a6', 'archived plain', is_archived=True),
+    _api_chat('a7', None),                            # untitled
+    _api_chat('a8', '[BUG] crash'),
+    _api_chat('a9', '<img src=x onerror="window.__xss=1">'),
+    _api_chat('a10', 'refactor code path'),           # "code" includes-rule
+    _api_chat('a11', '[TODO] second'),
 ]
 
 
@@ -1260,3 +1311,258 @@ class TestContentScript:
         assert self._poll(page, """() =>
             document.querySelector('#history a[href="/c/c5"]').dataset.cth === '1'"""), \
             'saved rule changes must apply live'
+
+    # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
+
+    def _mock_chat_api(self, page, chats=None, session_token='test-token',
+                       server_limit=None, patch_status=None, hold_first_patch=False,
+                       hold_list_pass=None, patch_body=None):
+        """Mock /api/auth/session, the conversation list, and per-chat PATCH.
+
+        Records every API request in the returned list. `server_limit` caps
+        the page size the mock server returns, like a real server might.
+        `hold_list_pass` holds the first page of that listing pass (0 = preview,
+        1 = the re-check at confirm time) until the test fulfills it.
+        """
+        chats = API_CHATS if chats is None else chats
+        calls = []
+        held = []
+        passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
+
+        def record(route):
+            req = route.request
+            calls.append({'method': req.method, 'url': req.url,
+                          'auth': req.all_headers().get('authorization'),
+                          'body': req.post_data})
+
+        def session(route):
+            record(route)
+            body = {'accessToken': session_token} if session_token else {}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
+
+        def listing(route):
+            record(route)
+            q = dict(p.split('=', 1) for p in route.request.url.split('?', 1)[1].split('&'))
+            offset, limit = int(q.get('offset', 0)), int(q.get('limit', 28))
+            if server_limit:
+                limit = min(limit, server_limit)
+            if offset == 0:
+                passes['n'] += 1
+            data = chats(passes['n']) if callable(chats) else chats
+            items = data[offset:offset + limit]
+            body = json.dumps({'items': items, 'total': len(data), 'limit': limit, 'offset': offset})
+            if offset == 0 and passes['n'] == hold_list_pass:
+                held.append((route, body))  # fulfilled later by the test
+                return
+            route.fulfill(status=200, content_type='application/json', body=body)
+
+        def patch(route):
+            record(route)
+            if hold_first_patch and not held:
+                held.append(route)  # fulfilled later by the test
+                return
+            status = patch_status or 200
+            route.fulfill(status=status, content_type='application/json',
+                          body=json.dumps(patch_body if patch_body is not None else {'success': status == 200}))
+
+        page.route('https://chatgpt.com/api/auth/session', session)
+        page.route('https://chatgpt.com/backend-api/conversations?*', listing)
+        page.route('https://chatgpt.com/backend-api/conversation/*', patch)
+        return calls, held
+
+    def _open_delete_page(self, **mock_kwargs):
+        self._configure(showDeleteUntagged=True)
+        page = self._open_chat(chats=[('a1', '[TODO] ship'), ('a2', 'plain chat'), ('a8', '[BUG] crash')])
+        calls, held = self._mock_chat_api(page, **mock_kwargs)
+        page.wait_for_selector('#cth-delete-untagged', state='visible')
+        return page, calls, held
+
+    @staticmethod
+    def _patches(calls):
+        return [c for c in calls if c['method'] == 'PATCH']
+
+    def test_delete_untagged_button_is_opt_in(self):
+        self._configure()
+        page = self._open_chat()
+        page.wait_for_selector('#cth-filter-bar.cth-visible')
+        page.wait_for_timeout(300)
+        assert page.query_selector('#cth-delete-untagged') is None, 'button must be off by default'
+        self._configure(showDeleteUntagged=True)
+        assert self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible #cth-delete-untagged')"), \
+            'enabling the option must add the button live'
+        # With a single visible rule there are no pills, but the button still needs a home.
+        self._configure(showDeleteUntagged=True, rules=[CONTENT_RULES[0]])
+        assert self._poll(page, """() => {
+            const bar = document.querySelector('#cth-filter-bar.cth-visible');
+            return !!bar && !bar.querySelector('.cth-pill') && !!bar.querySelector('#cth-delete-untagged');
+        }"""), 'the bar must show just the button when there are too few rules for pills'
+
+    def test_delete_untagged_previews_then_deletes_only_untagged(self):
+        page, calls, _ = self._open_delete_page(server_limit=4)
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        titles = page.evaluate("[...document.querySelectorAll('#cth-delete-dialog .cth-del-list li')].map(li => li.textContent)")
+        assert titles == ['plain chat', 'Untitled chat', '<img src=x onerror="window.__xss=1">'], titles
+        assert page.evaluate("!window.__xss && !document.querySelector('#cth-delete-dialog img')"), \
+            'titles must render as text'
+        status = page.text_content('#cth-delete-dialog .cth-del-status')
+        assert '3 untagged chats' in status and '5 tagged' in status and '3 pinned, starred or archived' in status, status
+
+        gets = [c for c in calls if c['method'] == 'GET' and '/backend-api/' in c['url']]
+        assert [re.search(r'offset=(\d+)', c['url']).group(1) for c in gets] == ['0', '4', '8', '11'], \
+            'must page by items received until an empty page, even when the server caps the page size'
+        assert all(c['auth'] == 'Bearer test-token' for c in gets)
+        assert self._patches(calls) == [], 'nothing may be deleted before confirmation'
+
+        confirm = '#cth-delete-dialog .cth-del-confirm-btn'
+        assert page.is_disabled(confirm)
+        page.fill('#cth-delete-dialog .cth-del-input', 'Delete it')
+        assert page.is_disabled(confirm), 'only the exact word enables deletion'
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        assert page.is_enabled(confirm)
+        page.click(confirm)
+
+        assert self._poll(page, "() => /Deleted 3 of 3 chats/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+        patches = self._patches(calls)
+        assert [c['url'].rsplit('/', 1)[1] for c in patches] == ['a2', 'a7', 'a9']
+        assert all(json.loads(c['body']) == {'is_visible': False} for c in patches)
+        assert all(c['auth'] == 'Bearer test-token' for c in patches)
+        s = self._sidebar_state(page)
+        assert s['a2']['display'] == 'none', 'deleted chats leave the sidebar right away'
+        assert s['a1']['display'] != 'none' and s['a8']['display'] != 'none'
+        assert page.is_visible('#cth-delete-dialog .cth-del-reload')
+
+    def test_delete_untagged_cancel_and_escape_delete_nothing(self):
+        page, calls, _ = self._open_delete_page()
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.click('#cth-delete-dialog .cth-del-cancel')
+        assert self._poll(page, "() => !document.getElementById('cth-delete-dialog')")
+        assert page.evaluate("document.activeElement?.id") == 'cth-delete-untagged', \
+            'focus returns to the button'
+
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.keyboard.press('Escape')
+        assert self._poll(page, "() => !document.getElementById('cth-delete-dialog')")
+        page.wait_for_timeout(300)
+        assert self._patches(calls) == []
+
+    def test_delete_untagged_stops_at_first_error(self):
+        page, calls, _ = self._open_delete_page(patch_status=500)
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.click('#cth-delete-dialog .cth-del-confirm-btn')
+        assert self._poll(page, "() => /HTTP 500/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=5000), page.text_content('#cth-delete-dialog .cth-del-status')
+        page.wait_for_timeout(800)
+        assert len(self._patches(calls)) == 1, 'must not keep deleting after a failure'
+        assert self._sidebar_state(page)['a2']['display'] != 'none', 'a failed delete stays in the sidebar'
+
+    def test_delete_untagged_stops_when_ok_response_reports_failure(self):
+        page, calls, _ = self._open_delete_page(patch_body={'success': False})
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.click('#cth-delete-dialog .cth-del-confirm-btn')
+        assert self._poll(page, "() => /didn't go through/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=5000), page.text_content('#cth-delete-dialog .cth-del-status')
+        page.wait_for_timeout(800)
+        assert len(self._patches(calls)) == 1, 'an explicit {"success": false} must stop the run'
+        assert 'Deleted 0 of 3 chats' in page.text_content('#cth-delete-dialog .cth-del-status')
+        assert self._sidebar_state(page)['a2']['display'] != 'none', 'a failed delete stays in the sidebar'
+        assert not page.is_visible('#cth-delete-dialog .cth-del-reload'), 'nothing was deleted, so no reload prompt'
+
+    def test_delete_untagged_stop_finishes_current_chat_only(self):
+        page, calls, held = self._open_delete_page(hold_first_patch=True)
+        try:
+            page.click('#cth-delete-untagged')
+            page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+            page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+            page.click('#cth-delete-dialog .cth-del-confirm-btn')
+            deadline = time.time() + 5
+            while not held and time.time() < deadline:
+                page.wait_for_timeout(50)
+            assert held, 'first delete request never arrived'
+            page.click('#cth-delete-dialog .cth-del-cancel')  # labelled Stop while running
+            assert page.query_selector('#cth-delete-dialog'), 'Stop must not close the dialog mid-request'
+            held[0].fulfill(status=200, content_type='application/json', body='{"success":true}')
+            held.clear()
+            assert self._poll(page, "() => /Stopped/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                              timeout=5000), page.text_content('#cth-delete-dialog .cth-del-status')
+            page.wait_for_timeout(800)
+            assert len(self._patches(calls)) == 1, 'Stop must prevent any further deletes'
+            assert 'Deleted 1 of 3' in page.text_content('#cth-delete-dialog .cth-del-status')
+        finally:
+            for r in held:
+                try:
+                    r.fulfill(status=200, body='{}')
+                except Exception:
+                    pass
+
+    def test_delete_untagged_merges_duplicate_records_conservatively(self):
+        # The list shifted while paging: x1 first shows up plain, then tagged and pinned.
+        overlapping = [
+            _api_chat('x1', 'plain'), _api_chat('y1', 'plain two'),
+            _api_chat('x1', '[TODO] now tagged', pinned_time='2026-09-02T00:00:00Z'), _api_chat('z1', 'plain three'),
+        ]
+        page, calls, _ = self._open_delete_page(chats=overlapping, server_limit=2)
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        ids = page.evaluate("[...document.querySelectorAll('#cth-delete-dialog .cth-del-list li')].map(li => li.dataset.id)")
+        assert ids == ['y1', 'z1'], f'a chat seen tagged or pinned in any copy must be kept, got {ids}'
+
+    def test_delete_untagged_rechecks_before_deleting(self):
+        renamed = [dict(c, title='[TODO] tagged meanwhile') if c['id'] == 'a2' else c
+                   for c in API_CHATS if c['id'] != 'a7']  # a2 renamed, a7 deleted elsewhere
+        page, calls, _ = self._open_delete_page(chats=lambda n: API_CHATS if n == 0 else renamed)
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+        assert page.evaluate("document.querySelectorAll('#cth-delete-dialog .cth-del-list li').length") == 3
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.click('#cth-delete-dialog .cth-del-confirm-btn')
+        assert self._poll(page, "() => /Deleted 1 of 1 chat/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a9'], \
+            'chats that changed after the preview must not be deleted'
+        assert 'Skipped 2 chats that changed since the preview' in page.text_content('#cth-delete-dialog .cth-del-status')
+
+    def test_delete_untagged_cancel_during_recheck_closes_and_stops_listing(self):
+        page, calls, held = self._open_delete_page(server_limit=4, hold_list_pass=1)
+        try:
+            page.click('#cth-delete-untagged')
+            page.wait_for_selector('#cth-delete-dialog .cth-del-list li', timeout=5000)
+            page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+            page.click('#cth-delete-dialog .cth-del-confirm-btn')
+            deadline = time.time() + 5
+            while not held and time.time() < deadline:
+                page.wait_for_timeout(50)
+            assert held, 're-check request never arrived'
+            assert page.text_content('#cth-delete-dialog .cth-del-cancel') == 'Cancel'
+            page.keyboard.press('Escape')
+            assert self._poll(page, "() => !document.getElementById('cth-delete-dialog')"), \
+                'nothing is deleted yet, so the dialog must close even while the re-check is stalled'
+            route, body = held.pop()
+            route.fulfill(status=200, content_type='application/json', body=body)
+            page.wait_for_timeout(800)
+            lists = [c for c in calls if c['method'] == 'GET' and '/backend-api/conversations' in c['url']]
+            assert len(lists) == 5, f'the re-check must stop paging once closed (4 preview pages + 1), got {len(lists)}'
+            assert self._patches(calls) == []
+        finally:
+            for route, body in held:
+                try:
+                    route.fulfill(status=200, body=body)
+                except Exception:
+                    pass
+
+    def test_delete_untagged_signed_out_makes_no_api_calls(self):
+        page, calls, _ = self._open_delete_page(session_token=None)
+        page.click('#cth-delete-untagged')
+        assert self._poll(page, "() => /Sign in/i.test(document.querySelector('#cth-delete-dialog .cth-del-status')?.textContent || '')",
+                          timeout=5000)
+        assert [c for c in calls if '/backend-api/' in c['url']] == [], 'no list or delete calls without a session'
+        assert not page.is_visible('#cth-delete-dialog .cth-del-input')

@@ -41,6 +41,7 @@
 - **Filters by tag.** Pills above the chat list show only the tags you pick. Select several at once. Your selection survives a reload.
 - **Shows where you are.** A banner above the message box shows the open chat's tag and title. Click it to jump to the latest message.
 - **Keeps long chats fast.** Messages that are off-screen skip rendering. Nothing is removed, so scrolling and Find still work. [Numbers below.](#long-chats-stay-fast)
+- **Clears out untagged chats (optional).** Turn it on and the filter bar gets a button that lists every chat matching no rule, then deletes them after you type `delete`. Pinned, starred and archived chats are kept. [Details below.](#deleting-untagged-chats)
 - **Stays out of the way.** Rules apply live, it follows ChatGPT's light or dark theme, and it asks for no permissions beyond storage and the two ChatGPT sites.
 
 ## Quick start
@@ -76,8 +77,26 @@ The **Rule tester** tells you which rule a title would match. **Export** copies 
 | Hide right navigation bar | On | Hides the message minimap on older ChatGPT layouts. The current layout has no minimap, so this does nothing there. |
 | Dim untagged conversations | Off | Fades chats that match no rule. |
 | Show badge counter | On | Shows how many tagged chats are visible on the extension icon. |
+| Show “Delete untagged chats” button | Off | Adds a **Delete untagged…** button to the filter bar. See [Deleting untagged chats](#deleting-untagged-chats). |
 
 **Keyboard shortcuts:** `Alt+H` (`Option+H` on macOS) shows or hides chats hidden by rules. `Alt+F` moves focus to the filter bar.
+
+### Deleting untagged chats
+
+Off by default. With **Show “Delete untagged chats” button** on, click **Delete untagged…** in the filter bar:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./img/delete-untagged-dark.png">
+    <img src="./img/delete-untagged-light.png" alt="Delete untagged chats dialog listing the chats that match no rule, with the word delete typed into the confirmation box" width="760">
+  </picture>
+</p>
+
+1. The extension asks ChatGPT for your full chat list, not just the chats loaded in the sidebar, and lists every chat whose title matches no rule. Nothing is deleted yet.
+2. Pinned, starred and archived chats are kept, and so is every chat that matches a rule, including rule-hidden ones.
+3. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends. **Stop** halts after the current chat, and the first error stops the run.
+
+ChatGPT's sidebar can't restore deleted chats, so check the list before you confirm. This relies on ChatGPT's private web endpoints, which can change without notice.
 
 ## Long chats stay fast
 
@@ -99,6 +118,7 @@ These numbers come from one machine and will vary. Chats under 20 messages are l
 - **`storage`** saves your rules. It uses the browser's extension sync storage, so your browser may sync them across your signed-in devices.
 - **Site access** to `https://chatgpt.com/*` and `https://chat.openai.com/*` lets it style those pages. It has no access to any other site.
 - The extension reads **sidebar chat titles** to match your rules, and **message heights** to speed up long chats. It doesn't read or store message text.
+- **Delete untagged chats**, if you use it, lists your chats and deletes the ones you confirm through your signed-in ChatGPT session. Those requests go only to ChatGPT. The session token stays in memory for that run and is never stored.
 - No analytics, no tracking, and no servers of its own. See the [Privacy Policy](./Privacy%20Policy.md).
 
 ## Troubleshooting

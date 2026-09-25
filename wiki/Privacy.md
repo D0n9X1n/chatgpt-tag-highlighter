@@ -8,6 +8,7 @@
 - **ChatGPT's theme** (light or dark), to match the banner's look.
 - **Message sizes** on the page, for "Speed up long chats".
 - If you set **Max chat turns**, the extension removes older message elements from the page. It never reads message text, prompts, replies, or files.
+- Only if you use **Delete untagged chats**: your chat list from ChatGPT (ids, titles, and whether each is pinned, starred or archived) and your session's access token. The token stays in memory for that run and is never stored. Delete requests go only to ChatGPT, and only for the chats you confirmed.
 
 ## What it stores
 

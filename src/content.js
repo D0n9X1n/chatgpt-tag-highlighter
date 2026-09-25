@@ -17,6 +17,8 @@
 	const STYLE_ID = 'cth-style';
 	const OVERLAY_ID = 'cth-overlay';
 	const FILTER_BAR_ID = 'cth-filter-bar';
+	const DELETE_BTN_ID = 'cth-delete-untagged';
+	const DELETE_DIALOG_ID = 'cth-delete-dialog';
 	const DEBUG = false;
 
 	const log = (...a) => DEBUG && console.log('[CTH]', ...a);
@@ -370,6 +372,103 @@ html.cth-light .cth-pill:hover {
 html.cth-light .cth-pill.active {
   color: #000;
 }
+
+/* "Delete untagged…" action: a real <button>, styled like a pill, pushed to the end. */
+#${DELETE_BTN_ID} {
+  margin-inline-start: auto;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: rgba(255,255,255,0.60);
+}
+#${DELETE_BTN_ID}:hover, #${DELETE_BTN_ID}:focus-visible {
+  border-color: rgba(251,73,52,0.60);
+  color: #fb4934;
+}
+html.cth-light #${DELETE_BTN_ID} {
+  border-color: rgba(0,0,0,0.10);
+  color: rgba(0,0,0,0.55);
+}
+html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-visible {
+  border-color: rgba(204,36,29,0.60);
+  color: #cc241d;
+}
+`;
+
+		const deleteCss = `
+#history a[data-cth-deleted="1"] { display: none !important; }
+
+#${DELETE_DIALOG_ID} {
+  position: fixed; inset: 0;
+  z-index: 2147483000;
+  display: grid; place-items: center;
+  background: rgba(0,0,0,0.55);
+  font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+#${DELETE_DIALOG_ID} .cth-del-box {
+  box-sizing: border-box;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 20px;
+  border-radius: 16px;
+  background: #212121;
+  color: rgba(255,255,255,0.92);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+#${DELETE_DIALOG_ID} h2 { margin: 0; font-size: 17px; font-weight: 700; }
+#${DELETE_DIALOG_ID} .cth-del-status { margin: 0; }
+#${DELETE_DIALOG_ID} .cth-del-list {
+  margin: 0; padding: 6px 0;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0; max-height: 40vh;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 10px;
+}
+#${DELETE_DIALOG_ID} .cth-del-list li {
+  padding: 4px 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#${DELETE_DIALOG_ID} .cth-del-list li.cth-done { opacity: 0.45; text-decoration: line-through; }
+#${DELETE_DIALOG_ID} .cth-del-confirm { display: flex; flex-direction: column; gap: 6px; }
+#${DELETE_DIALOG_ID} .cth-del-input {
+  box-sizing: border-box; width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.20);
+  background: rgba(255,255,255,0.06);
+  color: inherit; font: inherit;
+}
+#${DELETE_DIALOG_ID} .cth-del-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+#${DELETE_DIALOG_ID} .cth-del-actions button {
+  padding: 8px 14px;
+  border-radius: 999px;
+  font: inherit; font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.20);
+  background: transparent;
+  color: inherit;
+}
+#${DELETE_DIALOG_ID} .cth-del-actions .cth-del-confirm-btn { background: #cc241d; border-color: #cc241d; color: #fff; }
+#${DELETE_DIALOG_ID} .cth-del-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+#${DELETE_DIALOG_ID} [hidden] { display: none !important; }
+
+html.cth-light #${DELETE_DIALOG_ID} { background: rgba(0,0,0,0.35); }
+html.cth-light #${DELETE_DIALOG_ID} .cth-del-box {
+  background: #fff; color: rgba(0,0,0,0.88);
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+}
+html.cth-light #${DELETE_DIALOG_ID} .cth-del-list { border-color: rgba(0,0,0,0.10); }
+html.cth-light #${DELETE_DIALOG_ID} .cth-del-input { border-color: rgba(0,0,0,0.20); background: rgba(0,0,0,0.03); }
+html.cth-light #${DELETE_DIALOG_ID} .cth-del-actions button { border-color: rgba(0,0,0,0.20); }
 `;
 
 		const dimCss = `
@@ -387,7 +486,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}\n${lazyCss}`;
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}\n${lazyCss}\n${deleteCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -513,6 +612,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const dimUntagged = cfg?.dimUntagged === true;
 		const showBadge = cfg?.showBadge !== false; // default true
 		const lazyRenderTurns = cfg?.lazyRenderTurns !== false; // default true
+		const showDeleteUntagged = cfg?.showDeleteUntagged === true; // default false
 
 		// Toggle CSS class for nav bar visibility
 		document.documentElement.classList.toggle('cth-hide-navbar', hideNavBar);
@@ -520,7 +620,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		document.documentElement.classList.toggle('cth-lazy-turns', lazyRenderTurns);
 
-		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns};
+		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns, showDeleteUntagged};
 	}
 
 	function matchRule(title, rules) {
@@ -643,9 +743,15 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 	function renderFilterBar() {
 		const visibleRules = compiled ? compiled.rules.filter(r => !r.hide) : [];
-		if (visibleRules.length < 2) {
+		const showPills = visibleRules.length >= 2;
+		// Never offer deletion without a rule: every chat would count as untagged.
+		const showDelete = compiled?.showDeleteUntagged === true && compiled.rules.length > 0;
+		if (!showPills && !showDelete) {
 			const bar = document.getElementById(FILTER_BAR_ID);
-			if (bar) bar.classList.remove('cth-visible');
+			if (bar) {
+				bar.classList.remove('cth-visible');
+				bar.replaceChildren();
+			}
 			return;
 		}
 
@@ -657,8 +763,24 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		// Re-rendering replaces the pills; keep keyboard focus on the same one.
 		const focusedIndex = [...bar.children].indexOf(document.activeElement);
-		bar.innerHTML = '';
+		bar.replaceChildren();
 
+		if (showPills) {
+			renderFilterPills(bar, visibleRules);
+		}
+
+		if (showDelete) {
+			bar.append(createDeleteButton());
+		}
+
+		if (focusedIndex >= 0) {
+			bar.children[focusedIndex]?.focus();
+		}
+
+		bar.classList.add('cth-visible');
+	}
+
+	function renderFilterPills(bar, visibleRules) {
 		const allPill = document.createElement('span');
 		allPill.className = 'cth-pill' + (activeFilters.size === 0 ? ' active' : '');
 		allPill.textContent = 'All';
@@ -698,12 +820,6 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			});
 			bar.append(pill);
 		}
-
-		if (focusedIndex >= 0) {
-			bar.children[focusedIndex]?.focus();
-		}
-
-		bar.classList.add('cth-visible');
 	}
 
 	function applyFilter() {
@@ -724,6 +840,453 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				}
 			}
 		}
+	}
+
+	// ---- Delete untagged chats (opt-in: showDeleteUntagged) ----
+	// Uses ChatGPT's own private endpoints, the same ones its Delete menu uses
+	// (verified Sep 2026): GET /backend-api/conversations to list chats, and
+	// PATCH /backend-api/conversation/{id} {is_visible:false} to delete one.
+	// The bearer token comes from /api/auth/session; it lives only for one run
+	// and is never stored or logged. Nothing is deleted before the user types
+	// the confirmation word; pinned, starred, archived and tagged chats are kept.
+	const CONFIRM_WORD = 'delete';
+	const LIST_PAGE_SIZE = 100;
+	const LIST_MAX_PAGES = 200; // 20,000 chats; beyond that, refuse rather than guess
+	const DELETE_GAP_MS = 250;
+	const CHAT_ID_RE = /^[\w-]{1,100}$/;
+	let deleteDialog = null;
+
+	// Same-origin request that carries the page's ChatGPT session cookies. In
+	// Firefox content scripts, plain fetch runs as the extension, so use the
+	// page's fetch (`content.fetch`) with a cloned init object.
+	function pageFetch(path, init = {}) {
+		const url = new URL(path, location.origin).href;
+		const opts = {credentials: 'include', ...init};
+		if (typeof content !== 'undefined' && typeof content?.fetch === 'function' && typeof cloneInto === 'function') {
+			return content.fetch(url, cloneInto(opts, content));
+		}
+
+		return fetch(url, opts);
+	}
+
+	async function readJson(response) {
+		try {
+			return JSON.parse(await response.text());
+		} catch {
+			return null;
+		}
+	}
+
+	async function getAccessToken() {
+		const r = await pageFetch('/api/auth/session');
+		if (!r.ok) {
+			throw new Error(`Couldn't check your ChatGPT session (HTTP ${r.status}). Nothing was deleted.`);
+		}
+
+		const token = (await readJson(r))?.accessToken;
+		if (typeof token !== 'string' || !token) {
+			throw new Error('Sign in to ChatGPT first. Nothing was deleted.');
+		}
+
+		return token;
+	}
+
+	// Lists every chat in the main history. `total` from the server is not a
+	// reliable count, so page by the number of items actually received and
+	// stop only on an empty page.
+	async function listAllChats(token, isClosed) {
+		const byId = new Map();
+		let offset = 0;
+		for (let page = 0; page < LIST_MAX_PAGES; page++) {
+			if (isClosed()) {
+				return null;
+			}
+
+			const r = await pageFetch(`/backend-api/conversations?offset=${offset}&limit=${LIST_PAGE_SIZE}&order=updated`, {
+				headers: {Authorization: `Bearer ${token}`},
+			});
+			if (!r.ok) {
+				throw new Error(`Couldn't list your chats (HTTP ${r.status}). Nothing was deleted.`);
+			}
+
+			const items = (await readJson(r))?.items;
+			if (!Array.isArray(items)) {
+				throw new Error('ChatGPT returned an unexpected chat list. Nothing was deleted.');
+			}
+
+			if (items.length === 0) {
+				return [...byId.values()];
+			}
+
+			for (const it of items) {
+				const id = String(it?.id || '');
+				if (!CHAT_ID_RE.test(id)) {
+					continue; // unknown id shape: skip it, never delete it
+				}
+
+				const title = String(it.title || '').trim();
+				const kept = it.is_archived === true || Boolean(it.pinned_time) || it.is_starred === true;
+				const seen = byId.get(id);
+				if (seen) {
+					// The list shifted while paging and this chat appeared twice.
+					// Merge conservatively: any copy that is tagged or protected wins.
+					seen.titles.push(title);
+					seen.title = title;
+					seen.kept = seen.kept || kept;
+				} else {
+					byId.set(id, {id, title, titles: [title], kept});
+				}
+			}
+
+			offset += items.length;
+		}
+
+		throw new Error('Too many chats to list safely. Nothing was deleted.');
+	}
+
+	function planUntaggedDeletion(chats, rules) {
+		const plan = {remove: [], tagged: 0, kept: 0};
+		for (const chat of chats) {
+			if (chat.titles.some(t => t && matchRule(t, rules))) {
+				plan.tagged++; // includes rule-hidden chats
+			} else if (chat.kept) {
+				plan.kept++;
+			} else {
+				plan.remove.push(chat);
+			}
+		}
+
+		return plan;
+	}
+
+	const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+	function el(tag, props = {}, children = []) {
+		const node = document.createElement(tag);
+		for (const [k, v] of Object.entries(props)) {
+			if (k === 'text') {
+				node.textContent = v;
+			} else if (k === 'hidden') {
+				node.hidden = Boolean(v);
+			} else {
+				node.setAttribute(k, v);
+			}
+		}
+
+		node.append(...children);
+		return node;
+	}
+
+	function markChatDeleted(id) {
+		if (!historyRoot) {
+			return;
+		}
+
+		for (const a of historyRoot.querySelectorAll('a[data-sidebar-item="true"]')) {
+			if ((a.getAttribute('href') || '').endsWith(`/c/${id}`)) {
+				a.dataset.cthDeleted = '1';
+			}
+		}
+	}
+
+	function createDeleteButton() {
+		const btn = document.createElement('button');
+		btn.type = 'button';
+		btn.id = DELETE_BTN_ID;
+		btn.textContent = 'Delete untagged…';
+		btn.title = 'Delete every chat that matches no tag rule';
+		btn.setAttribute('aria-haspopup', 'dialog');
+		btn.addEventListener('click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			openDeleteUntaggedDialog();
+		});
+		return btn;
+	}
+
+	function openDeleteUntaggedDialog() {
+		if (deleteDialog) {
+			deleteDialog.querySelector('button:not([disabled])')?.focus();
+			return;
+		}
+
+		if (!compiled?.rules?.length) {
+			return;
+		}
+
+		// Snapshot the rules so a settings change mid-dialog can't change the plan.
+		const rules = compiled.rules.slice();
+
+		const status = el('p', {class: 'cth-del-status', role: 'status', 'aria-live': 'polite', text: 'Finding untagged chats…'});
+		const list = el('ul', {class: 'cth-del-list', hidden: true});
+		const input = el('input', {class: 'cth-del-input', type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${CONFIRM_WORD} to confirm`});
+		const confirmRow = el('label', {class: 'cth-del-confirm', hidden: true}, [
+			el('span', {text: `Type "${CONFIRM_WORD}" to confirm. ChatGPT's sidebar can't restore deleted chats.`}),
+			input,
+		]);
+		const cancelBtn = el('button', {type: 'button', class: 'cth-del-cancel', text: 'Cancel'});
+		const reloadBtn = el('button', {type: 'button', class: 'cth-del-reload', text: 'Reload page', hidden: true});
+		const confirmBtn = el('button', {type: 'button', class: 'cth-del-confirm-btn', hidden: true});
+		confirmBtn.disabled = true;
+
+		const box = el('div', {class: 'cth-del-box'}, [
+			el('h2', {id: 'cth-del-title', text: 'Delete untagged chats'}),
+			status, list, confirmRow,
+			el('div', {class: 'cth-del-actions'}, [cancelBtn, reloadBtn, confirmBtn]),
+		]);
+		const root = el('div', {id: DELETE_DIALOG_ID, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cth-del-title'}, [box]);
+
+		let phase = 'loading'; // loading | preview | rechecking | running | done
+		let closed = false;
+		let stopRequested = false;
+		let token = '';
+		let plan = null;
+		const deleted = new Set();
+
+		function close() {
+			if (phase === 'running') {
+				// Finish the request in flight, then stop; never abandon it silently.
+				stopRequested = true;
+				cancelBtn.disabled = true;
+				cancelBtn.textContent = 'Stopping…';
+				return;
+			}
+
+			closed = true;
+			token = '';
+			root.remove();
+			deleteDialog = null;
+			document.getElementById(DELETE_BTN_ID)?.focus();
+		}
+
+		root.addEventListener('keydown', e => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				close();
+			} else if (e.key === 'Tab') {
+				const focusable = [...box.querySelectorAll('button, input')]
+					.filter(n => !n.disabled && !n.closest('[hidden]'));
+				if (focusable.length > 0) {
+					const first = focusable[0];
+					const last = focusable.at(-1);
+					if (e.shiftKey && document.activeElement === first) {
+						e.preventDefault();
+						last.focus();
+					} else if (!e.shiftKey && document.activeElement === last) {
+						e.preventDefault();
+						first.focus();
+					}
+				}
+			} else if (e.key === 'Enter' && e.target === input && !confirmBtn.disabled) {
+				e.preventDefault();
+				confirmBtn.click();
+			}
+
+			// Keep ChatGPT's page-level shortcuts out of the dialog.
+			e.stopPropagation();
+		});
+		root.addEventListener('mousedown', e => {
+			if (e.target === root && phase !== 'running') {
+				close();
+			}
+		});
+		cancelBtn.addEventListener('click', close);
+		reloadBtn.addEventListener('click', () => {
+			const current = location.pathname.match(/\/c\/([\w-]+)/)?.[1];
+			if (current && deleted.has(current)) {
+				location.assign('/');
+			} else {
+				location.reload();
+			}
+		});
+
+		function finish(message) {
+			phase = 'done';
+			status.textContent = message;
+			cancelBtn.disabled = false;
+			cancelBtn.textContent = 'Close';
+			confirmRow.hidden = true;
+			confirmBtn.hidden = true;
+			reloadBtn.hidden = deleted.size === 0;
+			(reloadBtn.hidden ? cancelBtn : reloadBtn).focus();
+		}
+
+		function showPlan() {
+			const keptParts = [];
+			if (plan.tagged) {
+				keptParts.push(plural(plan.tagged, 'tagged chat', 'tagged chats'));
+			}
+
+			if (plan.kept) {
+				keptParts.push(plural(plan.kept, 'pinned, starred or archived chat', 'pinned, starred or archived chats'));
+			}
+
+			const keeping = keptParts.length > 0 ? ` Keeping ${keptParts.join(' and ')}.` : '';
+			if (plan.remove.length === 0) {
+				finish(`No untagged chats to delete.${keeping}`);
+				return;
+			}
+
+			phase = 'preview';
+			status.textContent = `${plural(plan.remove.length, 'untagged chat', 'untagged chats')} will be deleted.${keeping}`;
+			for (const chat of plan.remove) {
+				const label = chat.title || 'Untitled chat';
+				list.append(el('li', {'data-id': chat.id, title: label, text: label}));
+			}
+
+			list.hidden = false;
+			confirmRow.hidden = false;
+			confirmBtn.hidden = false;
+			confirmBtn.textContent = `Delete ${plural(plan.remove.length, 'chat', 'chats')}`;
+			input.focus();
+		}
+
+		input.addEventListener('input', () => {
+			confirmBtn.disabled = input.value.trim().toLowerCase() !== CONFIRM_WORD;
+		});
+
+		confirmBtn.addEventListener('click', async () => {
+			if (phase !== 'preview' || confirmBtn.disabled) {
+				return;
+			}
+
+			phase = 'rechecking';
+			input.disabled = true;
+			confirmBtn.disabled = true;
+			// Disabling the focused button drops focus to <body>, where the
+			// dialog's Escape handler can't see it; keep focus on Cancel/Stop.
+			cancelBtn.focus();
+			let error = '';
+
+			// Re-check right before deleting: the user may have tagged, pinned,
+			// starred, archived or deleted chats since the preview. Only chats
+			// that are still untagged and unprotected now are deleted. Nothing
+			// has been deleted yet, so Cancel/Escape here close immediately and
+			// the re-list stops at its next page.
+			status.textContent = 'Checking the list again…';
+			let queue = [];
+			try {
+				const fresh = await listAllChats(token, () => closed);
+				if (closed || !fresh) {
+					token = '';
+					return;
+				}
+
+				const stillUntagged = new Set(planUntaggedDeletion(fresh, rules).remove.map(c => c.id));
+				queue = plan.remove.filter(c => stillUntagged.has(c.id));
+			} catch (error_) {
+				token = '';
+				if (!closed) {
+					finish(error_ instanceof TypeError ? "Couldn't reach ChatGPT. Nothing was deleted." : error_.message);
+				}
+
+				return;
+			}
+
+			phase = 'running';
+			cancelBtn.textContent = 'Stop';
+
+			const skipped = plan.remove.length - queue.length;
+			for (const chat of plan.remove) {
+				if (!queue.includes(chat)) {
+					for (const li of list.children) {
+						if (li.dataset.id === chat.id) {
+							li.title = `${li.title} (changed since the preview; kept)`;
+						}
+					}
+				}
+			}
+
+			const total = queue.length;
+			for (const chat of queue) {
+				if (stopRequested || closed) {
+					break;
+				}
+
+				status.textContent = `Deleting ${deleted.size + 1} of ${total}…`;
+				let r;
+				try {
+					// One request at a time, on purpose.
+					r = await pageFetch(`/backend-api/conversation/${encodeURIComponent(chat.id)}`, {
+						method: 'PATCH',
+						headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+						body: JSON.stringify({is_visible: false}),
+					});
+				} catch {
+					error = "Couldn't reach ChatGPT.";
+					break;
+				}
+
+				const body = await readJson(r);
+				if (!r.ok || body?.success === false) {
+					if (r.status === 429) {
+						error = 'ChatGPT is rate-limiting requests (HTTP 429). Wait a minute and run it again.';
+					} else if (r.ok) {
+						error = "ChatGPT said a delete didn't go through.";
+					} else {
+						error = `ChatGPT refused a delete (HTTP ${r.status}).`;
+					}
+					break;
+				}
+
+				deleted.add(chat.id);
+				for (const li of list.children) {
+					if (li.dataset.id === chat.id) {
+						li.classList.add('cth-done');
+					}
+				}
+
+				markChatDeleted(chat.id);
+				if (deleted.size < total) {
+					await new Promise(resolve => {
+						setTimeout(resolve, DELETE_GAP_MS);
+					});
+				}
+			}
+
+			token = '';
+			if (closed) {
+				return;
+			}
+
+			const skippedNote = skipped > 0 ? ` Skipped ${plural(skipped, 'chat', 'chats')} that changed since the preview.` : '';
+			const summary = `Deleted ${deleted.size} of ${plural(total, 'chat', 'chats')}.${skippedNote}`;
+			if (error) {
+				finish(`${error} Stopped. ${summary}`);
+			} else if (stopRequested && deleted.size < total) {
+				finish(`Stopped. ${summary}`);
+			} else {
+				finish(summary);
+			}
+		});
+
+		deleteDialog = root;
+		document.body.append(root);
+		cancelBtn.focus();
+
+		(async () => {
+			try {
+				token = await getAccessToken();
+				if (closed) {
+					token = '';
+					return;
+				}
+
+				const chats = await listAllChats(token, () => closed);
+				if (closed || !chats) {
+					return;
+				}
+
+				plan = planUntaggedDeletion(chats, rules);
+				showPlan();
+			} catch (error) {
+				token = '';
+				if (!closed) {
+					// fetch() rejects with TypeError on network failure.
+					finish(error instanceof TypeError ? "Couldn't reach ChatGPT. Nothing was deleted." : error.message);
+				}
+			}
+		})();
 	}
 
 	// ---- Sidebar processing (batched) ----
@@ -1392,7 +1955,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			e.preventDefault();
 			const bar = document.getElementById(FILTER_BAR_ID);
 			if (bar && bar.classList.contains('cth-visible')) {
-				const firstPill = bar.querySelector('.cth-pill');
+				const firstPill = bar.querySelector(`.cth-pill, #${DELETE_BTN_ID}`);
 				if (firstPill) firstPill.focus();
 			}
 		}
