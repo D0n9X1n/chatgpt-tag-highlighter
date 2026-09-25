@@ -33,7 +33,8 @@ All three scripts share the storage key `tagHighlighterConfigV1`. The config sch
   "maxChatTurns": 0,
   "hideNavBar": true,
   "dimUntagged": false,
-  "showBadge": true
+  "showBadge": true,
+  "lazyRenderTurns": true
 }
 ```
 
@@ -53,7 +54,7 @@ All three scripts detect the extension API at runtime (`browser` vs `chrome`) an
 
 This produces `dist/chatgpt-tag-highlighter-chrome-1.0.0.zip` and `dist/chatgpt-tag-highlighter-firefox-1.0.0.xpi`. Requires `python3` and `zip`.
 
-There is no build step for development — load `src/` directly as an unpacked extension in Chrome, or as a temporary add-on in Firefox.
+`src/` has no `manifest.json`, so run `publish.sh` before loading: use `dist/chrome/` as the unpacked Chrome extension, or `dist/firefox/manifest.json` as a Firefox temporary add-on. Rebuild after every source edit.
 
 ## Testing
 

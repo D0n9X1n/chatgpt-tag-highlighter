@@ -108,7 +108,7 @@
 			out.push({
 				tag,
 				match: safeMatch(r?.match),
-				color: String(r?.color || 'Green'),
+				color: String(r?.color || '#b8bb26'), // hex only; never persist color names
 				hide: safeBool(r?.hide),
 				overlay: r?.overlay !== false,
 			});
@@ -124,7 +124,7 @@
 
 			if (!existing) {
 				await storageSet({
-					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR, dimUntagged: false, showBadge: true},
+					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR, dimUntagged: false, showBadge: true, lazyRenderTurns: true},
 				});
 				return;
 			}
@@ -142,6 +142,7 @@
 
 			const dimUntagged = existing.dimUntagged === true;
 			const showBadge = existing.showBadge !== false;
+			const lazyRenderTurns = existing.lazyRenderTurns !== false;
 
 			// Only write if missing/invalid fields.
 			const needWrite
@@ -152,10 +153,11 @@
         	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean')
         	|| (existing.rules || []).some(r => typeof r.overlay !== 'boolean')
         	|| typeof existing.dimUntagged !== 'boolean'
-        	|| typeof existing.showBadge !== 'boolean';
+        	|| typeof existing.showBadge !== 'boolean'
+        	|| typeof existing.lazyRenderTurns !== 'boolean';
 
 			if (needWrite) {
-				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge}});
+				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns}});
 			}
 		} catch {
 			// Best-effort: do not block extension startup.

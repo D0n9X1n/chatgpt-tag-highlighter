@@ -1,306 +1,147 @@
-# ChatGPT Tag Highlighter
+<p align="center">
+  <img src="./src/icon.png" alt="ChatGPT Tag Highlighter icon" width="96">
+</p>
 
-[![Tests](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml)
-[![CodeQL](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml)
-[![GitHub release](https://img.shields.io/github/v/release/D0n9X1n/chatgpt-tag-highlighter?include_prereleases&logo=github&label=release&color=brightgreen)](https://github.com/D0n9X1n/chatgpt-tag-highlighter/releases)
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=chrome%20web%20store&color=brightgreen)](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm)
-[![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=users)](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm)
-[![Firefox Add-ons](https://img.shields.io/amo/v/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=firefox%20add-ons&color=brightgreen)](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/)
-[![Firefox users](https://img.shields.io/amo/users/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=users)](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/)
-[![License: MIT](https://img.shields.io/github/license/D0n9X1n/chatgpt-tag-highlighter?color=brightgreen)](./LICENSE)
+<h1 align="center">ChatGPT Tag Highlighter</h1>
 
-Yet, just another lightweight browser extension that highlights ChatGPT sidebar conversations based on **title tags** like **[TODO]** and **[BUG]**. 
-It adds a **colored left stripe** + subtle background so tagged chats are easy to scan and jump to.
+<p align="center">
+  Color-code your ChatGPT sidebar with title tags like <b>[TODO]</b> and <b>[BUG]</b>,<br>
+  filter by tag, and keep long conversations fast.
+</p>
 
-[中文说明 / Chinese](./ReadMe.CN.md)
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm"><b>Chrome Web Store</b></a> ·
+  <a href="https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/"><b>Firefox Add-ons</b></a> ·
+  <a href="./ReadMe.CN.md">中文说明</a>
+</p>
 
-![LOGO](./src/icon.png)
+<p align="center">
+  <a href="https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/test.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/D0n9X1n/chatgpt-tag-highlighter/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/D0n9X1n/chatgpt-tag-highlighter/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/D0n9X1n/chatgpt-tag-highlighter?include_prereleases&logo=github&label=release&color=brightgreen"></a>
+  <a href="https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm"><img alt="Chrome Web Store" src="https://img.shields.io/chrome-web-store/v/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=chrome&color=brightgreen"></a>
+  <a href="https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm"><img alt="Chrome Web Store users" src="https://img.shields.io/chrome-web-store/users/lplghggkggkbkkakjabafjenjlekogbm?logo=googlechrome&logoColor=white&label=users"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/"><img alt="Firefox Add-ons" src="https://img.shields.io/amo/v/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=firefox&color=brightgreen"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/"><img alt="Firefox users" src="https://img.shields.io/amo/users/chatgpt-tag-highlighter?logo=firefoxbrowser&logoColor=white&label=users"></a>
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/D0n9X1n/chatgpt-tag-highlighter?color=brightgreen"></a>
+</p>
 
-## Installation
-### For Chrome: visit [ChatGPT Tag Highlighter](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm?authuser=0&hl=en)
-### For Firefox: visit [ChatGPT Tag Highlighter](https://addons.mozilla.org/en-US/firefox/addon/chatgpt-tag-highlighter/)
-
----
-
-## Why this exists
-
-When you use ChatGPT for many ongoing tasks, the sidebar quickly becomes noisy. ChatGPT Tag Highlighter helps you:
-- spot important threads instantly (**[BUG]**, **[TODO]**, etc.)
-- keep debugging / notes organized without changing your workflow
-- stay fast: minimal DOM work, incremental updates, low overhead
-
----
-
-## Features
-
-- **Tag-based highlighting** in the ChatGPT sidebar (e.g. `[TODO]`, `[BUG]`)
-- **Configurable rules** in a Settings page:
-  - add/remove tags
-  - choose match type: `startsWith` (recommended) or `includes`
-  - choose color from a preset palette or use a custom `#RRGGBB`
-  - **per-rule overlay toggle** — show/hide the overlay banner for each tag individually
-- **Drag-to-reorder rules** — use the ≡ drag handle to rearrange rule priority
-- **Import/Export settings** — Export copies your config JSON to clipboard; Import parses pasted JSON
-- **Sidebar tag filter bar** — pill-shaped toggles at the top of `#history`; click multiple pills to multi-select tags
-- **Theme-aware overlay** — the floating overlay adapts to ChatGPT dark/light mode automatically
-- **Dim untagged conversations** — reduces opacity on sidebar items that don't match any rule
-- **Extension badge counter** — shows a count of tagged conversations on the extension icon
-- **Keyboard shortcuts**:
-  - `Alt+H` toggles hidden conversations
-  - `Alt+F` focuses the filter bar
-- **Selected vs. unselected styles**:
-  - selected chat gets a stronger background + thicker stripe
-- **Performance-first implementation**:
-  - rules are compiled once
-  - only processes sidebar chat items (not the whole page)
-  - batches DOM updates and handles dynamic loading
-- **Hide right navigation bar** for faster loading on long conversations
-- **Chat turn pruning** — limit visible turns to reduce DOM overhead
-- **Rule tester** — debug section in Settings to test which rule matches a typed title
-- **Row numbers** — numbered rules in the options table for easy reference
-- **Rule explainer** — inline explanation of `startsWith` vs `includes` in Settings
-- **Auto-save** — every change auto-saves immediately with an "Auto-saved ✓" toast; no Save/Reset buttons
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./img/hero-dark.png">
+    <img src="./img/hero-light.png" alt="Tagged chats with colored stripes and filter pills in the ChatGPT sidebar, and the active chat's tag banner above the message box" width="860">
+  </picture>
+</p>
 
 ---
 
-## Screenshots
+## What it does
 
-### Sidebar preview
-![Sidebar Preview](./img/1.png)
+- **Colors tagged chats.** Name a chat `[TODO] Fix the build pipeline` and it gets a colored stripe and background in the sidebar. The open chat gets a stronger highlight.
+- **Filters by tag.** Pills above the chat list show only the tags you pick. Select several at once. Your selection survives a reload.
+- **Shows where you are.** A banner above the message box shows the open chat's tag and title. Click it to jump to the latest message.
+- **Keeps long chats fast.** Messages that are off-screen skip rendering. Nothing is removed, so scrolling and Find still work. [Numbers below.](#long-chats-stay-fast)
+- **Stays out of the way.** Rules apply live, it follows ChatGPT's light or dark theme, and it asks for no permissions beyond storage and the two ChatGPT sites.
 
-### Settings page
-![Settings](./img/2.png)
+## Quick start
 
----
+1. Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm) or [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/).
+2. Rename a few chats in ChatGPT so they start with a tag, for example `[TODO] …` or `[BUG] …`.
+3. That's it. Four starter rules are already set up: **[TODO]**, **[BUG]**, **code**, and **help**. Open the extension's **Options** page to change them.
 
-## Installation
+## Settings
 
-### Chrome (Developer Mode)
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
-4. Select the project folder (the folder that contains `src/`)
+<p align="center">
+  <img src="./img/settings.png" alt="Settings page with general options, the tag rules table, and the rule tester" width="760">
+</p>
 
-### Firefox (Temporary Add-on for development)
-1. Open `about:debugging#/runtime/this-firefox`
-2. Click **Load Temporary Add-on**
-3. Select the extension build output (or the Firefox package if you have one)
+**Tag rules** are checked top to bottom, and the first match wins. Drag ≡ to reorder. Each rule has:
 
----
+| Field | Meaning |
+|---|---|
+| Tag | The text to look for. Matching is case-sensitive. |
+| Match | `startsWith`: the title begins with the tag (best for `[TAG]` prefixes). `includes`: the tag appears anywhere in the title. |
+| Color | Pick a preset or enter any `#RRGGBB`. |
+| Hide | Hide matching chats from the sidebar. `Alt+H` reveals them. |
+| Overlay | Show the tag banner when a matching chat is open. |
 
-## Usage
+The **Rule tester** tells you which rule a title would match. **Export** copies your settings as JSON and **Import** loads them back. Every change saves automatically.
 
-### 1) Add tags to your ChatGPT chat titles
-Name your conversations with a prefix tag, for example:
-- `[TODO] Fix the build pipeline`
-- `[BUG] Cosmos auth token issue`
+**General options:**
 
-### 2) Configure highlighting rules
-Open extension **Options / Settings**, then configure:
-- **Tag**: the text to match (recommended format: `[TAG]`)
-- **Match**:
-  - `startsWith` (fastest, recommended)
-  - `includes` (more flexible, slightly slower)
-- **Color**:
-  - choose from preset palette
-  - or enter a custom hex like `#fabd2f`
+| Option | Default | What it does |
+|---|---|---|
+| Speed up long chats | On | In chats with 20 or more messages, the browser skips rendering off-screen messages. The newest 4 always render. |
+| Max chat turns to keep | 0 (off) | Removes older messages from the page, not from your account. They come back when you reload or reopen the chat. |
+| Hide right navigation bar | On | Hides the message minimap on older ChatGPT layouts. The current layout has no minimap, so this does nothing there. |
+| Dim untagged conversations | Off | Fades chats that match no rule. |
+| Show badge counter | On | Shows how many tagged chats are visible on the extension icon. |
 
----
+**Keyboard shortcuts:** `Alt+H` (`Option+H` on macOS) shows or hides chats hidden by rules. `Alt+F` moves focus to the filter bar.
 
-## Default rules
+## Long chats stay fast
 
-Out of the box, ChatGPT Tag Highlighter seeds four demo rules:
-- **[TODO]** → Bright Yellow (`startsWith`)
-- **[BUG]** → Bright Red (`startsWith`)
-- **code** → Bright Blue (`includes`)
-- **help** → Bright Green (`includes`)
+Very long conversations get slow because the browser keeps laying out and styling every message, even ones far off-screen. With **Speed up long chats** on, older messages use `content-visibility: auto`. The browser skips them until they come near the screen. Each message keeps its measured height, so the scrollbar doesn't jump.
 
-You can modify or remove them anytime in Settings.
+Measured on live ChatGPT in Chrome, in a conversation of about 200 messages, with the option off and then on:
 
----
+| Work | Off | On |
+|---|---:|---:|
+| Style recalculation across 4 window resizes | 2,059 ms | 449 ms |
+| Layout across the same resizes | 59 ms | 20 ms |
+| 10 page-wide style changes (for example, theme switches) | 1,255 ms | 296 ms |
+| Slowest frame while scrolling the whole thread | 120 ms | 27 ms |
 
-## Permissions
+These numbers come from one machine and will vary. Chats under 20 messages are left alone. The extension's own work is small: showing the overlay added under 0.1 ms per frame in the same session.
 
-- `storage`: saves your tag/color rules locally in the browser.
+## Permissions and privacy
 
-Host access:
-- `https://chatgpt.com/*`
-- `https://chat.openai.com/*`
-
----
-
-## Privacy
-
-- No analytics.
-- No tracking.
-- No data is sent to any server.
-- Your configuration is stored locally using the browser’s extension storage.
-- The extension reads **sidebar conversation titles** only to apply your selected styles.
-
----
+- **`storage`** saves your rules. It uses the browser's extension sync storage, so your browser may sync them across your signed-in devices.
+- **Site access** to `https://chatgpt.com/*` and `https://chat.openai.com/*` lets it style those pages. It has no access to any other site.
+- The extension reads **sidebar chat titles** to match your rules, and **message heights** to speed up long chats. It doesn't read or store message text.
+- No analytics, no tracking, and no servers of its own. See the [Privacy Policy](./Privacy%20Policy.md).
 
 ## Troubleshooting
 
-### Nothing is highlighted
-- Make sure your chat titles actually contain the tag (e.g. `[TODO] ...`)
-- Open Settings and verify rules exist
-- Settings now apply live — no page reload needed
+- **Nothing is highlighted.** Check that the title really contains the tag. Matching is case-sensitive, and `startsWith` needs the tag at the very beginning. The rule tester in Options will tell you. Rule changes apply without a reload.
+- **The Options page is blank.** Open it from the extension's Options entry, not as a `file://` path, so the storage APIs are available.
+- **ChatGPT changed its layout and something broke.** Please [open an issue](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues) with your browser version.
 
-### Options page crashes
-- Don’t open `options.html` via `file://...`
-- Open it via the extension’s **Options / Preferences** page so storage APIs are available.
+## Development
 
----
-
-## Development & Testing Guide
-
-This section helps contributors (human or AI agent) understand how to make and test code changes.
-
-### Architecture overview
-
-All runtime code lives in `src/`. Chrome and Firefox share the same JS/HTML/CSS but use separate manifests:
-- `src/manifest.chrome.json` — Chrome (Manifest V3, `service_worker`)
-- `src/manifest.firefox.json` — Firefox (Manifest V3, `scripts` array + gecko ID)
-
-Key files:
-| File | Role |
-|------|------|
-| `content.js` | Content script injected into `chatgpt.com`. Scans sidebar, applies highlights, hides chats, prunes turns, manages theme-aware overlay, filter bar, badge counter, keyboard shortcuts (`Alt+H`/`Alt+F`), and dims untagged items. |
-| `background.js` | Service worker. Seeds default config on install, migrates schema, handles badge counter messages from content script. |
-| `options.js` + `options.html` | Settings page. Auto-saves on every change. Renders numbered tag rules with drag-to-reorder, import/export, rule tester, rule explainer, and persists config. Header has title + Export/Import; "+ Add Tag" is below the table. |
-
-### Data flow
-
-All scripts share the storage key `tagHighlighterConfigV1`:
-```json
-{
-  "rules": [{ "tag": "[TODO]", "match": "startsWith", "color": "#fabd2f", "hide": false, "overlay": true }],
-  "maxChatTurns": 0,
-  "hideNavBar": true,
-  "dimUntagged": false,
-  "showBadge": true
-}
-```
-- `background.js` seeds defaults and migrates on install
-- `options.js` reads, edits, and persists config
-- `content.js` reads config at load **and** listens to `storage.onChanged` for live updates
-
-### Making code changes
-
-1. **Edit files in `src/`** — this is the source of truth
-2. **Load `src/` as an unpacked extension** in Chrome (`chrome://extensions` → Load unpacked) or Firefox (`about:debugging`)
-3. **After editing, reload the extension** from `chrome://extensions` (click ↻) then refresh the ChatGPT tab
-4. **Copy to `dist/`** when ready — `publish.sh` does this automatically, or copy manually:
-   ```sh
-   for f in content.js background.js options.js options.html options.css; do
-     cp src/$f dist/chrome/$f && cp src/$f dist/firefox/$f
-   done
-   ```
-
-### Adding new config fields
-
-When adding a new config field (e.g. `hideNavBar`):
-1. **`background.js`**: Add default value, add migration check in `seedOrMigrate()`
-2. **`options.html`**: Add UI element (input/checkbox)
-3. **`options.js`**: Add to `els`, `DEFAULT_CFG()`, `render()`, `collectConfig()`, and `init()` migration
-4. **`content.js`**: Handle in `compileConfig()`, apply in the appropriate section, and ensure the `storage.onChanged` handler responds to it
-
-### Testing with Playwright
-
-Since this is a browser extension with no build step, testing is done via Playwright E2E automation:
+The extension is plain JavaScript with no dependencies and no bundler. `src/` holds the source and two manifest templates but no `manifest.json`, so build before loading:
 
 ```sh
-# Setup (one-time)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install playwright pytest
-playwright install chromium
+./publish.sh --version 0.0.99            # writes dist/chrome/, dist/firefox/, .zip and .xpi
 ```
 
-```python
-# Launch Chrome with the extension loaded
-from playwright.sync_api import sync_playwright
+- **Chrome:** open `chrome://extensions`, turn on Developer mode, click **Load unpacked**, and choose `dist/chrome/`.
+- **Firefox:** open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on**, and choose `dist/firefox/manifest.json`.
 
-pw = sync_playwright().start()
-ext_path = '/path/to/chatgpt-tag-highligher/dist/chrome'
-profile_dir = 'tests/.test-profile'
+Rebuild after each edit, reload the extension, then refresh the ChatGPT tab.
 
-context = pw.chromium.launch_persistent_context(
-    profile_dir,
-    headless=False,
-    args=[
-        f'--disable-extensions-except={ext_path}',
-        f'--load-extension={ext_path}',
-        '--disable-blink-features=AutomationControlled',
-    ],
-    ignore_default_args=['--enable-automation', '--disable-extensions'],
-)
-
-page = context.pages[0]
-page.goto('https://chatgpt.com')
-# ... interact and assert
-```
-
-**Key testing patterns:**
-
-1. **Set config via storage** (from extension page context):
-   ```js
-   chrome.storage.sync.set({tagHighlighterConfigV1: config}, callback)
-   ```
-
-2. **Verify highlights** — check for `data-cth="1"` on sidebar anchors:
-   ```js
-   document.querySelectorAll('#history a[data-cth]').length
-   ```
-
-3. **Verify hide** — check `data-cth-hidden="1"`:
-   ```js
-   document.querySelectorAll('#history a[data-cth-hidden]').length
-   ```
-
-4. **Verify turn pruning** — count article elements:
-   ```js
-   document.querySelectorAll('article[data-testid^="conversation-turn-"]').length
-   ```
-
-5. **Verify nav bar hidden** — check CSS class on `<html>`:
-   ```js
-   document.documentElement.classList.contains('cth-hide-navbar')
-   ```
-
-6. **Live config reload** — change config via storage, wait 1–2s, verify DOM updated without `page.reload()`.
-
-The test suite lives in `tests/` and can be run with:
+<details>
+<summary><b>Tests, architecture, and live-testing rules</b></summary>
 
 ```sh
 python3 -m venv .venv && source .venv/bin/activate
-pip install playwright pytest
-playwright install chromium
-pytest tests/test_extension.py -v
+pip install -r tests/requirements.txt && playwright install chromium
+
+./publish.sh --version 0.0.99                     # tests run against dist/chrome
+CI=true pytest tests/test_extension.py -v         # full suite, disposable browser profile
+CI=true pytest tests/test_extension.py -k TestContentScript -v
+for f in src/*.js; do node --check "$f"; done     # syntax check
+npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted
 ```
 
-Tests include:
-- **Unit tests** (`tests/unit_test.html`) — 50+ assertions for color normalization, config compilation, rule matching, and overlay logic, run in-browser via Playwright
-- **E2E tests** (`tests/test_extension.py`) — 23 tests covering options page rendering, config persistence, auto-save, add/delete rows, drag-to-reorder, import/export, rule tester, migration of missing fields, and more
+- `TestContentScript` runs the **packaged** content script against realistic mock ChatGPT pages served at `https://chatgpt.com/`. Other tests cover the options page, migrations, and import/export.
+- `background.js` sets up and migrates the config. `options.js` edits it. `content.js` applies it and updates live on `storage.onChanged`. They all share the storage key `tagHighlighterConfigV1`. The filter selection is stored separately under `tagHighlighterUiStateV1`, in local storage.
+- A new config field has to default safely in all three scripts.
+- **Live testing on chatgpt.com:** leave `tests/.test-profile/` alone. It holds a login. Use one browser session for the whole run, because ChatGPT's cookies are short-lived. Never send, create, rename, or delete chats.
 
-**CRITICAL — session management for live tests:**
-
-1. **Never delete `tests/.test-profile/`.** It contains your ChatGPT login cookies and session data.
-2. **Run ALL live tests in a single browser session** — one `launch_persistent_context` → all tests → one `close`. ChatGPT uses short-lived cookies that expire when the browser closes, so do NOT close and reopen the browser between test steps.
-3. **Required Playwright launch args:**
-   ```python
-   ctx = pw.chromium.launch_persistent_context(
-       'tests/.test-profile',
-       headless=False,
-       args=[
-           f'--disable-extensions-except={ext_path}',
-           f'--load-extension={ext_path}',
-           '--disable-blink-features=AutomationControlled',
-       ],
-       ignore_default_args=['--enable-automation', '--disable-extensions'],
-   )
-   ```
-   `ignore_default_args` **must** include both `--enable-automation` and `--disable-extensions`.
+For more, see [CONTRIBUTING](./.github/CONTRIBUTING.md) and [CLAUDE.md](./CLAUDE.md), which lists the ChatGPT page elements the extension relies on.
+</details>
 
 ## License
-See [License](./LICENSE)
+
+[MIT](./LICENSE)
