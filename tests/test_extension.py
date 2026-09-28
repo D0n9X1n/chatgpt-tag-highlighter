@@ -21,7 +21,7 @@ import tempfile
 import time
 import pytest
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 ROOT = Path(__file__).resolve().parent.parent
 EXT_PATH = str(ROOT / 'dist' / 'chrome')
@@ -152,6 +152,84 @@ class TestOptionsPage:
             f"new Promise(r => chrome.storage.sync.set("
             f"{{'{STORAGE_KEY}': {json.dumps(config)}}}, r))"
         )
+
+    def test_options_waits_for_loaded_rules_before_autosaving(self):
+        page = self.context.new_page()
+        try:
+            markup = (Path(EXT_PATH) / 'options.html').read_text().replace('<script src="options.js"></script>', '')
+            page.set_content(markup)
+            page.evaluate("""() => {
+                window.writes = [];
+                window.browser = {storage: {sync: {
+                    get: () => new Promise(resolve => {window.releaseConfig = resolve}),
+                    set: async value => {window.writes.push(value)},
+                }}};
+            }""")
+            page.add_script_tag(content=(Path(EXT_PATH) / 'options.js').read_text())
+            page.check('#dimUntagged')
+            assert page.evaluate('writes.length') == 0, 'loading an empty table must not overwrite stored rules'
+            page.evaluate("releaseConfig({tagHighlighterConfigV1:{rules:[{tag:'[SAVED]',color:'#fabd2f'}]}})")
+            page.wait_for_function("() => document.querySelector('#rows .tag')?.value === '[SAVED]'")
+            page.check('#dimUntagged')
+            assert page.evaluate('writes.at(-1).tagHighlighterConfigV1.rules[0].tag') == '[SAVED]'
+            assert page.evaluate('writes.at(-1).tagHighlighterConfigV1.dimUntagged') is True
+        finally:
+            page.close()
+
+    def test_removing_last_rule_saves_and_general_settings_still_save(self):
+        page = self._open_options()
+        try:
+            self._set_config(page, {'rules': [{'tag': '[LAST]', 'color': '#fabd2f'}], 'maxChatTurns': 0})
+            page.reload()
+            page.wait_for_selector('#rows tr')
+            page.click('#rows .del')
+            page.wait_for_function("async () => (await chrome.storage.sync.get('tagHighlighterConfigV1')).tagHighlighterConfigV1.rules.length === 0", timeout=3000)
+            page.check('#dimUntagged')
+            page.wait_for_function("async () => (await chrome.storage.sync.get('tagHighlighterConfigV1')).tagHighlighterConfigV1.dimUntagged === true", timeout=3000)
+            page.reload()
+            page.wait_for_timeout(300)
+            assert page.locator('#rows tr').count() == 0
+            assert page.is_checked('#dimUntagged')
+        finally:
+            self._set_config(page, {'rules': [{'tag': '[TEST]', 'match': 'startsWith', 'color': '#fabd2f'}], 'maxChatTurns': 0})
+            page.close()
+
+    def test_import_empty_rules_roundtrip_and_reject_blank_only(self):
+        page = self._open_options()
+        try:
+            page.click('#importCfg')
+            page.fill('#importText', json.dumps({'rules': [], 'dimUntagged': True}))
+            page.click('#importApply')
+            page.wait_for_function("async () => (await chrome.storage.sync.get('tagHighlighterConfigV1')).tagHighlighterConfigV1.rules.length === 0", timeout=3000)
+            assert page.locator('#rows tr').count() == 0
+            page.click('#importCfg')
+            page.fill('#importText', json.dumps({'rules': [{'tag': '   '}]}))
+            page.click('#importApply')
+            assert page.inner_text('#toast') == 'Invalid config'
+            assert self._get_config(page)['rules'] == []
+        finally:
+            self._set_config(page, {'rules': [{'tag': '[TEST]', 'match': 'startsWith', 'color': '#fabd2f'}], 'maxChatTurns': 0})
+            page.close()
+
+    def test_import_refreshes_existing_rule_tester_result(self):
+        page = self._open_options()
+        try:
+            self._set_config(page, {'rules': [{'tag': '[OLD]', 'match': 'startsWith', 'color': '#fabd2f'}]})
+            page.reload()
+            page.wait_for_selector('#rows tr')
+            page.fill('#debugTitle', '[OLD] example')
+            assert 'WINNER' in page.inner_text('#debugResult')
+            page.click('#importCfg')
+            page.fill('#importText', json.dumps({'rules': [{'tag': '[NEW]', 'match': 'startsWith', 'color': '#abcdef'}]}))
+            page.click('#importApply')
+            page.wait_for_function("() => document.querySelector('#rows .tag').value === '[NEW]'")
+            result = page.inner_text('#debugResult')
+            assert 'WINNER' not in result and page.locator('#debugResult .matchHit').count() == 0
+            assert page.inner_text('#debugResult .matchMiss code') == '[NEW]'
+            assert page.input_value('#debugTitle') == '[OLD] example'
+        finally:
+            self._set_config(page, {'rules': [{'tag': '[TEST]', 'match': 'startsWith', 'color': '#fabd2f'}], 'maxChatTurns': 0})
+            page.close()
 
     def test_default_config_seeded(self, browser_context, ext_id):
         """background.js should seed default config on install."""
@@ -742,6 +820,25 @@ class TestMigration:
         assert cfg['lazyRenderTurns'] is False
 
 
+    def test_background_migration_preserves_intentionally_empty_rules(self, browser_context):
+        page = browser_context.new_page()
+        try:
+            page.set_content('<html><body></body></html>')
+            page.evaluate("""() => {
+                window.__store = {tagHighlighterConfigV1: {rules: [], maxChatTurns: 0}};
+                const ev = {addListener() {}};
+                window.browser = {runtime: {onInstalled: ev, onStartup: ev, onMessage: ev},
+                    storage: {sync: {
+                        get: async k => ({[k]: window.__store[k]}),
+                        set: async o => {Object.assign(window.__store, o);window.migrated=true;},
+                    }}};
+            }""")
+            page.add_script_tag(content=(Path(EXT_PATH) / 'background.js').read_text())
+            page.wait_for_function('() => window.migrated === true')
+            assert page.evaluate('window.__store.tagHighlighterConfigV1.rules') == []
+        finally:
+            page.close()
+
     def test_background_migration_writes_hex_for_missing_color(self, browser_context, ext_id):
         """background.js must never persist a non-hex color (e.g. the name 'Green')."""
         page = browser_context.new_page()
@@ -943,7 +1040,7 @@ class TestContentScript:
         try:
             page.wait_for_function(expression, arg=arg, timeout=timeout)
             return True
-        except Exception:
+        except PlaywrightTimeoutError:
             return False
 
     def _overlay_visible(self, page, timeout=3000):
@@ -1075,18 +1172,21 @@ class TestContentScript:
         assert self._overlay_visible(page)
         page.evaluate("document.getElementById('scroll-root').scrollTop = 0")
         page.wait_for_timeout(300)
-        # Abort the smooth scroll and, at the same moment, simulate a user wheel.
+        # Observe the actual interruption before testing cancellation. Otherwise
+        # an unstarted first scroll could leave this listener armed for click #2.
         page.evaluate("""() => {
             const s = document.getElementById('scroll-root');
-            let fired = false;
-            s.addEventListener('scroll', () => {
-                if (fired) return;
-                fired = true;
+            window.interruptions = 0;
+            window.interruptScroll = () => {
+                window.interruptions++;
+                s.removeEventListener('scroll', window.interruptScroll);
                 s.scrollTop = s.scrollTop + 1;
                 s.dispatchEvent(new WheelEvent('wheel', {bubbles: true, deltaY: -10}));
-            });
+            };
+            s.addEventListener('scroll', window.interruptScroll);
         }""")
         page.click('#cth-overlay .cth-arrow')
+        assert self._poll(page, '() => window.interruptions === 1'), 'first click must actually reach the interruption'
         page.wait_for_timeout(2200)  # past the 1.5 s fallback deadline
         top, max_top = page.evaluate("""() => { const s = document.getElementById('scroll-root');
             return [s.scrollTop, s.scrollHeight - s.clientHeight]; }""")
@@ -1566,3 +1666,259 @@ class TestContentScript:
                           timeout=5000)
         assert [c for c in calls if '/backend-api/' in c['url']] == [], 'no list or delete calls without a session'
         assert not page.is_visible('#cth-delete-dialog .cth-del-input')
+
+
+# App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
+# fixture-only IDs let tests inspect rows without coupling to extension markers.
+def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6):
+    rows = []
+    for i, (cid, title) in enumerate(chats):
+        selected = ' aria-current="page"' if cid == active else ''
+        row = (f'<div role="group" id="row-{cid}"{selected}>'
+               f'<div data-thread-title-trigger><a data-interactive-row-link="true" '
+               f'href="/c/{cid}"{selected}><span data-thread-title="true">'
+               f'<span data-marquee-content><span dir="auto">{_html.escape(title)}</span>'
+               f'</span></span></a></div><button class="menu">menu</button></div>')
+        rows.append(f'<div role="listitem" id="item-{cid}">{row}</div>' if i < 2 else row)
+    groups = ''.join(
+        f'<div data-turn-key="t{i}" class="turn"><div data-content-search-turn-key="t{i}">'
+        f'<div data-user-message-bubble>User {i}</div>'
+        f'<div data-conversation-role="assistant">Reply {i}</div></div></div>'
+        for i in range(turns))
+    return f'''<!doctype html><html class="dark"><head><meta charset="utf-8">
+    <title>App-shell fixture</title><style>
+    body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
+    [data-app-action-sidebar-scroll] {{height:100%;overflow:auto}}
+    [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
+    [data-thread-title-trigger] {{flex:1}} a {{display:block}}
+    [role=listitem] {{padding-bottom:4px}} main {{flex:1;min-width:0}}
+    [data-app-action-timeline-scroll] {{height:100vh;overflow:auto;position:relative}}
+    .turn {{height:300px}} #composer {{position:sticky;bottom:0;margin:12px auto;width:80%;height:60px;background:white}}
+    #editor {{height:40px}} #native {{position:fixed;right:30px;bottom:95px}}
+    </style></head><body><aside id="app-shell-sidebar"><nav>
+    <div data-app-action-sidebar-scroll><section data-app-action-sidebar-section>
+    <div role="list">{''.join(rows[:2])}</div></section>
+    <section data-app-action-sidebar-section>{''.join(rows[2:])}</section>
+    <a id="other-nav" href="/c/not-a-row">Not a chat row</a></div></nav></aside>
+    <main><div data-app-action-timeline-scroll><div id="thread">{groups}</div>
+    <button id="native" class="group/scroll-to-bottom" aria-label="Scroll to bottom">down</button>
+    <form id="composer" data-chatgpt-composer data-composer-placement="thread">
+    <div id="editor" contenteditable="true" data-composer-markdown></div></form></div></main>
+    </body></html>'''
+
+
+class TestAppShellContentScript:
+    setup = TestContentScript.setup
+    _configure = TestContentScript._configure
+    _poll = staticmethod(TestContentScript._poll)
+    _overlay_visible = TestContentScript._overlay_visible
+    _overlay_hidden = TestContentScript._overlay_hidden
+    _mock_chat_api = TestContentScript._mock_chat_api
+    _patches = staticmethod(TestContentScript._patches)
+
+    def _open_chat(self, **kwargs):
+        body = _app_shell_fixture(**kwargs)
+        page = self.context.new_page()
+        self._pages.append(page)
+        page.route('https://chatgpt.com/**', lambda r: r.fulfill(
+            status=200, content_type='text/html', body=body))
+        page.goto('https://chatgpt.com/c/c1')
+        page.wait_for_selector('#cth-style', state='attached')
+        return page
+
+    def _ready(self, page):
+        assert self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible')"), \
+            'current sidebar must be discovered without #history'
+
+    def test_full_row_highlight_hide_filter_badge_and_theme(self):
+        self._configure(dimUntagged=True)
+        page = self._open_chat()
+        self._ready(page)
+        assert not page.locator('#history, #prompt-textarea, [data-sidebar-item]').count()
+        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e).backgroundColor") == 'rgba(250, 189, 47, 0.32)'
+        assert page.eval_on_selector('#row-c2', "e => getComputedStyle(e).backgroundColor") == 'rgba(251, 73, 52, 0.12)'
+        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e, '::before').width") == '8px'
+        assert 'inset' in page.eval_on_selector('#row-c1', "e => getComputedStyle(e).boxShadow")
+        assert not page.is_visible('#row-c4 .menu')
+        assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).opacity") == '0.45'
+        assert page.eval_on_selector('#other-nav', "e => [...e.attributes].every(a => !a.name.startsWith('data-cth'))")
+        opts = self.context.new_page()
+        self._pages.append(opts)
+        opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+        assert self._poll(opts, "async () => (await chrome.action.getBadgeText({})) === '3'")
+        page.locator('.cth-pill', has_text='[BUG]').click()
+        assert not page.is_visible('#item-c1') and not page.is_visible('#row-c1 .menu')
+        assert page.is_visible('#item-c2')
+        page.locator('.cth-pill', has_text='All').click()
+        page.keyboard.press('Alt+h')
+        assert page.is_visible('#row-c4 .menu')
+        page.keyboard.press('Alt+h')
+        assert not page.is_visible('#row-c4')
+        page.evaluate("document.documentElement.classList.replace('dark', 'light')")
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c1')).backgroundColor === 'rgba(250, 189, 47, 0.24)'")
+
+    def test_selected_untagged_row_is_visible_and_selection_moves(self):
+        self._configure(dimUntagged=True)
+        page = self._open_chat(active='c5')
+        self._ready(page)
+        assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).opacity") == '1'
+        assert 'inset' in page.eval_on_selector('#row-c5', "e => getComputedStyle(e).boxShadow")
+        page.evaluate("""() => {
+            document.querySelectorAll('[aria-current]').forEach(e=>e.removeAttribute('aria-current'));
+            document.querySelector('#row-c2 a').setAttribute('aria-current','page');
+        }""")
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c5')).opacity === '0.45'")
+        assert 'inset' in page.eval_on_selector('#row-c2', "e => getComputedStyle(e).boxShadow")
+        assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).boxShadow") == 'none'
+
+    def test_overlay_nested_scroll_focus_and_composer_remount(self):
+        self._configure()
+        page = self._open_chat()
+        assert self._overlay_visible(page)
+        aligned = """() => {
+            const o = document.querySelector('#cth-overlay').getBoundingClientRect();
+            const c = document.querySelector('#composer').getBoundingClientRect();
+            return Math.abs(o.bottom-c.top) <= 2 && Math.abs(o.left-c.left) <= 2 && Math.abs(o.width-c.width) <= 2;
+        }"""
+        assert self._poll(page, aligned)
+        assert not page.is_visible('#native')
+        page.evaluate("document.querySelector('[data-app-action-timeline-scroll]').scrollTop = 300")
+        assert self._poll(page, aligned)
+        page.focus('#editor')
+        page.click('#cth-overlay .cth-arrow')
+        assert page.evaluate("document.activeElement.id") == 'editor'
+        assert self._poll(page, """() => { const s = document.querySelector('[data-app-action-timeline-scroll]');
+            return s.scrollTop+s.clientHeight >= s.scrollHeight-2; }""")
+        page.evaluate("window.savedComposer=document.querySelector('#composer'); savedComposer.remove()")
+        assert self._overlay_hidden(page) and page.is_visible('#native')
+        page.evaluate("document.querySelector('[data-app-action-timeline-scroll]').append(savedComposer)")
+        assert self._overlay_visible(page)
+        page.evaluate("document.querySelectorAll('[aria-current]').forEach(e=>e.removeAttribute('aria-current')); document.querySelector('#row-c5 a').setAttribute('aria-current','page')")
+        assert self._overlay_hidden(page) and page.is_visible('#native')
+
+    def test_title_change_row_reuse_root_replacement_and_bar_repair(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        page.evaluate("document.querySelector('#row-c5 span[dir=auto]').firstChild.data='[TODO] renamed'")
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c5')).backgroundColor === 'rgba(250, 189, 47, 0.12)'")
+        page.evaluate("""() => {
+            const old = document.querySelector('#row-c3'); const row = document.createElement('div');
+            row.id='row-c3'; row.setAttribute('role','group'); row.append(old.querySelector('a'));
+            old.replaceWith(row);
+        }""")
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c3')).backgroundColor === 'rgba(131, 165, 152, 0.12)'")
+        page.evaluate("document.querySelector('#cth-filter-bar').remove()")
+        self._ready(page)
+        page.evaluate("""() => {
+            const root=document.querySelector('[data-app-action-sidebar-scroll]');
+            const copy=root.cloneNode(true); root.replaceWith(copy);
+        }""")
+        self._ready(page)
+        page.locator('.cth-pill', has_text='[BUG]').click()
+        assert not page.is_visible('#row-c1') and page.is_visible('#row-c2')
+        assert page.locator('#cth-filter-bar').count() == 1
+        # Extension writes must settle, not keep triggering the history observer.
+        page.evaluate("window.mutations=0; window.mo=new MutationObserver(ms=>mutations+=ms.length); mo.observe(document.querySelector('[data-app-action-sidebar-scroll]'),{attributes:true,subtree:true,childList:true})")
+        page.wait_for_timeout(300)
+        count = page.evaluate('mutations')
+        page.wait_for_timeout(300)
+        assert page.evaluate('mutations') == count
+
+    def test_links_swapping_rows_keep_styles_and_hidden_state(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        page.evaluate("""() => {
+            const a=document.querySelector('#row-c1 a');
+            const b=document.querySelector('#row-c4 a');
+            const holder=document.createTextNode('');
+            a.replaceWith(holder); b.replaceWith(a); holder.replaceWith(b);
+        }""")
+        assert self._poll(page, """() => {
+            const hidden=document.querySelector('#item-c1');
+            const painted=document.querySelector('#row-c4');
+            return !hidden.getClientRects().length
+                && painted.getClientRects().length > 0
+                && getComputedStyle(painted).backgroundColor === 'rgba(250, 189, 47, 0.32)';
+        }"""), 'one moved link must not erase the row just painted for another link'
+
+    def test_temporary_multi_link_row_does_not_leave_anchor_hidden(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        page.locator('.cth-pill', has_text='[BUG]').click()
+        page.evaluate("""() => {
+            const extra=document.querySelector('#row-c1 a').cloneNode(true);
+            extra.id='extra-link'; extra.setAttribute('href','/c/extra');
+            document.querySelector('#row-c1').append(extra);
+        }""")
+        assert self._poll(page, "() => document.querySelector('#row-c1 a').hasAttribute('data-cth-filtered')")
+        page.evaluate("document.querySelector('#extra-link').remove()")
+        assert self._poll(page, "() => !document.querySelector('#row-c1 a').hasAttribute('data-cth-row')")
+        page.locator('.cth-pill', has_text='All').click()
+        assert page.is_visible('#row-c1 a'), 'fallback anchor filtering must clear when its row returns'
+        assert not page.locator('#row-c1 a[data-cth-row]').count(), 'paint the row only, not two stripes'
+
+    def test_reversed_timeline_scrolls_to_zero(self):
+        self._configure()
+        page = self._open_chat()
+        assert self._overlay_visible(page)
+        page.evaluate("""() => {
+            const s=document.querySelector('[data-app-action-timeline-scroll]');
+            s.style.display='flex'; s.style.flexDirection='column-reverse';
+            document.querySelector('#thread').style.flexShrink='0';
+            document.querySelector('#composer').style.position='fixed';
+            s.scrollTop=-400;
+        }""")
+        assert page.eval_on_selector('[data-app-action-timeline-scroll]', 'e => e.scrollTop') < 0
+        page.click('#cth-overlay .cth-arrow')
+        assert self._poll(page, "() => Math.abs(document.querySelector('[data-app-action-timeline-scroll]').scrollTop) < 2")
+
+    def test_current_turn_groups_lazy_and_atomic_pruning(self):
+        self._configure(lazyRenderTurns=True)
+        page = self._open_chat(turns=24)
+        assert self._poll(page, "() => document.querySelectorAll('[data-cth-lazy]').length === 20")
+        assert page.eval_on_selector('[data-turn-key]', "e => getComputedStyle(e).contentVisibility") == 'auto'
+        self._configure(maxChatTurns=3, lazyRenderTurns=False)
+        assert self._poll(page, "() => document.querySelectorAll('[data-turn-key]').length === 3")
+        assert page.locator('[data-user-message-bubble]').count() == 3
+        assert page.locator('[data-conversation-role=assistant]').count() == 3
+        assert page.locator('[data-cth-lazy]').count() == 0
+
+    def test_rule_removal_clears_stale_filter_and_hidden_rows(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        page.locator('.cth-pill', has_text='[BUG]').click()
+        assert not page.is_visible('#item-c1')
+        self._configure(rules=[CONTENT_RULES[0]])
+        assert self._poll(page, "() => document.querySelectorAll('[data-cth-filtered]').length === 0")
+        assert page.is_visible('#item-c1') and page.is_visible('#row-c4')
+        self._configure(rules=[])
+        assert self._poll(page, "() => document.querySelectorAll('[data-cth], [data-cth-hidden], [data-cth-filtered]').length === 0")
+        assert page.is_visible('#item-c2') and self._overlay_hidden(page)
+
+    def test_current_layout_mocked_delete_hides_complete_row(self):
+        self._configure(showDeleteUntagged=True)
+        page = self._open_chat(chats=[('a1', '[TODO] ship'), ('a2', 'plain chat'), ('a8', '[BUG] crash')])
+        self._ready(page)
+        calls, _ = self._mock_chat_api(page)
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector('.cth-del-list li')
+        assert not self._patches(calls)
+        page.fill('.cth-del-input', 'delete')
+        page.click('.cth-del-confirm-btn')
+        assert self._poll(page, "() => /Deleted 3 of 3/.test(document.querySelector('.cth-del-status').textContent)", timeout=8000)
+        assert not page.is_visible('#item-a2') and not page.is_visible('#row-a2 .menu')
+        assert page.is_visible('#item-a1') and page.is_visible('#row-a8')
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a2', 'a7', 'a9']
+        self._configure(showDeleteUntagged=True, dimUntagged=True)
+        page.evaluate("""() => {
+            const root=document.querySelector('[data-app-action-sidebar-scroll]');
+            const clone=root.cloneNode(true);
+            clone.querySelector('#row-a2 a').setAttribute('href','/c/surviving-chat');
+            root.replaceWith(clone);
+        }""")
+        assert self._poll(page, "() => document.querySelector('#item-a2').getClientRects().length > 0"), \
+            'a recycled link must not inherit another chat\'s deleted marker after a config change'

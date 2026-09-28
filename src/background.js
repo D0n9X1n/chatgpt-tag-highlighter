@@ -94,8 +94,12 @@
 	}
 
 	function normalizeRules(rules) {
-		if (!Array.isArray(rules) || rules.length === 0) {
+		if (!Array.isArray(rules)) {
 			return null;
+		}
+		// An explicit empty list means the user removed every rule.
+		if (rules.length === 0) {
+			return [];
 		}
 
 		const out = [];
@@ -129,7 +133,8 @@
 				return;
 			}
 
-			const rules = normalizeRules(existing.rules) || DEFAULT_RULES;
+			const normalizedRules = normalizeRules(existing.rules);
+			const rules = normalizedRules ?? DEFAULT_RULES;
 			const maxChatTurns
         = (typeof existing.maxChatTurns === 'number')
         	? safeInt(existing.maxChatTurns, DEFAULT_MAX_CHAT_TURNS)
@@ -147,8 +152,7 @@
 
 			// Only write if missing/invalid fields.
 			const needWrite
-        = !Array.isArray(existing.rules)
-        	|| existing.rules.length === 0
+        = normalizedRules === null
         	|| typeof existing.maxChatTurns !== 'number'
         	|| typeof existing.hideNavBar !== 'boolean'
         	|| (existing.rules || []).some(r => typeof r.hide !== 'boolean')

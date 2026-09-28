@@ -161,6 +161,7 @@
 		// whose class carries the `data-scroll-from-end` scroll-root variant.
 		// Keep the legacy utility-class selector as a last-resort fallback.
 		const hideScrollBtnCss = `
+html.cth-overlay-active [data-app-action-timeline-scroll] button[class~="group/scroll-to-bottom"],
 html.cth-overlay-active main button[data-testid="scroll-to-bottom-button"],
 html.cth-overlay-active main button[aria-label="Scroll to bottom"],
 html.cth-overlay-active main button[aria-label="Scroll to the bottom"],
@@ -181,17 +182,18 @@ html.cth-hide-navbar div.fixed.end-4.top-1\\/2.-translate-y-1\\/2 > div.flex.w-9
 		// Sidebar highlight + hide styles (bigger highlighted area)
 		const sidebarCss = `
 /* Hide chats matched by hide=true rules (Alt+H sets cth-reveal-hidden) */
-html:not(.cth-reveal-hidden) #history a[data-cth-hidden="1"] { display: none !important; }
+html:not(.cth-reveal-hidden) [data-cth-hidden="1"],
+[data-cth-filtered="1"] { display: none !important; }
 
 /* Base highlighted row */
-#history a[data-cth="1"]{
+[data-cth-row][data-cth="1"]{
   position: relative !important;
   background: var(--cth-bg, transparent) !important;
   border-radius: 12px !important;
 }
 
 /* Left stripe */
-#history a[data-cth="1"]::before{
+[data-cth-row][data-cth="1"]::before{
   content:"";
   position:absolute;
   left:0; top:6px; bottom:6px;
@@ -201,15 +203,25 @@ html:not(.cth-reveal-hidden) #history a[data-cth-hidden="1"] { display: none !im
   pointer-events:none;
 }
 
-/* Selected row gets stronger background + thicker stripe.
-   Live ChatGPT marks the selected chat with an empty data-active attribute. */
-#history a[data-cth="1"][data-active]:not([data-active="false"]),
-#history a[data-cth="1"][aria-current="page"]{
+/* Selection has a stable outline, not just a subtle tint. Untagged active
+   chats stay recognizable too; none of these cues change row geometry. */
+[data-cth-row][data-cth-active="1"] {
+  position: relative !important;
+  border-radius: 12px !important;
+  box-shadow: inset 0 0 0 2px var(--cth-color, #a7a7a7) !important;
+}
+[data-cth-row][data-cth-active="1"]:not([data-cth="1"]) {
+  background: rgba(167,167,167,0.22) !important;
+}
+
+/* Selected tagged row gets stronger background + thicker stripe. */
+[data-cth-row][data-cth="1"][data-cth-active="1"],
+[data-cth-row][data-cth="1"][aria-current="page"]{
   background: var(--cth-bg-strong, var(--cth-bg, transparent)) !important;
 }
-#history a[data-cth="1"][data-active]:not([data-active="false"])::before,
-#history a[data-cth="1"][aria-current="page"]::before{
-  width:6px;
+[data-cth-row][data-cth="1"][data-cth-active="1"]::before,
+[data-cth-row][data-cth="1"][aria-current="page"]::before{
+  width:8px;
 }
 `;
 
@@ -309,11 +321,11 @@ html.cth-light #${OVERLAY_ID}:hover .cth-arrow {
 }
 
 /* Light mode sidebar highlights */
-html.cth-light #history a[data-cth="1"] {
+html.cth-light [data-cth-row][data-cth="1"] {
   background: var(--cth-bg-light, var(--cth-bg, transparent)) !important;
 }
-html.cth-light #history a[data-cth="1"][data-active]:not([data-active="false"]),
-html.cth-light #history a[data-cth="1"][aria-current="page"] {
+html.cth-light [data-cth-row][data-cth="1"][data-cth-active="1"],
+html.cth-light [data-cth-row][data-cth="1"][aria-current="page"] {
   background: var(--cth-bg-strong-light, var(--cth-bg-strong, transparent)) !important;
 }
 `;
@@ -401,7 +413,7 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
 `;
 
 		const deleteCss = `
-#history a[data-cth-deleted="1"] { display: none !important; }
+[data-cth-deleted="1"] { display: none !important; }
 
 #${DELETE_DIALOG_ID} {
   position: fixed; inset: 0;
@@ -472,7 +484,7 @@ html.cth-light #${DELETE_DIALOG_ID} .cth-del-actions button { border-color: rgba
 `;
 
 		const dimCss = `
-html.cth-dim-untagged #history a[data-sidebar-item="true"]:not([data-cth="1"]) {
+html.cth-dim-untagged [data-cth-row]:not([data-cth="1"]):not([data-cth-active="1"]) {
   opacity: 0.45;
 }
 `;
@@ -557,27 +569,46 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		return element;
 	}
 
-	// ---- Find active conversation title in sidebar ----
-	function getActiveChatAnchor(historyRoot) {
-		// ChatGPT marks the selected chat with data-active (an empty string on
-		// current builds); aria-current covers others. A literal "false" value
-		// is not a selection.
-		return (
-			historyRoot?.querySelector('a[data-sidebar-item="true"][data-active]:not([data-active="false"])')
-			|| historyRoot?.querySelector('a[data-sidebar-item="true"][aria-current="page"]')
-			|| null
-		);
+	// ---- Sidebar compatibility ----
+	// App-shell rows have menus outside their links. Keep identity on the link,
+	// paint the row, and hide the whole item, including pinned-item spacing.
+	const CHAT_LINK_SELECTOR = 'a[data-sidebar-item="true"], '
+		+ '[data-app-action-sidebar-section] a[data-interactive-row-link="true"][href^="/c/"]';
+
+	function getChatAnchors(root = historyRoot) {
+		return root ? [...root.querySelectorAll(CHAT_LINK_SELECTOR)] : [];
+	}
+
+	function getChatTargets(a) {
+		if (a.matches('a[data-sidebar-item="true"]')) {
+			return {row: a, item: a};
+		}
+
+		const singleChat = element => element && historyRoot?.contains(element)
+			&& element.querySelectorAll('a[data-interactive-row-link="true"][href^="/c/"]').length === 1;
+		const group = a.closest('[role="group"]');
+		const row = singleChat(group) ? group : a;
+		const listItem = row.closest('[role="listitem"]');
+		return {row, item: singleChat(listItem) ? listItem : row};
+	}
+
+	function isActiveChat(a, row = getChatTargets(a).row) {
+		const selected = el => el.getAttribute('aria-current') === 'page'
+			|| (el.hasAttribute('data-active') && el.getAttribute('data-active') !== 'false');
+		return selected(a) || (row !== a && selected(row));
+	}
+
+	function getActiveChatAnchor(root) {
+		return getChatAnchors(root).find(a => isActiveChat(a)) || null;
 	}
 
 	function getChatTitleText(a) {
-		// Keep selector cheap and resilient.
-		// Typical: a > ... > .truncate > span[dir="auto"]
-		const span = a.querySelector('.truncate span[dir="auto"]');
+		const span = a.querySelector('[data-thread-title="true"] span[dir="auto"], .truncate span[dir="auto"]');
 		if (span && span.textContent) {
 			return span.textContent.trim();
 		}
 
-		const t = a.querySelector('.truncate');
+		const t = a.querySelector('[data-thread-title="true"], .truncate');
 		return (t?.textContent || '').trim();
 	}
 
@@ -825,20 +856,11 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	function applyFilter() {
 		if (!historyRoot) return;
 
-		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
-		for (const a of anchors) {
-			if (activeFilters.size === 0) {
-				// Rule-hidden chats are hidden by CSS so Alt+H can reveal them.
-				a.style.removeProperty('display');
-			} else {
-				const title = getChatTitleText(a);
-				const r = matchRule(title, compiled.rules);
-				if (r && activeFilters.has(r.tag) && !r.hide) {
-					a.style.removeProperty('display');
-				} else {
-					a.style.display = 'none';
-				}
-			}
+		for (const a of getChatAnchors()) {
+			const {item} = getChatTargets(a);
+			const r = activeFilters.size ? matchRule(getChatTitleText(a), compiled.rules) : null;
+			const filtered = activeFilters.size > 0 && !(r && activeFilters.has(r.tag) && !r.hide);
+			setFlag(item, 'cthFiltered', filtered);
 		}
 	}
 
@@ -977,14 +999,18 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		return node;
 	}
 
+	const deletedChatIds = new Set();
+
 	function markChatDeleted(id) {
+		deletedChatIds.add(id);
 		if (!historyRoot) {
 			return;
 		}
 
-		for (const a of historyRoot.querySelectorAll('a[data-sidebar-item="true"]')) {
+		for (const a of getChatAnchors()) {
 			if ((a.getAttribute('href') || '').endsWith(`/c/${id}`)) {
-				a.dataset.cthDeleted = '1';
+				setFlag(a, 'cthDeleted', true);
+				setFlag(getChatTargets(a).item, 'cthDeleted', true);
 			}
 		}
 	}
@@ -1308,28 +1334,52 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	function scanSidebarNow() {
-		if (!historyRoot || !compiled?.rules?.length) {
+		if (!historyRoot || !compiled) {
 			return;
 		}
 
-		const anchors = historyRoot.querySelectorAll('a[data-sidebar-item="true"]');
-		for (const a of anchors) {
+		const entries = getChatAnchors().map(a => ({a, ...getChatTargets(a)}));
+		const claimed = new Set(entries.flatMap(({a, row, item}) => [a, row, item]));
+		const stale = new Set();
+		for (const {a, row, item} of entries) {
 			const title = getChatTitleText(a);
+			const href = a.getAttribute('href');
 			const last = itemCache.get(a);
+			setFlag(row, 'cthActive', isActiveChat(a, row));
 
-			// Skip unchanged items
-			if (last === title) {
+			if (last?.title === title && last.href === href && last.row === row && last.item === item) {
 				continue;
 			}
 
-			itemCache.set(a, title);
-
+			// Native virtualization can keep the anchor but replace its wrapper or
+			// reuse it for another chat. Don't leave stale hidden/deleted targets.
+			if (last && (last.row !== row || last.item !== item || last.href !== href)) {
+				stale.add(last.row);
+				stale.add(last.item);
+			}
+			itemCache.set(a, {title, href, row, item});
+			if (row !== a) {
+				setFlag(a, 'cthRow', false);
+				setFlag(a, 'cthActive', false);
+			}
+			if (item !== a) setFlag(a, 'cthFiltered', false);
+			setFlag(row, 'cthRow', compiled.rules.length > 0);
+			setFlag(row, 'cthActive', isActiveChat(a, row));
 			applyRuleToAnchor(a, title);
+			if (row !== a) applyRuleToAnchor(row, title);
+			setFlag(item, 'cthHidden', a.dataset.cthHidden === '1');
+			const deleted = deletedChatIds.has((href || '').split('/c/')[1]);
+			setFlag(a, 'cthDeleted', deleted);
+			setFlag(row, 'cthDeleted', deleted);
+			setFlag(item, 'cthDeleted', deleted);
+		}
+		// Two links can swap native wrappers in one mutation batch. Clean only
+		// unclaimed old targets, never erase another link's freshly painted row.
+		for (const target of stale) {
+			if (!claimed.has(target)) clearChatTarget(target);
 		}
 
-		if (activeFilters.size > 0) {
-			applyFilter();
-		}
+		applyFilter();
 
 		// Update overlay content whenever sidebar is scanned (cheap)
 		scheduleOverlayUpdate();
@@ -1344,15 +1394,29 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		if (!historyRoot) return;
 
-		const tagged = historyRoot.querySelectorAll(
-			'a[data-sidebar-item="true"][data-cth="1"]:not([data-cth-hidden="1"])'
-		);
-		const count = tagged.length;
+		const count = getChatAnchors().filter(a => a.dataset.cth === '1' && a.dataset.cthHidden !== '1').length;
 
 		try {
 			API.runtime.sendMessage({ type: 'badgeCount', count });
 		} catch {
 			// Extension context may be invalidated
+		}
+	}
+
+	function setFlag(element, key, enabled) {
+		if (enabled) {
+			if (element.dataset[key] !== '1') element.dataset[key] = '1';
+		} else if (element.dataset[key] !== undefined) {
+			delete element.dataset[key];
+		}
+	}
+
+	function clearChatTarget(element) {
+		for (const key of ['cth', 'cthRow', 'cthActive', 'cthHidden', 'cthFiltered', 'cthDeleted']) {
+			setFlag(element, key, false);
+		}
+		for (const name of ['color', 'bg', 'bg-strong', 'bg-light', 'bg-strong-light']) {
+			element.style.removeProperty(`--cth-${name}`);
 		}
 	}
 
@@ -1371,9 +1435,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		a.dataset.cth = '1';
 		a.style.setProperty('--cth-color', r.color);
 		a.style.setProperty('--cth-bg', hexToRgba(r.color, 0.12));
-		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.18));
+		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.32));
 		a.style.setProperty('--cth-bg-light', hexToRgba(r.color, 0.10));
-		a.style.setProperty('--cth-bg-strong-light', hexToRgba(r.color, 0.14));
+		a.style.setProperty('--cth-bg-strong-light', hexToRgba(r.color, 0.24));
 
 		if (r.hide) {
 			a.dataset.cthHidden = '1';
@@ -1463,9 +1527,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	function findComposerBox() {
-		// Most stable anchor: #prompt-textarea, then its composer container.
-		// Current ChatGPT: form[data-type="unified-composer"].
-		// Older builds: div.bg-token-bg-primary.
+		const editor = document.querySelector('form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"]');
+		if (editor) return editor.closest('form[data-chatgpt-composer]');
+
+		// Earlier layouts used an ID on the editor and a different form/surface.
 		const pt = document.querySelector('#prompt-textarea');
 		if (!pt) {
 			return null;
@@ -1516,7 +1581,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	// Keep overlay aligned on scroll/resize (batched)
-	window.addEventListener('scroll', scheduleOverlayLayout, {passive: true});
+	window.addEventListener('scroll', scheduleOverlayLayout, {passive: true, capture: true});
 	window.addEventListener('resize', scheduleOverlayLayout, {passive: true});
 
 	// ---- Detect SPA navigation (New Chat, switching chats) ----
@@ -1545,13 +1610,20 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// ---- Scroll-to-bottom action ----
 	let scrollContainer = null;
 
-	// Conversation turns keep data-testid="conversation-turn-N" across builds,
-	// but the element changed (older builds: <article>, current: <section>).
-	// Match on the attribute only, and ignore look-alikes such as
-	// "copy-turn-action-button".
+	// Legacy layouts use numbered test IDs on articles/sections. Current
+	// app-shell layouts group exchanges by data-turn-key. Ignore unrelated
+	// action buttons and nested message/search wrappers.
 	const TURN_TESTID_RE = /^conversation-turn-\d+$/;
 
 	function getTurnElements() {
+		const timeline = document.querySelector('[data-app-action-timeline-scroll]');
+		if (timeline) {
+			// App-shell groups a user message and its replies into one turn.
+			// Keep whole exchanges, not nested message/search containers.
+			const groups = [...timeline.querySelectorAll('[data-turn-key]')]
+				.filter(element => !element.parentElement.closest('[data-turn-key]'));
+			if (groups.length) return groups;
+		}
 		return [...document.querySelectorAll('[data-testid^="conversation-turn-"]')]
 			.filter(element => TURN_TESTID_RE.test(element.dataset.testid || ''));
 	}
@@ -1562,6 +1634,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	function getScrollContainer() {
+		const timeline = document.querySelector('[data-app-action-timeline-scroll]');
+		if (timeline) return timeline;
+
 		if (scrollContainer && document.contains(scrollContainer)) {
 			return scrollContainer;
 		}
@@ -1621,8 +1696,13 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	function scrollToBottom() {
 		stopScrollWatch();
 		const sc = getScrollContainer() || document.scrollingElement || document.documentElement;
-		const atBottom = () => sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;
-		sc.scrollTo({top: sc.scrollHeight, behavior: 'smooth'});
+		// App-shell uses column-reverse: the bottom is zero and older content
+		// has negative offsets. Legacy layouts use positive offsets instead.
+		const reversed = getComputedStyle(sc).flexDirection === 'column-reverse';
+		const bottom = () => reversed ? 0 : sc.scrollHeight;
+		const atBottom = () => reversed ? Math.abs(sc.scrollTop) <= 2
+			: sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;
+		sc.scrollTo({top: bottom(), behavior: 'smooth'});
 
 		const watch = {target: window, raf: 0, last: sc.scrollTop, still: 0, deadline: performance.now() + 1500};
 		watch.onUser = () => stopScrollWatch();
@@ -1646,7 +1726,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			// Stalled for a few frames, or out of time: finish instantly.
 			if (watch.still >= 4 || now > watch.deadline) {
 				stopScrollWatch();
-				sc.scrollTop = sc.scrollHeight;
+				sc.scrollTop = bottom();
 				return;
 			}
 
@@ -1781,20 +1861,24 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			// In-place title renames change a text node, not the child list.
 			characterData: true,
 			attributes: true,
-			attributeFilter: ['data-active', 'aria-current', 'class'],
+			attributeFilter: ['data-active', 'aria-current', 'class', 'href'],
 		});
 	}
 
 	// ---- Sidebar root binding ----
-	// (Re)binds #history. ChatGPT can mount it late, replace it on SPA
-	// navigation, or unmount it (collapsed sidebar). Safe to call repeatedly.
+	// ChatGPT can mount the sidebar late, replace it on SPA navigation, or
+	// unmount it when collapsed. Bind the app-shell root or its legacy fallback.
 	function bindHistoryRoot() {
-		const hr = document.querySelector('#history');
+		const hr = document.querySelector('#app-shell-sidebar [data-app-action-sidebar-scroll]')
+			|| document.querySelector('#history');
 		if (hr && hr !== historyRoot) {
 			historyRoot = hr;
 			attachHistoryObserver();
 			scheduleSidebarScan();
 			scheduleOverlayUpdate();
+			// A cloned/replaced root may contain an inert copy of our pills.
+			hr.querySelector(`#${FILTER_BAR_ID}`)?.remove();
+			document.getElementById(FILTER_BAR_ID)?.remove();
 			renderFilterBar();
 		} else if (!hr && historyRoot && !historyRoot.isConnected) {
 			// Drop the stale root so the overlay doesn't describe a detached list.
@@ -1812,6 +1896,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		rootObserver = new MutationObserver(() => {
 			bindHistoryRoot();
+			const bar = document.getElementById(FILTER_BAR_ID);
+			const needsBar = getVisibleRules().length >= 2
+				|| (compiled?.showDeleteUntagged && compiled.rules.length > 0);
+			if (historyRoot && needsBar && bar?.parentElement !== historyRoot) renderFilterBar();
 			scheduleOverlayLayout();
 		});
 		rootObserver.observe(document.documentElement, {childList: true, subtree: true});
@@ -1878,7 +1966,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		// Find the sidebar chat list; it may also mount later (root observer).
 		bindHistoryRoot();
 		if (!historyRoot) {
-			warn('Sidebar history root not found (#history).');
+			warn('Sidebar root not found (app-shell or #history).');
 		}
 
 		// Overlay alignment now

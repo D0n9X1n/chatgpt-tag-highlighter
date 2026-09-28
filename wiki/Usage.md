@@ -12,7 +12,7 @@
 
 Rename a chat in ChatGPT so its title starts with a tag, for example `[TODO] Fix the build pipeline` or `[BUG] Login token expires early`. Four starter rules are set up on install: **[TODO]** (yellow), **[BUG]** (red), **code** (blue) and **help** (green). Change them in [Configuration](Configuration).
 
-Tagged chats get a colored left stripe and background. The open chat gets a stronger background and a thicker stripe. Matching is case-sensitive, and `startsWith` rules need the tag at the very start of the title.
+Tagged chats get a colored left stripe and background. The open tagged chat gets a stronger background, an inset outline and a thicker stripe. An open untagged chat gets a neutral outline and stays undimmed. Matching is case-sensitive, and `startsWith` rules need the tag at the very start of the title.
 
 ## Filter the sidebar
 
