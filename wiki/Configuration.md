@@ -18,18 +18,20 @@ Rules are checked top to bottom and the **first match wins** for color, hiding, 
 | Hide | Hide matching chats from the sidebar. `Alt+H` reveals them. |
 | Overlay | Show the tag banner when a matching chat is open. |
 
-Rule changes apply live to open ChatGPT tabs.
+Rule changes apply live to open ChatGPT tabs. Removing rules clears their stale highlighting and filter selection so chats do not stay hidden by a removed filter.
 
 ## General options
 
 | Option | Default | What it does |
 |---|---|---|
-| Speed up long chats | On | In chats with 20 or more messages, off-screen messages skip rendering. See [Long Chats](Long-Chats). |
-| Max chat turns to keep | 0 (off) | Removes older messages from the page (not your account) until you reload or reopen the chat. |
+| Speed up long chats | On | In chats with 20 or more turn containers, off-screen turns skip rendering. The newest 4 always render; nothing is removed. See [Long Chats](Long-Chats). |
+| Max chat turns to keep | 0 (off) | Keeps the selected number of complete turn containers, removing older ones from the page (not your account) until you reload or reopen the chat. |
 | Hide right navigation bar | On | Hides the message minimap on older ChatGPT layouts. The current layout has no minimap, so it has no effect there. |
-| Dim untagged conversations | Off | Fades chats that match no rule. |
+| Dim untagged conversations | Off | Fades chats that match no rule, except the selected chat. |
 | Show badge counter | On | Shows the number of visible tagged chats on the extension icon. |
 | Show “Delete untagged chats” button | Off | Adds a **Delete untagged…** button to the filter bar. See [Usage](Usage). |
+
+Both long-chat options count **turn containers**: a whole user/assistant exchange on the current layout, or an individual message on older layouts. Pruning never splits a grouped exchange. The performance measurements in [Long Chats](Long-Chats) came from the older, individual-message layout; the Sep 28, 2026 compatibility checks used a short live thread and synthetic fixtures, not a long current-layout live thread.
 
 ## Rule tester
 

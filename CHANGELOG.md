@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-09-27
+
 ### Added
 - **Delete untagged chats** (off by default,
   [#46](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/46)).
@@ -19,7 +21,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped. It sends the same request as ChatGPT's own Delete,
   stops at the first error, and can be stopped between chats.
 
+### Changed
+- Make the selected chat more distinct with a stronger tag-colored fill,
+  an inset outline and a wider stripe. Untagged selected chats use a
+  neutral outline and are not dimmed
+  ([#51](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/51)).
+
 ### Fixed
+- Deleting the last rule now saves an empty configuration, preserves it
+  across startup and import/export, and keeps General settings editable
+  ([#49](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/49)).
+- Importing rules immediately refreshes an existing Rule Tester result
+  ([#50](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/50)).
+- Restore compatibility with ChatGPT's current app-shell layout
+  ([#48](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/48)):
+  sidebar highlighting, filtering, hiding and the active-chat overlay
+  recover with the new sidebar rows and composer, while legacy hooks
+  remain supported. Pinned rows hide as complete items, including menus
+  and spacing. The overlay scrolls to the bottom of reversed timelines.
+- Long-chat lazy rendering and pruning now recognize grouped turn
+  containers: a whole user/assistant exchange on the current layout,
+  rather than individual messages on older layouts. The lazy threshold
+  remains 20 containers, with the newest 4 always rendered normally.
+- Removing rules clears stale sidebar styling and filters instead of
+  leaving chats hidden. Current-layout fixtures cover compatibility
+  regressions; live checks used a short thread only, not a long-thread
+  performance test. Deletion is tested with mocked routes only; no real
+  account chats were modified.
 - Options page: a General option whose description wraps onto a second
   line now keeps its checkbox beside the first line instead of centered
   between the lines.
@@ -193,7 +221,8 @@ pipeline.
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v0.1.3...v1.0.0

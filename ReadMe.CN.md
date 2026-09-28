@@ -66,18 +66,20 @@
 | Hide | 在侧边栏中隐藏命中的会话，按 `Alt+H` 可临时显示。 |
 | Overlay | 打开命中的会话时显示标签横幅。 |
 
-**规则测试器**会告诉你某个标题会命中哪条规则。**Export** 把设置以 JSON 复制出来，**Import** 再导入回去。所有修改都会自动保存。
+**规则测试器**会告诉你某个标题会命中哪条规则。**Export** 把设置以 JSON 复制出来，**Import** 再导入回去。所有修改都会自动保存，包括删除最后一条规则。空规则列表在刷新或导入后仍保持为空；添加规则即可恢复高亮。
 
 **通用选项：**
 
 | 选项 | 默认 | 作用 |
 |---|---|---|
-| Speed up long chats（加速长对话） | 开 | 在 20 条及以上消息的对话中，浏览器跳过渲染屏幕外的消息；最新的 4 条始终正常渲染。 |
-| Max chat turns to keep（保留的最大轮次） | 0（关闭） | 从页面上移除较早的消息（不会从你的账号中删除），刷新或重新打开会话后恢复。 |
+| Speed up long chats（加速长对话） | 开 | 在包含 20 个及以上轮次容器的对话中，浏览器跳过渲染屏幕外的轮次；最新的 4 个始终正常渲染，不移除任何内容。 |
+| Max chat turns to keep（保留的最大轮次） | 0（关闭） | 按设定数量保留完整的轮次容器，从页面上移除较早的容器（不会从你的账号中删除），刷新或重新打开会话后恢复。 |
 | Hide right navigation bar（隐藏右侧导航栏） | 开 | 在旧版 ChatGPT 布局中隐藏消息缩略导航；当前布局没有这个导航栏，因此不起作用。 |
-| Dim untagged conversations（弱化无标签会话） | 关 | 淡化不匹配任何规则的会话。 |
+| Dim untagged conversations（弱化无标签会话） | 关 | 淡化不匹配任何规则的会话，当前选中的会话除外。 |
 | Show badge counter（显示角标计数） | 开 | 在扩展图标上显示当前可见的已标记会话数量。 |
 | Show “Delete untagged chats” button（显示“删除无标签会话”按钮） | 关 | 在筛选栏添加 **Delete untagged…** 按钮。见[删除无标签会话](#删除无标签会话)。 |
+
+两个长对话选项都按**轮次容器**计数：当前布局中一个容器是一整轮用户与助手的问答，旧布局中则是一条消息。裁剪不会拆开一整轮问答。
 
 **键盘快捷键：** `Alt+H`（macOS 上为 `Option+H`）显示/隐藏被规则隐藏的会话；`Alt+F` 聚焦筛选栏。
 
@@ -100,9 +102,9 @@ ChatGPT 侧边栏无法恢复已删除的会话，请在确认前检查列表。
 
 ## 长对话依然流畅
 
-超长对话会变慢，是因为浏览器要为每一条消息计算样式和布局，即使它们远在屏幕之外。开启 **Speed up long chats** 后，较早的消息会使用 `content-visibility: auto`，浏览器在它们接近屏幕前会跳过这些工作。每条消息保留实测高度作为占位，所以滚动条不会跳动。
+超长对话会变慢，是因为浏览器要为每一条消息计算样式和布局，即使它们远在屏幕之外。开启 **Speed up long chats** 后，较早的轮次容器会使用 `content-visibility: auto`，浏览器在它们接近屏幕前会跳过这些工作。每个容器保留实测高度作为占位，所以滚动条不会跳动。
 
-在 Chrome 中对真实 ChatGPT 页面、约 200 条消息的对话分别关闭和开启该选项的测量结果：
+在 Chrome 中对真实 ChatGPT 旧布局（按单条消息组织）、约 200 条消息的对话分别关闭和开启该选项的测量结果：
 
 | 工作 | 关闭 | 开启 |
 |---|---:|---:|
@@ -111,7 +113,7 @@ ChatGPT 侧边栏无法恢复已删除的会话，请在确认前检查列表。
 | 10 次全页面样式变化（例如切换主题） | 1,255 ms | 296 ms |
 | 滚动整个对话时最慢的一帧 | 120 ms | 27 ms |
 
-以上数据来自一台机器，实际结果会有差异。少于 20 条消息的对话不受影响。扩展自身的开销很小：同一次测试中，显示横幅每帧增加不到 0.1 ms。
+以上数据来自一台机器，实际结果会有差异。2026 年 9 月 28 日的兼容性检查使用了真实短对话和仿真测试页面，并未在当前布局的真实长对话上测试。少于 20 个轮次容器的对话不受影响。扩展自身的开销很小：同一次旧布局性能测试中，显示横幅每帧增加不到 0.1 ms。
 
 ## 权限与隐私
 
@@ -149,12 +151,12 @@ pip install -r tests/requirements.txt && playwright install chromium
 
 ./publish.sh --version 0.0.99                     # 测试针对 dist/chrome 运行
 CI=true pytest tests/test_extension.py -v         # 完整测试，使用一次性浏览器配置
-CI=true pytest tests/test_extension.py -k TestContentScript -v
+CI=true pytest tests/test_extension.py -k 'TestContentScript or TestAppShellContentScript' -v
 for f in src/*.js; do node --check "$f"; done     # 语法检查
 npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted
 ```
 
-- `TestContentScript` 在 `https://chatgpt.com/` 下的仿真 ChatGPT 页面上运行**打包后的**内容脚本；其他测试覆盖设置页、配置迁移和导入/导出。
+- `TestContentScript`（旧版布局）和 `TestAppShellContentScript`（当前布局）在 `https://chatgpt.com/` 下的仿真 ChatGPT 页面上运行**打包后的**内容脚本；当前布局的覆盖包括侧边栏行、输入框、成组轮次和反向滚动。删除测试仅使用模拟接口，绝不操作真实账号。其他测试覆盖设置页、配置迁移和导入/导出。
 - `background.js` 初始化并迁移配置，`options.js` 编辑配置，`content.js` 应用配置并通过 `storage.onChanged` 实时更新。三者共享存储键 `tagHighlighterConfigV1`；筛选选择单独保存在本地存储的 `tagHighlighterUiStateV1` 中。
 - 新增配置字段必须在三个脚本中都有安全的默认值。
 - **在 chatgpt.com 上实机测试：** 不要改动 `tests/.test-profile/`，里面有登录状态。整个测试过程只用一个浏览器会话，因为 ChatGPT 的 Cookie 有效期很短。绝不发送、新建、重命名或删除会话。

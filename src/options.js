@@ -271,6 +271,7 @@
 		}
 
 		updateRowNumbers();
+		runDebugTest();
 	}
 
 	function updateRowNumbers() {
@@ -313,9 +314,10 @@
 	}
 
 	// ---- Auto-save ----
+	let ready = false;
 	async function autoSave() {
+		if (!ready) return; // An empty table during storage loading isn't an empty config.
 		const cfg = collectConfig();
-		if (cfg.rules.length === 0) return;
 		for (let i = 0; i < cfg.rules.length; i++) {
 			cfg.rules[i].color = toHex(cfg.rules[i].color);
 		}
@@ -449,7 +451,7 @@
 				overlay: r?.overlay !== false,
 			});
 		}
-		if (cfg.rules.length === 0) { toast('Invalid config'); return; }
+		if (parsed.rules.length > 0 && cfg.rules.length === 0) { toast('Invalid config'); return; }
 
 		await set({ [STORAGE_KEY]: cfg });
 		render(cfg);
@@ -588,7 +590,7 @@
 		const data = await get(STORAGE_KEY);
 		let cfg = data?.[STORAGE_KEY];
 
-		if (!cfg || !Array.isArray(cfg.rules) || cfg.rules.length === 0) {
+		if (!cfg || !Array.isArray(cfg.rules)) {
 			cfg = DEFAULT_CFG();
 			await set({[STORAGE_KEY]: cfg});
 			render(cfg);
@@ -626,5 +628,5 @@
 		render(migrated);
 	}
 
-	init();
+	init().then(() => { ready = true; });
 })();

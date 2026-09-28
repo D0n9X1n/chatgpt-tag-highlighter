@@ -66,18 +66,20 @@
 | Hide | Hide matching chats from the sidebar. `Alt+H` reveals them. |
 | Overlay | Show the tag banner when a matching chat is open. |
 
-The **Rule tester** tells you which rule a title would match. **Export** copies your settings as JSON and **Import** loads them back. Every change saves automatically.
+The **Rule tester** tells you which rule a title would match. **Export** copies your settings as JSON and **Import** loads them back. Every change saves automatically, including removing the last rule. An empty rule list stays empty after reload or import; add a rule to resume highlighting.
 
 **General options:**
 
 | Option | Default | What it does |
 |---|---|---|
-| Speed up long chats | On | In chats with 20 or more messages, the browser skips rendering off-screen messages. The newest 4 always render. |
-| Max chat turns to keep | 0 (off) | Removes older messages from the page, not from your account. They come back when you reload or reopen the chat. |
+| Speed up long chats | On | In chats with 20 or more turn containers, the browser skips rendering off-screen turns. The newest 4 always render; nothing is removed. |
+| Max chat turns to keep | 0 (off) | Keeps the selected number of complete turn containers, removing older ones from the page, not your account. They come back when you reload or reopen the chat. |
 | Hide right navigation bar | On | Hides the message minimap on older ChatGPT layouts. The current layout has no minimap, so this does nothing there. |
-| Dim untagged conversations | Off | Fades chats that match no rule. |
+| Dim untagged conversations | Off | Fades chats that match no rule, except the selected chat. |
 | Show badge counter | On | Shows how many tagged chats are visible on the extension icon. |
 | Show “Delete untagged chats” button | Off | Adds a **Delete untagged…** button to the filter bar. See [Deleting untagged chats](#deleting-untagged-chats). |
+
+Both long-chat options count **turn containers**: a whole user/assistant exchange on the current layout, or an individual message on older layouts. Pruning never splits a grouped exchange.
 
 **Keyboard shortcuts:** `Alt+H` (`Option+H` on macOS) shows or hides chats hidden by rules. `Alt+F` moves focus to the filter bar.
 
@@ -100,9 +102,9 @@ ChatGPT's sidebar can't restore deleted chats, so check the list before you conf
 
 ## Long chats stay fast
 
-Very long conversations get slow because the browser keeps laying out and styling every message, even ones far off-screen. With **Speed up long chats** on, older messages use `content-visibility: auto`. The browser skips them until they come near the screen. Each message keeps its measured height, so the scrollbar doesn't jump.
+Very long conversations get slow because the browser keeps laying out and styling every message, even ones far off-screen. With **Speed up long chats** on, older turn containers use `content-visibility: auto`. The browser skips them until they come near the screen. Each container keeps its measured height, so the scrollbar doesn't jump.
 
-Measured on live ChatGPT in Chrome, in a conversation of about 200 messages, with the option off and then on:
+Measured on live ChatGPT's older, individual-message layout in Chrome, in a conversation of about 200 messages, with the option off and then on:
 
 | Work | Off | On |
 |---|---:|---:|
@@ -111,7 +113,7 @@ Measured on live ChatGPT in Chrome, in a conversation of about 200 messages, wit
 | 10 page-wide style changes (for example, theme switches) | 1,255 ms | 296 ms |
 | Slowest frame while scrolling the whole thread | 120 ms | 27 ms |
 
-These numbers come from one machine and will vary. Chats under 20 messages are left alone. The extension's own work is small: showing the overlay added under 0.1 ms per frame in the same session.
+These numbers come from one machine and will vary. The Sep 28, 2026 compatibility checks used a short live thread and synthetic fixtures, not a long current-layout live thread. Chats under 20 turn containers are left alone. The extension's own work is small: showing the overlay added under 0.1 ms per frame in the same legacy-layout benchmark.
 
 ## Permissions and privacy
 
@@ -149,12 +151,12 @@ pip install -r tests/requirements.txt && playwright install chromium
 
 ./publish.sh --version 0.0.99                     # tests run against dist/chrome
 CI=true pytest tests/test_extension.py -v         # full suite, disposable browser profile
-CI=true pytest tests/test_extension.py -k TestContentScript -v
+CI=true pytest tests/test_extension.py -k 'TestContentScript or TestAppShellContentScript' -v
 for f in src/*.js; do node --check "$f"; done     # syntax check
 npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=false --self-hosted
 ```
 
-- `TestContentScript` runs the **packaged** content script against realistic mock ChatGPT pages served at `https://chatgpt.com/`. Other tests cover the options page, migrations, and import/export.
+- `TestContentScript` (legacy layout) and `TestAppShellContentScript` (current layout) run the **packaged** content script against realistic mock ChatGPT pages served at `https://chatgpt.com/`. Current-layout coverage includes sidebar rows, the composer, grouped turns and reversed scrolling. Deletion tests use mocked routes only, never a real account. Other tests cover the options page, migrations, and import/export.
 - `background.js` sets up and migrates the config. `options.js` edits it. `content.js` applies it and updates live on `storage.onChanged`. They all share the storage key `tagHighlighterConfigV1`. The filter selection is stored separately under `tagHighlighterUiStateV1`, in local storage.
 - A new config field has to default safely in all three scripts.
 - **Live testing on chatgpt.com:** leave `tests/.test-profile/` alone. It holds a login. Use one browser session for the whole run, because ChatGPT's cookies are short-lived. Never send, create, rename, or delete chats.

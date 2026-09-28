@@ -36,10 +36,10 @@
       <h2 class="sectionTitle">General</h2>
 
       <div class="generalRow">
-        <label class="checkboxWrap" title="Skip rendering off-screen messages in long chats">
+        <label class="checkboxWrap" title="Skip rendering off-screen turns in long chats">
           <input id="lazyRenderTurns" type="checkbox" checked />
           <span class="label">Speed up long chats
-            <span class="hintInline">In chats with 20+ messages, the browser skips rendering messages that are off-screen. Nothing is removed; scrolling and Find still work.</span>
+            <span class="hintInline">In chats with 20+ turns, off-screen turns skip rendering; the newest 4 always render. A turn is a whole exchange on current layouts, one message on older ones. Nothing is removed; scrolling and Find still work.</span>
           </span>
         </label>
       </div>
@@ -47,7 +47,7 @@
       <div class="generalRow">
         <label class="label">
           Max chat turns to keep (0 = disabled)
-          <span class="hintInline">Removes older messages from the page (not from your account) until you reload or reopen the chat.</span>
+          <span class="hintInline">Keeps this many complete turns (whole exchanges on current layouts, single messages on older ones). Removes older turns from the page, not your account, until you reload or reopen the chat.</span>
         </label>
 
         <div class="generalInputWrap">
