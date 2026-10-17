@@ -22,7 +22,7 @@ npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=fals
 python3 scripts/check-wiki.py wiki && bash scripts/test-wiki-publish.sh
 ```
 
-Tests launch **headed** Chromium, because extensions don't load reliably headless. CI wraps pytest in `xvfb-run -a --server-args="-screen 0 1280x900x24"`.
+Tests run Chromium **headless** by default (`channel='chromium'`, the new headless mode, which loads extensions), so a local run opens no window and doesn't take focus. Set `HEADED=1` to watch the browser. CI still wraps pytest in `xvfb-run -a --server-args="-screen 0 1280x900x24"` so `HEADED=1` works there too.
 
 ## What the tests cover
 

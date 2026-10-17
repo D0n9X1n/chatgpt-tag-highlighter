@@ -141,8 +141,8 @@ jobs:
           key: ${{ steps.pw-cache.outputs.cache-primary-key }}
 
       - name: Run pytest under Xvfb
-        # MV3 extensions don't load reliably under --headless=new, so the
-        # suite runs headed against a virtual display.
+        # The suite runs headless (channel='chromium'); Xvfb keeps HEADED=1
+        # debugging runs working on CI.
         timeout-minutes: 10
         run: xvfb-run -a --server-args="-screen 0 1280x900x24" pytest tests/test_extension.py -v --junitxml=test-results.xml
 

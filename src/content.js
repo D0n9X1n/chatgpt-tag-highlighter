@@ -19,6 +19,8 @@
 	const FILTER_BAR_ID = 'cth-filter-bar';
 	const DELETE_BTN_ID = 'cth-delete-untagged';
 	const DELETE_DIALOG_ID = 'cth-delete-dialog';
+	// Per-row custom properties set by applyRuleToAnchor.
+	const CTH_COLOR_VARS = ['color', 'bg', 'bg-strong', 'bg-light', 'bg-strong-light', 'ring'];
 	const DEBUG = false;
 
 	const log = (...a) => DEBUG && console.log('[CTH]', ...a);
@@ -203,25 +205,38 @@ html:not(.cth-reveal-hidden) [data-cth-hidden="1"],
   pointer-events:none;
 }
 
-/* Selection has a stable outline, not just a subtle tint. Untagged active
-   chats stay recognizable too; none of these cues change row geometry. */
+/* Selection: a soft fill plus a thin ring, never a glaring block. None of
+   these cues change row geometry. */
 [data-cth-row][data-cth-active="1"] {
   position: relative !important;
   border-radius: 12px !important;
-  box-shadow: inset 0 0 0 2px var(--cth-color, #a7a7a7) !important;
-}
-[data-cth-row][data-cth-active="1"]:not([data-cth="1"]) {
-  background: rgba(167,167,167,0.22) !important;
+  box-shadow: inset 0 0 0 1px var(--cth-ring, rgba(255,255,255,0.22)) !important;
 }
 
-/* Selected tagged row gets stronger background + thicker stripe. */
+/* Selected tagged row: tinted fill, translucent tag ring, wider solid stripe. */
 [data-cth-row][data-cth="1"][data-cth-active="1"],
 [data-cth-row][data-cth="1"][aria-current="page"]{
   background: var(--cth-bg-strong, var(--cth-bg, transparent)) !important;
 }
 [data-cth-row][data-cth="1"][data-cth-active="1"]::before,
 [data-cth-row][data-cth="1"][aria-current="page"]::before{
-  width:8px;
+  width:6px;
+}
+
+/* Selected untagged row: ChatGPT-like neutral highlight with a hollow stripe,
+   so it reads as selected and as "no tag matched". */
+[data-cth-row][data-cth-active="1"]:not([data-cth="1"]) {
+  background: rgba(255,255,255,0.08) !important;
+}
+[data-cth-row][data-cth-active="1"]:not([data-cth="1"])::before{
+  content:"";
+  position:absolute;
+  left:0; top:6px; bottom:6px;
+  width:6px;
+  box-sizing:border-box;
+  border: 2px solid rgba(255,255,255,0.45);
+  border-radius: 999px;
+  pointer-events:none;
 }
 `;
 
@@ -327,6 +342,13 @@ html.cth-light [data-cth-row][data-cth="1"] {
 html.cth-light [data-cth-row][data-cth="1"][data-cth-active="1"],
 html.cth-light [data-cth-row][data-cth="1"][aria-current="page"] {
   background: var(--cth-bg-strong-light, var(--cth-bg-strong, transparent)) !important;
+}
+html.cth-light [data-cth-row][data-cth-active="1"]:not([data-cth="1"]) {
+  background: rgba(0,0,0,0.06) !important;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16) !important;
+}
+html.cth-light [data-cth-row][data-cth-active="1"]:not([data-cth="1"])::before {
+  border-color: rgba(0,0,0,0.40);
 }
 `;
 
@@ -1415,7 +1437,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		for (const key of ['cth', 'cthRow', 'cthActive', 'cthHidden', 'cthFiltered', 'cthDeleted']) {
 			setFlag(element, key, false);
 		}
-		for (const name of ['color', 'bg', 'bg-strong', 'bg-light', 'bg-strong-light']) {
+		for (const name of CTH_COLOR_VARS) {
 			element.style.removeProperty(`--cth-${name}`);
 		}
 	}
@@ -1426,18 +1448,17 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		if (!r) {
 			delete a.dataset.cth;
 			delete a.dataset.cthHidden;
-			a.style.removeProperty('--cth-color');
-			a.style.removeProperty('--cth-bg');
-			a.style.removeProperty('--cth-bg-strong');
+			for (const name of CTH_COLOR_VARS) a.style.removeProperty(`--cth-${name}`);
 			return;
 		}
 
 		a.dataset.cth = '1';
 		a.style.setProperty('--cth-color', r.color);
 		a.style.setProperty('--cth-bg', hexToRgba(r.color, 0.12));
-		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.32));
+		a.style.setProperty('--cth-bg-strong', hexToRgba(r.color, 0.20));
 		a.style.setProperty('--cth-bg-light', hexToRgba(r.color, 0.10));
-		a.style.setProperty('--cth-bg-strong-light', hexToRgba(r.color, 0.24));
+		a.style.setProperty('--cth-bg-strong-light', hexToRgba(r.color, 0.16));
+		a.style.setProperty('--cth-ring', hexToRgba(r.color, 0.55));
 
 		if (r.hide) {
 			a.dataset.cthHidden = '1';

@@ -38,7 +38,7 @@ python3 scripts/release-check.py            # manifests agree + CHANGELOG sectio
 bash scripts/test-release-check.sh
 ```
 
-Tests launch **headed** Chromium (extensions don't load reliably headless); CI wraps pytest in `xvfb-run -a --server-args="-screen 0 1280x900x24"`.
+Tests run Chromium **headless** by default via `channel='chromium'` (full Chromium's new headless mode loads MV3 extensions; the default headless shell does not), so local runs don't open a window or take focus. `HEADED=1` shows the browser. CI still wraps pytest in `xvfb-run -a --server-args="-screen 0 1280x900x24"` so `HEADED=1` also works there.
 
 **Always pass `CI=true` for automated runs.** Without it the suite uses the persistent `tests/.test-profile/`, which holds the maintainer's ChatGPT login and extension settings. Never delete that directory, copy its cookies, or run two browsers on it at once. ChatGPT cookies are short-lived: for live checks use one `launch_persistent_context` for the whole session with `ignore_default_args=['--enable-automation', '--disable-extensions']` (see `.github/copilot-instructions.md`), and do not close/reopen between steps.
 

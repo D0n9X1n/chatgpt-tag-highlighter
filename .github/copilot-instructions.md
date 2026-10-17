@@ -79,7 +79,7 @@ source .venv/bin/activate
 pytest tests/test_extension.py -v
 ```
 
-These tests run headless-compatible Chrome with the extension loaded. They test the options page UI, config persistence, migration, import/export, and drag-reorder.
+These tests run headless Chromium (`channel='chromium'`; set `HEADED=1` to show the window) with the extension loaded. They test the options page UI, config persistence, migration, import/export, and drag-reorder.
 
 ### Live tests (ChatGPT, requires login)
 

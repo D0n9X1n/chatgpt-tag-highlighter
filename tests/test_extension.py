@@ -34,6 +34,10 @@ STORAGE_KEY = 'tagHighlighterConfigV1'
 # extension state (and, for live ChatGPT tests, login cookies).
 IS_CI = os.environ.get('CI', '').lower() in ('1', 'true', 'yes')
 
+# Headless by default so a local run never opens a window or steals focus.
+# HEADED=1 shows the browser for debugging.
+HEADED = os.environ.get('HEADED', '').lower() in ('1', 'true', 'yes')
+
 
 def _profile_dir():
     if IS_CI:
@@ -47,20 +51,21 @@ def _profile_dir():
 def browser_context():
     """Launch Chromium with the extension loaded.
 
-    Local dev: persistent profile at tests/.test-profile, headed window.
-    CI: throwaway temp profile, headed-via-Xvfb (extensions still don't
-    load reliably in --headless=new across all Chromium builds, so we keep
-    headless=False and rely on Xvfb in CI — see .github/workflows/test.yml).
+    Local dev: persistent profile at tests/.test-profile. CI: throwaway
+    temp profile. Both run headless unless HEADED=1. channel='chromium'
+    uses full Chromium's new headless mode, which loads MV3 extensions;
+    the default headless shell does not.
     """
     pw = sync_playwright().start()
     context = pw.chromium.launch_persistent_context(
         _profile_dir(),
-        headless=False,
+        channel='chromium',
+        headless=not HEADED,
         args=[
             f'--disable-extensions-except={EXT_PATH}',
             f'--load-extension={EXT_PATH}',
             '--disable-blink-features=AutomationControlled',
-            # Make the headed window deterministic in CI/Xvfb.
+            # Keep the viewport deterministic, headless or headed.
             '--window-size=1280,900',
         ],
         ignore_default_args=['--enable-automation', '--disable-extensions'],
@@ -1735,10 +1740,11 @@ class TestAppShellContentScript:
         page = self._open_chat()
         self._ready(page)
         assert not page.locator('#history, #prompt-textarea, [data-sidebar-item]').count()
-        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e).backgroundColor") == 'rgba(250, 189, 47, 0.32)'
+        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e).backgroundColor") == 'rgba(250, 189, 47, 0.2)'
         assert page.eval_on_selector('#row-c2', "e => getComputedStyle(e).backgroundColor") == 'rgba(251, 73, 52, 0.12)'
-        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e, '::before').width") == '8px'
-        assert 'inset' in page.eval_on_selector('#row-c1', "e => getComputedStyle(e).boxShadow")
+        assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e, '::before').width") == '6px'
+        ring = page.eval_on_selector('#row-c1', "e => getComputedStyle(e).boxShadow")
+        assert 'inset' in ring and 'rgba(250, 189, 47, 0.55)' in ring and '1px' in ring, ring
         assert not page.is_visible('#row-c4 .menu')
         assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).opacity") == '0.45'
         assert page.eval_on_selector('#other-nav', "e => [...e.attributes].every(a => !a.name.startsWith('data-cth'))")
@@ -1755,7 +1761,7 @@ class TestAppShellContentScript:
         page.keyboard.press('Alt+h')
         assert not page.is_visible('#row-c4')
         page.evaluate("document.documentElement.classList.replace('dark', 'light')")
-        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c1')).backgroundColor === 'rgba(250, 189, 47, 0.24)'")
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c1')).backgroundColor === 'rgba(250, 189, 47, 0.16)'")
 
     def test_selected_untagged_row_is_visible_and_selection_moves(self):
         self._configure(dimUntagged=True)
@@ -1763,6 +1769,14 @@ class TestAppShellContentScript:
         self._ready(page)
         assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).opacity") == '1'
         assert 'inset' in page.eval_on_selector('#row-c5', "e => getComputedStyle(e).boxShadow")
+        # Default neutral highlight with a hollow stripe: selected, but visibly untagged.
+        assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).backgroundColor") == 'rgba(255, 255, 255, 0.08)'
+        stripe = page.eval_on_selector('#row-c5', """e => {
+            const s = getComputedStyle(e, '::before');
+            return {content: s.content, bg: s.backgroundColor, border: s.borderLeftWidth, width: s.width};
+        }""")
+        assert stripe['content'] != 'none' and stripe['bg'] == 'rgba(0, 0, 0, 0)', stripe
+        assert stripe['border'] != '0px' and stripe['width'] == '6px', stripe
         page.evaluate("""() => {
             document.querySelectorAll('[aria-current]').forEach(e=>e.removeAttribute('aria-current'));
             document.querySelector('#row-c2 a').setAttribute('aria-current','page');
@@ -1770,6 +1784,7 @@ class TestAppShellContentScript:
         assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c5')).opacity === '0.45'")
         assert 'inset' in page.eval_on_selector('#row-c2', "e => getComputedStyle(e).boxShadow")
         assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e).boxShadow") == 'none'
+        assert page.eval_on_selector('#row-c5', "e => getComputedStyle(e, '::before').content") == 'none'
 
     def test_overlay_nested_scroll_focus_and_composer_remount(self):
         self._configure()
@@ -1840,7 +1855,7 @@ class TestAppShellContentScript:
             const painted=document.querySelector('#row-c4');
             return !hidden.getClientRects().length
                 && painted.getClientRects().length > 0
-                && getComputedStyle(painted).backgroundColor === 'rgba(250, 189, 47, 0.32)';
+                && getComputedStyle(painted).backgroundColor === 'rgba(250, 189, 47, 0.2)';
         }"""), 'one moved link must not erase the row just painted for another link'
 
     def test_temporary_multi_link_row_does_not_leave_anchor_hidden(self):
