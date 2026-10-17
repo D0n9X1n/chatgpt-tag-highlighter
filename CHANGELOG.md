@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-10-17
+
+### Changed
+- Softer selected-chat highlight
+  ([#61](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/61)).
+  The open tagged chat gets a gentler tag-colored fill, a thin translucent
+  tag-colored outline and a 6 px stripe, in place of the bright fill and
+  full-color outline from 1.1.2.
+- The open untagged chat gets a neutral default highlight with a **hollow**
+  stripe, so it's clearly selected and clearly untagged.
+- CI uses `github/codeql-action` v4.38.3, `actions/setup-node` v7.1.0,
+  `actions/upload-artifact` v7.0.2 and `actions/download-artifact` v8.0.2,
+  still pinned to commit SHAs. Test dependency: Playwright 1.63.0.
+- The Playwright suite runs headless by default, so local runs don't open
+  a window or take focus. Set `HEADED=1` to watch the browser.
+
 ## [1.1.2] — 2026-09-27
 
 ### Added
@@ -221,7 +237,8 @@ pipeline.
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.0.0...v1.1.0

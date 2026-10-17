@@ -22,7 +22,7 @@ npx --yes web-ext@8.3.0 lint --source-dir dist/firefox --warnings-as-errors=fals
 python3 scripts/check-wiki.py wiki && bash scripts/test-wiki-publish.sh
 ```
 
-测试会启动**有界面的** Chromium，因为无界面模式下扩展加载不稳定。CI 中用 `xvfb-run -a --server-args="-screen 0 1280x900x24"` 包裹 pytest。
+测试默认以**无界面**方式运行 Chromium（`channel='chromium'`，即可加载扩展的新版无界面模式），本地运行时不会弹出窗口，也不会抢占焦点。设置 `HEADED=1` 可显示浏览器。CI 仍用 `xvfb-run -a --server-args="-screen 0 1280x900x24"` 包裹 pytest，因此 `HEADED=1` 在 CI 中同样可用。
 
 ## 测试覆盖范围
 
