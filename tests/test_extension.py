@@ -1721,7 +1721,11 @@ class TestContentScript:
         assert self._checked_ids(page) == []
         assert page.text_content(self.SEL_COUNT) == '0 of 3 selected'
         assert page.is_disabled(self.CONFIRM), 'nothing selected, nothing to delete'
-        page.keyboard.press('Enter')  # Enter in the confirm box must not bypass the empty selection
+        page.focus('#cth-delete-dialog .cth-del-input')
+        page.keyboard.press('Enter')
+        page.wait_for_timeout(200)
+        assert page.is_enabled('#cth-delete-dialog .cth-del-input'), \
+            'Enter in the confirm box must not bypass the empty selection'
         page.focus(f'{self.CHECKBOXES}[data-id="a9"]')
         page.keyboard.press('Space')
         assert self._checked_ids(page) == ['a9'], 'Space toggles a focused checkbox'
@@ -1738,8 +1742,18 @@ class TestContentScript:
         page.click('#cth-delete-dialog .cth-del-all')
         page.fill('#cth-delete-dialog .cth-del-input', 'nope')
         assert page.is_disabled(self.CONFIRM), 'selecting chats never bypasses the confirmation word'
+        page.focus('#cth-delete-dialog .cth-del-input')
+        page.keyboard.press('Enter')
         page.wait_for_timeout(300)
         assert self._patches(calls) == [], 'changing the selection never deletes anything'
+
+        page.uncheck(f'{self.CHECKBOXES}[data-id="a2"]')
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.keyboard.press('Enter')  # focus is in the confirm box
+        assert self._poll(page, "() => /Deleted 2 of 2 chats/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a7', 'a9'], \
+            'Enter in the confirm box deletes exactly the checked chats'
 
     def test_delete_untagged_focus_trap_includes_checkboxes(self):
         page, _, _ = self._open_delete_page()
@@ -1747,8 +1761,18 @@ class TestContentScript:
         page.wait_for_selector(self.CHECKBOXES, timeout=5000)
         focusables = """() => [...document.querySelectorAll('#cth-delete-dialog .cth-del-box button, #cth-delete-dialog .cth-del-box input')]
             .filter(n => !n.disabled && !n.closest('[hidden]'))"""
-        ids = page.evaluate(f"({focusables})().map(n => n.dataset.id).filter(Boolean)")
-        assert ids == ['a2', 'a7', 'a9'], 'every checkbox is reachable with Tab'
+        # Walk real Tab presses from Select none: each checkbox must take focus in order.
+        page.focus('#cth-delete-dialog .cth-del-none')
+        forward = []
+        for _ in range(3):
+            page.keyboard.press('Tab')
+            forward.append(page.evaluate("document.activeElement.dataset.id || null"))
+        assert forward == ['a2', 'a7', 'a9'], f'Tab must step through every checkbox, got {forward}'
+        backward = []
+        for _ in range(2):
+            page.keyboard.press('Shift+Tab')
+            backward.append(page.evaluate("document.activeElement.dataset.id || null"))
+        assert backward == ['a7', 'a2'], f'Shift+Tab must step back through the checkboxes, got {backward}'
         page.evaluate(f"({focusables})().at(-1).focus()")
         page.keyboard.press('Tab')
         assert page.evaluate(f"document.activeElement === ({focusables})()[0]"), 'Tab from the last control wraps to the first'
