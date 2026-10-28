@@ -1672,6 +1672,146 @@ class TestContentScript:
         assert [c for c in calls if '/backend-api/' in c['url']] == [], 'no list or delete calls without a session'
         assert not page.is_visible('#cth-delete-dialog .cth-del-input')
 
+    # ---- Choosing which untagged chats to delete (#70) ----
+
+    CHECKBOXES = '#cth-delete-dialog .cth-del-list input[type="checkbox"]'
+    SEL_COUNT = '#cth-delete-dialog .cth-del-count'
+    CONFIRM = '#cth-delete-dialog .cth-del-confirm-btn'
+
+    def _checked_ids(self, page):
+        return page.evaluate(f"[...document.querySelectorAll('{self.CHECKBOXES}')].filter(c => c.checked).map(c => c.dataset.id)")
+
+    def test_delete_untagged_rows_start_selected(self):
+        page, calls, _ = self._open_delete_page()
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector(self.CHECKBOXES, timeout=5000)
+        assert self._checked_ids(page) == ['a2', 'a7', 'a9'], 'every listed chat starts selected'
+        assert page.text_content(self.SEL_COUNT) == '3 of 3 selected'
+        assert page.text_content(self.CONFIRM) == 'Delete 3 chats'
+        assert page.evaluate("!window.__xss && !document.querySelector('#cth-delete-dialog img')"), \
+            'titles must still render as text next to the checkboxes'
+
+    def test_delete_untagged_deletes_only_selected_chats(self):
+        page, calls, _ = self._open_delete_page()
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector(self.CHECKBOXES, timeout=5000)
+        page.uncheck(f'{self.CHECKBOXES}[data-id="a2"]')
+        page.click('#cth-delete-dialog .cth-del-list li[data-id="a9"] label')  # the title toggles too
+        assert self._checked_ids(page) == ['a7']
+        assert page.text_content(self.SEL_COUNT) == '1 of 3 selected'
+        assert page.text_content(self.CONFIRM) == 'Delete 1 chat'
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.click(self.CONFIRM)
+        assert self._poll(page, "() => /Deleted 1 of 1 chat\\./.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a7'], 'unselected chats must never be deleted'
+        assert 'Skipped' not in page.text_content('#cth-delete-dialog .cth-del-status'), \
+            'unselected chats are kept by choice, not skipped'
+        assert self._sidebar_state(page)['a2']['display'] != 'none'
+        assert page.evaluate(f"[...document.querySelectorAll('{self.CHECKBOXES}')].every(c => c.disabled)"), \
+            'the selection is frozen once deleting starts'
+
+    def test_delete_untagged_select_none_and_all(self):
+        page, calls, _ = self._open_delete_page()
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector(self.CHECKBOXES, timeout=5000)
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        assert page.is_enabled(self.CONFIRM)
+        page.click('#cth-delete-dialog .cth-del-none')
+        assert self._checked_ids(page) == []
+        assert page.text_content(self.SEL_COUNT) == '0 of 3 selected'
+        assert page.is_disabled(self.CONFIRM), 'nothing selected, nothing to delete'
+        page.focus('#cth-delete-dialog .cth-del-input')
+        page.keyboard.press('Enter')
+        page.wait_for_timeout(200)
+        assert page.is_enabled('#cth-delete-dialog .cth-del-input'), \
+            'Enter in the confirm box must not bypass the empty selection'
+        page.focus(f'{self.CHECKBOXES}[data-id="a9"]')
+        page.keyboard.press('Space')
+        assert self._checked_ids(page) == ['a9'], 'Space toggles a focused checkbox'
+        assert page.is_enabled(self.CONFIRM)
+        page.keyboard.press('Enter')
+        assert page.query_selector('#cth-delete-dialog .cth-del-input:not([disabled])'), \
+            'Enter on a checkbox must not start deleting'
+        page.click('#cth-delete-dialog .cth-del-all')
+        assert self._checked_ids(page) == ['a2', 'a7', 'a9']
+        assert page.text_content(self.CONFIRM) == 'Delete 3 chats'
+        for cid in ('a2', 'a7', 'a9'):
+            page.uncheck(f'{self.CHECKBOXES}[data-id="{cid}"]')
+        assert page.is_disabled(self.CONFIRM), 'unchecking the last chat disables deletion too'
+        page.click('#cth-delete-dialog .cth-del-all')
+        page.fill('#cth-delete-dialog .cth-del-input', 'nope')
+        assert page.is_disabled(self.CONFIRM), 'selecting chats never bypasses the confirmation word'
+        page.focus('#cth-delete-dialog .cth-del-input')
+        page.keyboard.press('Enter')
+        page.wait_for_timeout(300)
+        assert self._patches(calls) == [], 'changing the selection never deletes anything'
+
+        page.uncheck(f'{self.CHECKBOXES}[data-id="a2"]')
+        page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+        page.keyboard.press('Enter')  # focus is in the confirm box
+        assert self._poll(page, "() => /Deleted 2 of 2 chats/.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                          timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a7', 'a9'], \
+            'Enter in the confirm box deletes exactly the checked chats'
+
+    def test_delete_untagged_focus_trap_includes_checkboxes(self):
+        page, _, _ = self._open_delete_page()
+        page.click('#cth-delete-untagged')
+        page.wait_for_selector(self.CHECKBOXES, timeout=5000)
+        focusables = """() => [...document.querySelectorAll('#cth-delete-dialog .cth-del-box button, #cth-delete-dialog .cth-del-box input')]
+            .filter(n => !n.disabled && !n.closest('[hidden]'))"""
+        # Walk real Tab presses from Select none: each checkbox must take focus in order.
+        page.focus('#cth-delete-dialog .cth-del-none')
+        forward = []
+        for _ in range(3):
+            page.keyboard.press('Tab')
+            forward.append(page.evaluate("document.activeElement.dataset.id || null"))
+        assert forward == ['a2', 'a7', 'a9'], f'Tab must step through every checkbox, got {forward}'
+        backward = []
+        for _ in range(2):
+            page.keyboard.press('Shift+Tab')
+            backward.append(page.evaluate("document.activeElement.dataset.id || null"))
+        assert backward == ['a7', 'a2'], f'Shift+Tab must step back through the checkboxes, got {backward}'
+        page.evaluate(f"({focusables})().at(-1).focus()")
+        page.keyboard.press('Tab')
+        assert page.evaluate(f"document.activeElement === ({focusables})()[0]"), 'Tab from the last control wraps to the first'
+        page.keyboard.press('Shift+Tab')
+        assert page.evaluate(f"document.activeElement === ({focusables})().at(-1)"), 'Shift+Tab from the first wraps to the last'
+
+    def test_delete_untagged_recheck_respects_selection(self):
+        renamed = [dict(c, title='[TODO] tagged meanwhile') if c['id'] == 'a2' else c
+                   for c in API_CHATS] + [_api_chat('n1', 'brand new plain chat')]  # a2 tagged, n1 new since the preview
+        page, calls, held = self._open_delete_page(chats=lambda n: API_CHATS if n == 0 else renamed,
+                                                   hold_list_pass=1)
+        try:
+            page.click('#cth-delete-untagged')
+            page.wait_for_selector(self.CHECKBOXES, timeout=5000)
+            page.uncheck(f'{self.CHECKBOXES}[data-id="a9"]')
+            page.fill('#cth-delete-dialog .cth-del-input', 'delete')
+            page.click(self.CONFIRM)
+            deadline = time.time() + 5
+            while not held and time.time() < deadline:
+                page.wait_for_timeout(50)
+            assert held, 're-check request never arrived'
+            assert page.evaluate("""() => [...document.querySelectorAll('#cth-delete-dialog .cth-del-list input, #cth-delete-dialog .cth-del-all, #cth-delete-dialog .cth-del-none')]
+                .every(n => n.disabled)"""), 'the selection is frozen from confirm onward, including the re-check'
+            route, body = held.pop()
+            route.fulfill(status=200, content_type='application/json', body=body)
+            assert self._poll(page, "() => /Deleted 1 of 1 chat\\./.test(document.querySelector('#cth-delete-dialog .cth-del-status').textContent)",
+                              timeout=8000), page.text_content('#cth-delete-dialog .cth-del-status')
+            assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == ['a7'], \
+                'only selected chats that are still untagged are deleted; new chats never are'
+            status = page.text_content('#cth-delete-dialog .cth-del-status')
+            assert 'Skipped 1 chat that changed since the preview' in status, status
+            assert page.evaluate("[...document.querySelectorAll('#cth-delete-dialog .cth-del-list li.cth-done')].map(li => li.dataset.id)") == ['a7']
+        finally:
+            for route, body in held:
+                try:
+                    route.fulfill(status=200, body=body)
+                except Exception:
+                    pass
+
 
 # App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
 # fixture-only IDs let tests inspect rows without coupling to extension markers.

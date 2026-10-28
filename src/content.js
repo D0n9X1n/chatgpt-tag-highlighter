@@ -466,11 +466,21 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 10px;
 }
-#${DELETE_DIALOG_ID} .cth-del-list li {
+#${DELETE_DIALOG_ID} .cth-del-list label {
+  display: flex; align-items: center; gap: 8px;
   padding: 4px 12px;
+  cursor: pointer;
+}
+#${DELETE_DIALOG_ID} .cth-del-list input { flex: none; margin: 0; accent-color: #cc241d; cursor: inherit; }
+#${DELETE_DIALOG_ID} .cth-del-list input:disabled { cursor: default; }
+#${DELETE_DIALOG_ID} .cth-del-list label span {
+  min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-#${DELETE_DIALOG_ID} .cth-del-list li.cth-done { opacity: 0.45; text-decoration: line-through; }
+#${DELETE_DIALOG_ID} .cth-del-list li.cth-unchecked span { opacity: 0.55; }
+#${DELETE_DIALOG_ID} .cth-del-list li.cth-done span { opacity: 0.45; text-decoration: line-through; }
+#${DELETE_DIALOG_ID} .cth-del-select { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#${DELETE_DIALOG_ID} .cth-del-count { margin-inline-start: auto; opacity: 0.75; font-size: 13px; }
 #${DELETE_DIALOG_ID} .cth-del-confirm { display: flex; flex-direction: column; gap: 6px; }
 #${DELETE_DIALOG_ID} .cth-del-input {
   box-sizing: border-box; width: 100%;
@@ -481,7 +491,7 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
   color: inherit; font: inherit;
 }
 #${DELETE_DIALOG_ID} .cth-del-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-#${DELETE_DIALOG_ID} .cth-del-actions button {
+#${DELETE_DIALOG_ID} .cth-del-actions button, #${DELETE_DIALOG_ID} .cth-del-select button {
   padding: 8px 14px;
   border-radius: 999px;
   font: inherit; font-weight: 600;
@@ -491,7 +501,8 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
   color: inherit;
 }
 #${DELETE_DIALOG_ID} .cth-del-actions .cth-del-confirm-btn { background: #cc241d; border-color: #cc241d; color: #fff; }
-#${DELETE_DIALOG_ID} .cth-del-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+#${DELETE_DIALOG_ID} .cth-del-select button { padding: 4px 12px; font-size: 13px; }
+#${DELETE_DIALOG_ID} button:disabled { opacity: 0.45; cursor: not-allowed; }
 #${DELETE_DIALOG_ID} [hidden] { display: none !important; }
 
 html.cth-light #${DELETE_DIALOG_ID} { background: rgba(0,0,0,0.35); }
@@ -502,7 +513,7 @@ html.cth-light #${DELETE_DIALOG_ID} .cth-del-box {
 }
 html.cth-light #${DELETE_DIALOG_ID} .cth-del-list { border-color: rgba(0,0,0,0.10); }
 html.cth-light #${DELETE_DIALOG_ID} .cth-del-input { border-color: rgba(0,0,0,0.20); background: rgba(0,0,0,0.03); }
-html.cth-light #${DELETE_DIALOG_ID} .cth-del-actions button { border-color: rgba(0,0,0,0.20); }
+html.cth-light #${DELETE_DIALOG_ID} .cth-del-actions button, html.cth-light #${DELETE_DIALOG_ID} .cth-del-select button { border-color: rgba(0,0,0,0.20); }
 `;
 
 		const dimCss = `
@@ -892,7 +903,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// PATCH /backend-api/conversation/{id} {is_visible:false} to delete one.
 	// The bearer token comes from /api/auth/session; it lives only for one run
 	// and is never stored or logged. Nothing is deleted before the user types
-	// the confirmation word; pinned, starred, archived and tagged chats are kept.
+	// the confirmation word, and only the chats left checked in the preview
+	// are deleted; pinned, starred, archived and tagged chats are kept.
 	const CONFIRM_WORD = 'delete';
 	const LIST_PAGE_SIZE = 100;
 	const LIST_MAX_PAGES = 200; // 20,000 chats; beyond that, refuse rather than guess
@@ -1042,7 +1054,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		btn.type = 'button';
 		btn.id = DELETE_BTN_ID;
 		btn.textContent = 'Delete untagged…';
-		btn.title = 'Delete every chat that matches no tag rule';
+		btn.title = 'Choose which chats that match no tag rule to delete';
 		btn.setAttribute('aria-haspopup', 'dialog');
 		btn.addEventListener('click', e => {
 			e.preventDefault();
@@ -1067,6 +1079,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		const status = el('p', {class: 'cth-del-status', role: 'status', 'aria-live': 'polite', text: 'Finding untagged chats…'});
 		const list = el('ul', {class: 'cth-del-list', hidden: true});
+		const selectAllBtn = el('button', {type: 'button', class: 'cth-del-all', text: 'Select all'});
+		const selectNoneBtn = el('button', {type: 'button', class: 'cth-del-none', text: 'Select none'});
+		const count = el('span', {class: 'cth-del-count'});
+		const selectBar = el('div', {class: 'cth-del-select', hidden: true}, [selectAllBtn, selectNoneBtn, count]);
 		const input = el('input', {class: 'cth-del-input', type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${CONFIRM_WORD} to confirm`});
 		const confirmRow = el('label', {class: 'cth-del-confirm', hidden: true}, [
 			el('span', {text: `Type "${CONFIRM_WORD}" to confirm. ChatGPT's sidebar can't restore deleted chats.`}),
@@ -1079,7 +1095,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		const box = el('div', {class: 'cth-del-box'}, [
 			el('h2', {id: 'cth-del-title', text: 'Delete untagged chats'}),
-			status, list, confirmRow,
+			status, selectBar, list, confirmRow,
 			el('div', {class: 'cth-del-actions'}, [cancelBtn, reloadBtn, confirmBtn]),
 		]);
 		const root = el('div', {id: DELETE_DIALOG_ID, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cth-del-title'}, [box]);
@@ -1090,6 +1106,34 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		let token = '';
 		let plan = null;
 		const deleted = new Set();
+
+		const checkboxes = () => [...list.querySelectorAll('input[type="checkbox"]')];
+		const selectedIds = () => new Set(checkboxes().filter(c => c.checked).map(c => c.dataset.id));
+
+		// Confirm needs both the typed word and at least one checked chat.
+		function updateSelection() {
+			const boxes = checkboxes();
+			for (const c of boxes) {
+				c.closest('li').classList.toggle('cth-unchecked', !c.checked);
+			}
+
+			const n = boxes.filter(c => c.checked).length;
+			count.textContent = `${n} of ${boxes.length} selected`;
+			confirmBtn.textContent = `Delete ${plural(n, 'chat', 'chats')}`;
+			confirmBtn.disabled = n === 0 || input.value.trim().toLowerCase() !== CONFIRM_WORD;
+		}
+
+		function setAll(checked) {
+			for (const c of checkboxes()) {
+				c.checked = checked;
+			}
+
+			updateSelection();
+		}
+
+		selectAllBtn.addEventListener('click', () => setAll(true));
+		selectNoneBtn.addEventListener('click', () => setAll(false));
+		list.addEventListener('change', updateSelection);
 
 		function close() {
 			if (phase === 'running') {
@@ -1155,6 +1199,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			cancelBtn.textContent = 'Close';
 			confirmRow.hidden = true;
 			confirmBtn.hidden = true;
+			selectBar.hidden = true;
 			reloadBtn.hidden = deleted.size === 0;
 			(reloadBtn.hidden ? cancelBtn : reloadBtn).focus();
 		}
@@ -1176,31 +1221,47 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			}
 
 			phase = 'preview';
-			status.textContent = `${plural(plan.remove.length, 'untagged chat', 'untagged chats')} will be deleted.${keeping}`;
+			status.textContent = `Found ${plural(plan.remove.length, 'untagged chat', 'untagged chats')}.${keeping} Uncheck any you want to keep.`;
 			for (const chat of plan.remove) {
 				const label = chat.title || 'Untitled chat';
-				list.append(el('li', {'data-id': chat.id, title: label, text: label}));
+				const box = el('input', {type: 'checkbox', 'data-id': chat.id});
+				box.checked = true;
+				list.append(el('li', {'data-id': chat.id, title: label}, [
+					el('label', {}, [box, el('span', {text: label})]),
+				]));
 			}
 
 			list.hidden = false;
+			selectBar.hidden = false;
 			confirmRow.hidden = false;
 			confirmBtn.hidden = false;
-			confirmBtn.textContent = `Delete ${plural(plan.remove.length, 'chat', 'chats')}`;
+			updateSelection();
 			input.focus();
 		}
 
-		input.addEventListener('input', () => {
-			confirmBtn.disabled = input.value.trim().toLowerCase() !== CONFIRM_WORD;
-		});
+		input.addEventListener('input', updateSelection);
 
 		confirmBtn.addEventListener('click', async () => {
 			if (phase !== 'preview' || confirmBtn.disabled) {
 				return;
 			}
 
+			// Freeze the selection: only what is checked now can be deleted.
+			const picked = selectedIds();
+			const chosen = plan.remove.filter(c => picked.has(c.id));
+			if (chosen.length === 0) {
+				return;
+			}
+
 			phase = 'rechecking';
 			input.disabled = true;
 			confirmBtn.disabled = true;
+			selectAllBtn.disabled = true;
+			selectNoneBtn.disabled = true;
+			for (const c of checkboxes()) {
+				c.disabled = true;
+			}
+
 			// Disabling the focused button drops focus to <body>, where the
 			// dialog's Escape handler can't see it; keep focus on Cancel/Stop.
 			cancelBtn.focus();
@@ -1208,7 +1269,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 			// Re-check right before deleting: the user may have tagged, pinned,
 			// starred, archived or deleted chats since the preview. Only chats
-			// that are still untagged and unprotected now are deleted. Nothing
+			// that are still checked, untagged and unprotected are deleted. Nothing
 			// has been deleted yet, so Cancel/Escape here close immediately and
 			// the re-list stops at its next page.
 			status.textContent = 'Checking the list again…';
@@ -1221,7 +1282,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				}
 
 				const stillUntagged = new Set(planUntaggedDeletion(fresh, rules).remove.map(c => c.id));
-				queue = plan.remove.filter(c => stillUntagged.has(c.id));
+				queue = chosen.filter(c => stillUntagged.has(c.id));
 			} catch (error_) {
 				token = '';
 				if (!closed) {
@@ -1234,8 +1295,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			phase = 'running';
 			cancelBtn.textContent = 'Stop';
 
-			const skipped = plan.remove.length - queue.length;
-			for (const chat of plan.remove) {
+			// Unchecked chats were kept by choice; only chosen ones that changed count as skipped.
+			const skipped = chosen.length - queue.length;
+			for (const chat of chosen) {
 				if (!queue.includes(chat)) {
 					for (const li of list.children) {
 						if (li.dataset.id === chat.id) {
