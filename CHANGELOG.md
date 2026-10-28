@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-27
+
+### Added
+- **Choose which untagged chats to delete**
+  ([#70](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/70)).
+  The **Delete untagged…** preview now has a checkbox for every chat,
+  **Select all** / **Select none** buttons and an “N of M selected” count.
+  Every chat starts checked, so the old flow still works. Only checked chats
+  are deleted, the button reads “Delete N chats”, and it stays disabled
+  while nothing is checked, even after you type `delete`. The selection is
+  frozen once you confirm. The confirm-time re-check still skips chats that
+  were tagged, pinned, starred, archived or deleted since the preview, and
+  unchecked chats are never sent a delete request.
+
 ## [1.1.3] — 2026-10-17
 
 ### Changed
@@ -237,7 +251,8 @@ pipeline.
 Initial public release with tag-based highlighting in the ChatGPT
 sidebar.
 
-[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/D0n9X1n/chatgpt-tag-highlighter/compare/v1.1.0...v1.1.1

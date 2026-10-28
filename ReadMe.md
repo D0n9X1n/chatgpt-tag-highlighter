@@ -90,15 +90,16 @@ Off by default. With **Show “Delete untagged chats” button** on, click **Del
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./img/delete-untagged-dark.png">
-    <img src="./img/delete-untagged-light.png" alt="Delete untagged chats dialog listing the chats that match no rule, with the word delete typed into the confirmation box" width="760">
+    <img src="./img/delete-untagged-light.png" alt="Delete untagged chats dialog listing the chats that match no rule with checkboxes, two of them unchecked, and the word delete typed into the confirmation box" width="760">
   </picture>
 </p>
 
 1. The extension asks ChatGPT for your full chat list, not just the chats loaded in the sidebar, and lists every chat whose title matches no rule. Nothing is deleted yet.
 2. Pinned, starred and archived chats are kept, and so is every chat that matches a rule, including rule-hidden ones.
-3. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends. **Stop** halts after the current chat, and the first error stops the run.
+3. Every listed chat starts checked. Uncheck the ones you want to keep, or use **Select all** / **Select none**. Only checked chats are deleted.
+4. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends. **Stop** halts after the current chat, and the first error stops the run.
 
-ChatGPT's sidebar can't restore deleted chats, so check the list before you confirm. This relies on ChatGPT's private web endpoints, which can change without notice.
+ChatGPT's sidebar can't restore deleted chats, so check the selection before you confirm. This relies on ChatGPT's private web endpoints, which can change without notice.
 
 ## Long chats stay fast
 
@@ -120,7 +121,7 @@ These numbers come from one machine and will vary. The Sep 28, 2026 compatibilit
 - **`storage`** saves your rules. It uses the browser's extension sync storage, so your browser may sync them across your signed-in devices.
 - **Site access** to `https://chatgpt.com/*` and `https://chat.openai.com/*` lets it style those pages. It has no access to any other site.
 - The extension reads **sidebar chat titles** to match your rules, and **message heights** to speed up long chats. It doesn't read or store message text.
-- **Delete untagged chats**, if you use it, lists your chats and deletes the ones you confirm through your signed-in ChatGPT session. Those requests go only to ChatGPT. The session token stays in memory for that run and is never stored.
+- **Delete untagged chats**, if you use it, lists your chats and deletes the ones you select and confirm through your signed-in ChatGPT session. Those requests go only to ChatGPT. The session token stays in memory for that run and is never stored.
 - No analytics, no tracking, and no servers of its own. See the [Privacy Policy](./Privacy%20Policy.md).
 
 ## Troubleshooting

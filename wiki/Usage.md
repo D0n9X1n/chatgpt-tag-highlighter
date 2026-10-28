@@ -22,14 +22,15 @@ When at least two rules are not set to Hide, pills appear above the chat list. C
 
 Off by default. Turn on **Show “Delete untagged chats” button** in [Configuration](Configuration), then click **Delete untagged…** at the end of the filter bar. The bar also appears for this button when there are too few rules for pills.
 
-![Delete untagged chats dialog listing the chats that match no rule](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/delete-untagged-light.png)
+![Delete untagged chats dialog listing the chats that match no rule, each with a checkbox](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/delete-untagged-light.png)
 
 1. The extension asks ChatGPT for your whole chat list, not just the chats loaded in the sidebar, and lists every chat whose title matches no rule. Nothing is deleted yet.
 2. Pinned, starred and archived chats are kept, and so is every chat that matches a rule, including rule-hidden ones. Untitled chats count as untagged.
-3. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends, and disappear from the sidebar as they go. **Stop** halts after the current chat, and the first error stops the run.
-4. **Reload page** refreshes ChatGPT's own list.
+3. Every listed chat starts checked. Uncheck the ones you want to keep, or use **Select all** / **Select none**; the count shows how many are selected. Only checked chats are deleted.
+4. Type `delete` and confirm. The list is checked again first, and any chat you tagged, pinned, starred, archived or deleted since the preview is skipped. Chats are then deleted one at a time with the same request ChatGPT's own **Delete** sends, and disappear from the sidebar as they go. **Stop** halts after the current chat, and the first error stops the run.
+5. **Reload page** refreshes ChatGPT's own list.
 
-ChatGPT's sidebar can't restore deleted chats, so check the list before you confirm. The feature relies on ChatGPT's private web endpoints, which can change without notice. Chats inside Projects aren't covered.
+ChatGPT's sidebar can't restore deleted chats, so check the selection before you confirm. The feature relies on ChatGPT's private web endpoints, which can change without notice. Chats inside Projects aren't covered.
 
 ## The tag banner
 

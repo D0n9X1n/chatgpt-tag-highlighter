@@ -22,14 +22,15 @@
 
 默认关闭。在 [设置](Configuration-zh-CN) 中开启 **Show “Delete untagged chats” button**，然后点击筛选栏末尾的 **Delete untagged…**。即使规则太少、不显示标签按钮，筛选栏也会为这个按钮显示出来。
 
-![删除无标签会话对话框：列出不匹配任何规则的会话](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/delete-untagged-light.png)
+![删除无标签会话对话框：列出不匹配任何规则的会话，每个会话前有复选框](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/delete-untagged-light.png)
 
 1. 扩展向 ChatGPT 获取完整的会话列表（不只是侧边栏已加载的部分），列出所有标题不匹配任何规则的会话。此时还不会删除任何内容。
 2. 置顶、加星和已归档的会话会保留，所有命中规则的会话（包括被规则隐藏的）也会保留。没有标题的会话算作无标签。
-3. 输入 `delete` 并确认。删除前会再检查一次列表，预览之后被你加标签、置顶、加星、归档或删除的会话会被跳过。随后会话会逐个删除，使用的请求与 ChatGPT 自带的 **Delete** 相同，删除后立即从侧边栏消失。**Stop** 会在当前会话删除完后停止，遇到第一个错误也会停止。
-4. **Reload page** 会刷新 ChatGPT 自己的会话列表。
+3. 列表中的会话默认全部勾选。取消勾选想保留的会话，或使用 **Select all** / **Select none**；计数会显示已选数量。只有勾选的会话会被删除。
+4. 输入 `delete` 并确认。删除前会再检查一次列表，预览之后被你加标签、置顶、加星、归档或删除的会话会被跳过。随后会话会逐个删除，使用的请求与 ChatGPT 自带的 **Delete** 相同，删除后立即从侧边栏消失。**Stop** 会在当前会话删除完后停止，遇到第一个错误也会停止。
+5. **Reload page** 会刷新 ChatGPT 自己的会话列表。
 
-ChatGPT 侧边栏无法恢复已删除的会话，请在确认前检查列表。此功能依赖 ChatGPT 未公开的网页接口，这些接口可能随时变化。项目（Projects）中的会话不在范围内。
+ChatGPT 侧边栏无法恢复已删除的会话，请在确认前检查勾选的会话。此功能依赖 ChatGPT 未公开的网页接口，这些接口可能随时变化。项目（Projects）中的会话不在范围内。
 
 ## 标签横幅
 
