@@ -139,6 +139,11 @@ class TestOptionsPage:
         self.context = browser_context
         self.ext_id = ext_id
         self.options_url = f'chrome-extension://{ext_id}/options.html'
+        self._pages = []
+        yield
+        for p in self._pages:
+            if not p.is_closed():
+                p.close()
 
     def _open_options(self):
         page = self.context.new_page()
@@ -165,10 +170,13 @@ class TestOptionsPage:
             page.set_content(markup)
             page.evaluate("""() => {
                 window.writes = [];
-                window.browser = {storage: {sync: {
-                    get: () => new Promise(resolve => {window.releaseConfig = resolve}),
-                    set: async value => {window.writes.push(value)},
-                }}};
+                window.browser = {
+                    runtime: {sendMessage: async m => { window.writes.push(m); return {ok: true, value: m.next}; }},
+                    storage: {onChanged: {addListener() {}}, sync: {
+                        get: () => new Promise(resolve => {window.releaseConfig = resolve}),
+                        set: async value => {window.writes.push(value)},
+                    }},
+                };
             }""")
             page.add_script_tag(content=(Path(EXT_PATH) / 'options.js').read_text())
             page.check('#dimUntagged')
@@ -176,8 +184,10 @@ class TestOptionsPage:
             page.evaluate("releaseConfig({tagHighlighterConfigV1:{rules:[{tag:'[SAVED]',color:'#fabd2f'}]}})")
             page.wait_for_function("() => document.querySelector('#rows .tag')?.value === '[SAVED]'")
             page.check('#dimUntagged')
-            assert page.evaluate('writes.at(-1).tagHighlighterConfigV1.rules[0].tag') == '[SAVED]'
-            assert page.evaluate('writes.at(-1).tagHighlighterConfigV1.dimUntagged') is True
+            page.wait_for_function('() => writes.at(-1)?.next?.dimUntagged === true', timeout=3000)
+            assert page.evaluate('writes.at(-1).type') == 'writeConfig'
+            assert page.evaluate('writes.at(-1).next.rules[0].tag') == '[SAVED]'
+            assert page.evaluate('writes.at(-1).next.dimUntagged') is True
         finally:
             page.close()
 
@@ -644,6 +654,232 @@ class TestOptionsPage:
         assert cfg['hideNavBar'] is False
         assert cfg['maxChatTurns'] == 5
 
+    # ---- compare-and-set client: options.js against the real background.js in one page ----
+
+    def _fresh(self, cfg):
+        page = self._open_options()
+        self._pages.append(page)
+        self._set_config(page, cfg)
+        page.reload()
+        page.wait_for_selector('#rows tr')
+        return page
+
+    def _opts(self, cfg, setup='', with_bg=False, clock=False, delay=0):
+        """Stubbed options page; optionally the real background.js in the same page."""
+        page = self.context.new_page()
+        self._pages.append(page)
+        page.set_content((Path(EXT_PATH) / 'options.html').read_text().replace('<script src="options.js"></script>', ''))
+        if clock:
+            page.clock.install()
+        page.evaluate(_BG_HARNESS, [{STORAGE_KEY: cfg}, delay])
+        if setup:
+            page.evaluate(f'() => {{ {setup} }}')  # statement body, never an auto-invoked expression
+        for name in (['background.js'] if with_bg else []) + ['options.js']:
+            page.add_script_tag(content=(Path(EXT_PATH) / name).read_text())
+        if not clock:
+            page.wait_for_selector('#rows tr')
+        return page
+
+    # Statement bodies for _opts(setup=...).
+    LOG = 'window.msgs = []; const real = browser.runtime.sendMessage; browser.runtime.sendMessage = m => { msgs.push(structuredClone(m)); return real(m); };'
+    HOLD = ('window.releases = []; const real = browser.runtime.sendMessage; let first = true;'
+            ' browser.runtime.sendMessage = m => { if (!first) return real(m); first = false; return new Promise(r => releases.push(() => r(real(m)))); };')
+    # Holds the first request before it is sent, then holds its reply: releases[0]() sends, releases[1]() answers.
+    HOLD_REQ_REPLY = ('window.releases = []; const real = browser.runtime.sendMessage; let first = true;'
+                      ' browser.runtime.sendMessage = m => { if (!first) return real(m); first = false;'
+                      ' return new Promise(go => releases.push(go)).then(() => real(m)).then(r => new Promise(ok => releases.push(() => ok(r)))); };')
+
+    def _banner(self, page):
+        page.wait_for_selector('#conflict', state='visible', timeout=3000)
+        assert page.inner_text('#conflict').startswith('Settings changed in another window.')
+        assert page.inner_text('#conflictReload') == 'Reload'
+
+    def _row_tags(self, page):
+        return page.evaluate("[...document.querySelectorAll('#rows .tag')].map(i => i.value)")
+
+    def _add(self, page, tag):
+        return page.evaluate('t => send({type: "addRule", tag: t})', tag)
+
+    def test_save_sends_cas_write(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.LOG)
+        page.check('#dimUntagged')
+        page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
+        assert page.evaluate('msgs') == [{'type': 'writeConfig', 'base': _full([_rule('[A]')]), 'next': {**_full([_rule('[A]')]), 'dimUntagged': True}}]
+        assert page.evaluate("count('set')") == 1
+
+    def test_external_change_rerenders_when_clean(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True)
+        self._add(page, '[NEW]')
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 2", timeout=3000)
+        assert page.is_hidden('#conflict')
+
+    def _dirty_then_external_add(self, page):
+        page.focus('#rows .tag')
+        page.keyboard.press('End')
+        page.keyboard.type('Q')
+        self._add(page, '[NEW]')
+        self._banner(page)
+        assert self._row_tags(page) == ['[A]Q']
+
+    def test_external_change_while_dirty_shows_banner_keeps_draft_and_writes_nothing(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True)
+        self._dirty_then_external_add(page)
+        page.click('#debugTitle')
+        page.wait_for_timeout(300)
+        self._banner(page)
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+        assert page.evaluate("count('set')") == 1
+
+    def test_reload_discards_draft_and_shows_stored(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True)
+        self._dirty_then_external_add(page)
+        page.click('#conflictReload')
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 2", timeout=3000)
+        assert self._row_tags(page) == ['[A]', '[NEW]']
+        assert page.is_hidden('#conflict')
+        page.check('#dimUntagged')
+        page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+
+    def test_toggle_on_then_off_while_held_ends_false(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.HOLD)
+        page.check('#dimUntagged')
+        page.uncheck('#dimUntagged')
+        page.evaluate('releases[0]()')
+        page.wait_for_function("() => count('set') === 2", timeout=3000)
+        assert page.evaluate('cfg().dimUntagged') is False
+        assert not page.is_checked('#dimUntagged')
+        assert page.is_hidden('#conflict')
+
+    def test_held_save_then_external_add_conflicts_visibly(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.HOLD)
+        page.check('#dimUntagged')
+        self._add(page, '[NEW]')
+        self._banner(page)
+        page.evaluate('releases[0]()')
+        page.wait_for_timeout(300)
+        self._banner(page)
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+        assert page.evaluate('cfg().dimUntagged') is False
+        assert page.is_checked('#dimUntagged')
+
+    def test_messaging_failure_keeps_draft_and_retries_same_write(self):
+        page = self._opts(_full([_rule('[A]')]), clock=True, setup=(
+            "window.sent = []; browser.runtime.sendMessage = async m => { sent.push(JSON.stringify(m));"
+            " if (sent.length <= 3) throw new Error('down'); return {ok: true, value: m.next}; };"))
+        page.clock.run_for(50)
+        page.click('#dimUntagged')
+        page.clock.run_for(10)
+        assert page.evaluate('sent.length') == 1
+        assert page.text_content('#toast') == 'Not saved — retrying'
+        page.clock.run_for(1000)
+        assert page.evaluate('sent.length') == 2
+        page.clock.run_for(3000)
+        assert page.evaluate('sent.length') == 3
+        page.clock.run_for(10000)
+        assert page.evaluate('sent.length') == 3
+        assert page.evaluate('sent[0] === sent[1] && sent[1] === sent[2]') is True
+        assert page.is_checked('#dimUntagged')
+        assert page.evaluate("count('set')") == 0
+        page.click('#lazyRenderTurns')
+        page.clock.run_for(10)
+        assert page.evaluate('sent[3] === sent[0]') is True
+        fifth = json.loads(page.evaluate('sent[4]'))
+        assert fifth['next']['lazyRenderTurns'] is False and fifth['base']['dimUntagged'] is True
+        assert page.text_content('#toast') == 'Auto-saved ✓'
+
+    def test_partial_hex_typed_during_held_save_is_not_lost(self):
+        page = self._opts(_full([_rule('[A]', '#999999')]), with_bg=True, setup=self.HOLD)
+        page.check('#dimUntagged')
+        page.fill('#rows .hex', '#12')
+        page.evaluate('releases[0]()')
+        page.wait_for_function("() => count('set') === 1", timeout=3000)
+        self._add(page, '[NEW]')
+        self._banner(page)
+        assert page.input_value('#rows .hex') == '#12'
+        assert page.evaluate('cfg().rules[0].color') == '#999999'
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+        assert page.evaluate("count('set')") == 2
+
+    def test_external_restore_of_previous_value_rerenders(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True)
+        page.check('#dimUntagged')
+        page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
+        page.wait_for_function("() => document.getElementById('toast').textContent === 'Auto-saved ✓'", timeout=3000)
+        flip = "v => { const c = cfg(); return send({type: 'writeConfig', base: c, next: {...c, dimUntagged: v}}); }"
+        assert page.evaluate(flip, False)['ok'] is True
+        page.wait_for_function("() => !document.getElementById('dimUntagged').checked", timeout=3000)
+        assert page.is_hidden('#conflict')
+        assert page.evaluate(flip, True)['ok'] is True
+        page.wait_for_function("() => document.getElementById('dimUntagged').checked", timeout=3000)
+        assert page.is_hidden('#conflict')
+
+    def test_rerender_of_focused_row_does_not_save(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.LOG)
+        page.focus('#rows .hex')
+        self._add(page, '[NEW]')
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 2", timeout=3000)
+        assert self._row_tags(page)[1] == '[NEW]'
+        page.wait_for_timeout(500)
+        assert page.evaluate('msgs') == []
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+        assert page.is_hidden('#conflict')
+
+    def test_reload_ignores_stale_conflict_reply(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, delay=50, setup=self.HOLD_REQ_REPLY)
+        page.check('#dimUntagged')            # write built against [A]; request held before dispatch
+        self._add(page, '[X]')                 # lands first, so the held write must conflict
+        page.evaluate('releases[0]()')         # dispatch the held write; its (conflict) reply is held
+        page.wait_for_function('() => releases.length === 2', timeout=3000)
+        self._add(page, '[Y]')
+        self._banner(page)
+        page.click('#conflictReload')
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 3", timeout=3000)
+        assert self._row_tags(page) == ['[A]', '[X]', '[Y]']
+        assert page.is_hidden('#conflict')
+        page.evaluate('releases[1]()')
+        page.wait_for_timeout(300)
+        assert self._row_tags(page) == ['[A]', '[X]', '[Y]']
+        assert page.is_hidden('#conflict')
+        assert not page.is_checked('#dimUntagged')
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[X]', '[Y]']
+        assert page.evaluate('cfg().dimUntagged') is False
+
+    def test_own_echo_not_a_conflict(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True)
+        page.evaluate("() => { window.changes = 0; browser.storage.onChanged.addListener(() => { changes++; }); document.querySelector('#rows tr').dataset.mark = '1'; }")
+        page.check('#dimUntagged')
+        page.wait_for_timeout(800)
+        assert page.evaluate('changes') == 1
+        assert page.evaluate("document.querySelector('#rows tr').dataset.mark") == '1'
+        assert page.is_hidden('#conflict')
+
+    # chrome.storage hands back objects with sorted keys; the plain harness keeps insertion order.
+    SORTED_STORAGE = ('const sortKeys = v => v === undefined ? v : JSON.parse(JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x))'
+                      ' ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x));'
+                      ' const get = browser.storage.sync.get; browser.storage.sync.get = async k => sortKeys(await get(k));'
+                      ' const realFire = fire; window.fire = (n, ch, area) => realFire(n, n === "changed"'
+                      ' ? Object.fromEntries(Object.entries(ch).map(([k, c]) => [k, {oldValue: sortKeys(c.oldValue), newValue: sortKeys(c.newValue)}])) : ch, area);')
+
+    def test_sorted_key_storage_echo_not_a_conflict(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.SORTED_STORAGE)
+        page.check('#dimUntagged')
+        page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
+        page.wait_for_function("() => document.getElementById('toast').textContent === 'Auto-saved ✓'", timeout=3000)
+        assert page.is_hidden('#conflict')
+        page.uncheck('#showBadge')
+        page.wait_for_function('() => cfg().showBadge === false', timeout=3000)
+        assert page.is_hidden('#conflict')
+
+    def test_show_quick_tag_option_persists(self):
+        page = self._fresh(_full([_rule('[A]')], showQuickTag=None))
+        assert page.is_checked('#showQuickTag')
+        stored = "v => new Promise(r => chrome.storage.sync.get('tagHighlighterConfigV1', d => r(d.tagHighlighterConfigV1.showQuickTag === v)))"
+        page.uncheck('#showQuickTag')
+        page.wait_for_function(stored, arg=False, timeout=3000)
+        page.check('#showQuickTag')
+        page.wait_for_function(stored, arg=True, timeout=3000)
+
 
 # ============================================================
 # Background Script Migration Tests
@@ -1101,6 +1337,13 @@ class TestStatic:
         for name in ('manifest.chrome.json', 'manifest.firefox.json'):
             m = json.loads((ROOT / 'src' / name).read_text())
             assert 'action' in m and 'default_popup' not in m['action'], name
+
+    def test_only_background_writes_config(self):
+        options = (ROOT / 'src' / 'options.js').read_text()
+        content = (ROOT / 'src' / 'content.js').read_text()
+        assert not re.search(r'\bstore\.set\(', options), 'options.js must write through background.js'
+        for pattern in ('storageSet(storeSync', 'storeSync.set(', 'storage.sync.set('):
+            assert pattern not in content, pattern
 
 
 

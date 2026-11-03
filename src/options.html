@@ -31,6 +31,8 @@
     </div>
   </div>
 
+  <div id="conflict" class="conflict" role="alert" hidden>Settings changed in another window. <button id="conflictReload" type="button">Reload</button></div>
+
   <main class="card">
     <section class="section">
       <h2 class="sectionTitle">General</h2>
@@ -87,6 +89,15 @@
           <input id="showDeleteUntagged" type="checkbox" />
           <span class="label">Show “Delete untagged chats” button
             <span class="hintInline">Adds a button to the sidebar filter bar. It lists every chat that matches no tag rule and deletes them only after you type “delete”. Pinned, starred and archived chats are kept. Deleted chats can't be restored from ChatGPT's sidebar.</span>
+          </span>
+        </label>
+      </div>
+
+      <div class="generalRow">
+        <label class="checkboxWrap" title="Add a button that adds, changes or removes a chat's prefix tag">
+          <input id="showQuickTag" type="checkbox" checked />
+          <span class="label">Show quick tag button
+            <span class="hintInline">Hover a chat or press Alt+T to add, change or remove its prefix tag. This renames the chat on ChatGPT.</span>
           </span>
         </label>
       </div>

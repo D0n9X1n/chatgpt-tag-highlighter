@@ -365,3 +365,16 @@ tr.drag-over td{
   margin-top: 8px;
 }
 
+.conflict{
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #fb4934;
+  border-radius: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.conflict[hidden]{
+  display: none;
+}
