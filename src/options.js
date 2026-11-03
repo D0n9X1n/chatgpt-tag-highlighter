@@ -394,6 +394,7 @@
 	function show(cfg) {
 		gen++;
 		uncommitted.clear();
+		draggedRow = null; // The rows are rebuilt: a drag in progress is over (its dragend never reaches #rows).
 		rendering = true;
 		try {
 			render(cfg);
@@ -436,6 +437,10 @@
 
 	async function sendWrite(write) {
 		clearTimeout(retryTimer);
+		if (conflict) {
+			return; // The banner suspends saving, including automatic retries.
+		}
+
 		inFlight = true;
 		sentNext = write.next;
 		sentGen = gen;
@@ -516,6 +521,9 @@
 
 	function showConflict() {
 		conflict = true;
+		clearTimeout(retryTimer); // No automatic retry while the banner is up; Reload discards the draft.
+		failed = null;
+		retryStep = 0;
 		els.conflict.hidden = false;
 	}
 

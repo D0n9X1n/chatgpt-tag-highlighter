@@ -817,6 +817,27 @@ class TestOptionsPage:
         assert fifth['next']['lazyRenderTurns'] is False and fifth['base']['dimUntagged'] is True
         assert page.text_content('#toast') == 'Auto-saved ✓'
 
+    def test_conflict_stops_automatic_retries(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, clock=True, setup=(
+            "const real = browser.runtime.sendMessage; let n = 0;"
+            " browser.runtime.sendMessage = m => (++n === 1 ? Promise.reject(new Error('down')) : real(m));"))
+        page.clock.run_for(50)
+        page.evaluate('window.orig = structuredClone(cfg())')
+        page.click('#dimUntagged')            # first save is rejected; a retry is scheduled for 1 s
+        page.clock.run_for(10)
+        assert page.text_content('#toast') == 'Not saved — retrying'
+        page.evaluate("() => { const c = cfg(); send({type: 'writeConfig', base: c, next: {...c, maxChatTurns: 5}}); }")
+        page.clock.run_for(10)
+        self._banner(page)
+        page.evaluate("() => { send({type: 'writeConfig', base: cfg(), next: orig}); }")  # restore the original
+        page.clock.run_for(10)
+        assert page.evaluate('cfg().maxChatTurns') == 0
+        page.clock.run_for(10000)             # past every retry delay
+        assert page.evaluate("count('set')") == 2, 'only the two external writes'
+        assert page.evaluate('cfg().dimUntagged') is False
+        self._banner(page)
+        assert page.is_checked('#dimUntagged')
+
     def test_partial_hex_typed_during_held_save_is_not_lost(self):
         page = self._opts(_full([_rule('[A]', '#999999')]), with_bg=True, setup=self.HOLD)
         page.check('#dimUntagged')
@@ -954,6 +975,10 @@ class TestOptionsPage:
         self._drag_first_row_below_second(page, external_add_then_reload)
         assert self._row_tags(page) == ['[A]', '[B]', '[NEW]']
         assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+        self._add(page, '[LATER]')            # the drag is over: a clean page simply re-renders
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 4", timeout=3000)
+        assert self._row_tags(page) == ['[A]', '[B]', '[NEW]', '[LATER]']
+        assert page.is_hidden('#conflict')
 
     def test_ok_reply_with_pending_during_conflict_writes_nothing(self):
         page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.HOLD_REPLY)
