@@ -966,6 +966,9 @@ class TestOptionsPage:
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'grid'
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr td:nth-child(3)'), '::before').content") == '"Tag"'
+        assert page.evaluate("getComputedStyle(document.querySelector('.header')).flexWrap") == 'wrap'
+        page.fill('#debugTitle', 'X' * 80)  # an unbroken title in the rule tester must wrap, not widen the page
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), page.evaluate('document.documentElement.scrollWidth')
         if width == 400:
             match, color = page.evaluate("""() => ['td:nth-child(4)', 'td:nth-child(5)'].map(s => {
                 const r = document.querySelector('#rows tr ' + s).getBoundingClientRect();
