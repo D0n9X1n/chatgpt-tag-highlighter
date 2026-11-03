@@ -1356,6 +1356,20 @@ class TestStatic:
             m = json.loads((ROOT / 'src' / name).read_text())
             assert 'action' in m and 'default_popup' not in m['action'], name
 
+    @staticmethod
+    def _fn(text, name):  # function source with indentation stripped, by brace matching
+        start, depth = text.index(f'function {name}('), 0
+        for i in range(text.index('{', start), len(text)):
+            depth += {'{': 1, '}': -1}.get(text[i], 0)
+            if depth == 0:
+                return '\n'.join(line.strip() for line in text[start:i + 1].splitlines())
+
+    def test_apply_tag_never_reads_menu_state(self):
+        src = (ROOT / 'src' / 'content.js').read_text()
+        assert 'qtBound' not in self._fn(src, 'applyTag')
+        t = self._fn(src, 'startNewTag')
+        assert t.index('const bound = qtBound') < t.index('await'), 'capture the chat before any await'
+
     def test_only_background_writes_config(self):
         options = (ROOT / 'src' / 'options.js').read_text()
         content = (ROOT / 'src' / 'content.js').read_text()
@@ -2906,3 +2920,76 @@ class TestAppShellContentScript:
         page.mouse.move(640, 5)
         page.wait_for_timeout(6500)
         assert page.locator('#cth-qt-toast').count() == 0
+
+    # ---- New tag from the quick tag menu (#73) ----
+
+    def _stored_rules(self):
+        page = self.context.new_page()
+        try:
+            page.goto(f'chrome-extension://{self.ext_id}/options.html')
+            return page.evaluate("k => new Promise(r => chrome.storage.sync.get(k, d => r(d[k].rules)))", STORAGE_KEY)
+        finally:
+            page.close()
+
+    def _new_tag(self, page, cid, text):
+        self._open_qt(page, cid)
+        page.click('#cth-qt-menu [data-action=new]')
+        page.fill('#cth-qt-menu input', text)
+        page.keyboard.press('Enter')
+
+    def test_new_tag_trims_creates_rule_and_renames(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.click('#cth-qt-menu [data-action=new]')
+        page.wait_for_selector('#cth-qt-menu input')
+        assert page.get_attribute('#cth-qt-menu input', 'placeholder') == '[TAG]'
+        page.keyboard.press('Escape')
+        assert page.locator('#cth-qt-menu [data-action=new]').count() == 1
+        assert page.locator('#cth-qt-menu input').count() == 0
+        page.click('#cth-qt-menu [data-action=new]')
+        page.wait_for_selector('#cth-qt-menu input')
+        page.keyboard.press('Tab')
+        assert page.locator('#cth-qt-menu').count() == 0
+        self._new_tag(page, 'c5', '  [NEW]  ')
+        assert self._title_is(page, 'c5', '[NEW] plain chat')
+        assert self._stored_rules()[-1] == _rule('[NEW]', '#b8bb26')
+
+    @pytest.mark.parametrize('text', ['', 'x' * 41, 'x' * 40], ids=['empty', '41', '40'])
+    def test_new_tag_length_bounds(self, text):
+        page, calls, _ = self._qt_page()
+        self._new_tag(page, 'c5', text)
+        if len(text) == 40:
+            assert self._title_is(page, 'c5', 'x' * 40 + ' plain chat')
+            assert len(self._stored_rules()) == len(CONTENT_RULES) + 1
+        else:
+            self._alert(page, 'Tags are 1–40 characters.')
+            page.wait_for_timeout(300)
+            assert self._patches(calls) == []
+            assert len(self._stored_rules()) == len(CONTENT_RULES)
+
+    @pytest.mark.parametrize('tag, title', [('[BUG]', '[BUG] plain chat'), ('code', 'code plain chat')])
+    def test_new_tag_reuses_existing(self, tag, title):
+        page, _, _ = self._qt_page()
+        self._new_tag(page, 'c5', tag)
+        assert self._title_is(page, 'c5', title)
+        assert len(self._stored_rules()) == len(CONTENT_RULES)
+
+    def test_new_tag_rename_failure_keeps_rule(self):
+        page, _, _ = self._qt_page(patch_status=500)
+        self._new_tag(page, 'c5', '[NEW]')
+        self._alert(page, 'ChatGPT refused the rename (HTTP 500). Nothing changed.')
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+        assert self._stored_rules()[-1]['tag'] == '[NEW]'
+
+    def test_new_tag_keeps_original_chat_across_await(self):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._new_tag(page, 'c1', '[NEW]')
+        self._wait_held(page, held)
+        page.mouse.click(640, 400)
+        self._open_qt(page, 'c2')
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c1', '[NEW] ship release')
+        patches = self._patches(calls)
+        assert len(patches) == 1 and patches[0]['url'].endswith('/c1')
+        assert page.locator('#cth-qt-menu[data-cth-chat="c2"]').count() == 1, 'a later menu stays open'
+        assert page.evaluate(_tjs('c2')) == '[BUG] code crash'

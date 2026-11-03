@@ -626,6 +626,7 @@ html.cth-light .cth-qt-item:hover { background: rgba(0,0,0,0.06); }
 html.cth-light .cth-qt-danger { color: #cc241d; }
 #${QT_MENU_ID} [role=separator] { height: 1px; margin: 4px 0; background: rgba(255,255,255,0.12); }
 .cth-qt-empty { padding: 8px; opacity: 0.6; }
+.cth-qt-input { width: 100%; height: 28px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; }
 #${QT_BTN_ID}:focus-visible, #${QT_MENU_ID} :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 
 #${QT_TOAST_ID} {
@@ -2251,6 +2252,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				applyTag(qtBound, null);
 			} else if (it.dataset.tag) {
 				applyTag(qtBound, it.dataset.tag);
+			} else if (it.dataset.action === 'new') {
+				startNewTag(it);
 			}
 		});
 		document.body.append(qtMenu);
@@ -2482,6 +2485,57 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 
 		qtToast(tag === null ? 'Tag removed' : 'Tagged', {undo: {id: bound.id, tagged: next, old: bound.title}});
+	}
+
+	// "New tag…": background.js validates and persists the rule first, then the
+	// chat captured when the input opened is renamed.
+	function startNewTag(item) {
+		const bound = qtBound; // Capture the chat now, before any await.
+		const input = el('input', {type: 'text', placeholder: '[TAG]', 'aria-label': 'New tag', class: 'cth-qt-input'});
+		item.replaceWith(input);
+		input.focus();
+		input.addEventListener('keydown', async e => {
+			if (e.key === 'Tab') {
+				closeIfBound(bound); // Let focus move on.
+				return;
+			}
+
+			e.stopPropagation();
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				input.replaceWith(item);
+				item.focus();
+				return;
+			}
+
+			if (e.key !== 'Enter' || qtBusy) {
+				return;
+			}
+
+			e.preventDefault();
+			const tag = input.value.trim();
+			if (tag.length === 0 || tag.length > 40) {
+				closeIfBound(bound);
+				qtToast('Tags are 1–40 characters.', {error: true});
+				return;
+			}
+
+			busyIfBound(bound);
+			const res = await sendRuntimeMessage({type: 'addRule', tag}).catch(() => null);
+			if (!res?.ok) {
+				closeIfBound(bound);
+				qtToast(res?.error || "Couldn't save the tag. Nothing changed.", {error: true});
+				return;
+			}
+
+			// compileConfig has DOM side effects, so build the rule directly;
+			// storage.onChanged recompiles shortly after.
+			const newTag = String(res.rule.tag).trim();
+			const rules = compiled.rules.some(r => r.tag === newTag)
+				? compiled.rules
+				: [...compiled.rules, {tag: newTag, match: 'startsWith', color: toHex(res.rule.color), hide: false, overlay: true}];
+			await applyTag(bound, newTag, rules);
+		});
 	}
 
 	// One toast at a time, centered just above the overlay (or the composer).
