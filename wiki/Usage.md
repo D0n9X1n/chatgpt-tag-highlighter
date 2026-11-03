@@ -50,6 +50,7 @@ Hover or focus a chat in the sidebar and click the tag button that appears next 
 - **New tag…** turns into a text box. Type a tag (1–40 characters) and press Enter: a `startsWith` rule is added with the next unused palette color and applied to the chat. If the tag already exists, that rule is reused. Escape goes back to the menu.
 - Right before every rename, including Undo, the extension checks the chat's current title on ChatGPT and changes nothing if it differs or can't be checked. Its own renames of the same chat run one at a time across tabs in this browser. A rename made in ChatGPT itself or on another device at the same moment can still race (best-effort).
 - After the extension is updated or reloaded, open ChatGPT tabs show **Reload this ChatGPT tab to tag chats.** and change nothing until you reload them. If ChatGPT doesn't answer a rename it was sent, you see **Not sure the rename finished. Reload to check.**
+- After a rename is interrupted that way, or by closing its tab while it was being saved, the extension waits up to a minute before renaming that chat again, so tagging it meanwhile may show **Still saving this chat — try again**.
 - After a rename, a toast shows **Undo** for 6 seconds (longer while you hover or focus it). Undo restores the old title, unless the chat was renamed again in the meantime: here, in another tab or on another device.
 - If the title changed while the menu was open, or ChatGPT refuses the rename, an error toast explains it and nothing changes.
 

@@ -2421,8 +2421,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 
 		return new Promise((resolve, reject) => {
-			let state = 'waiting'; // waiting | held | writing | lost | done
+			let state = 'waiting'; // waiting | held | acking | writing | done
 			let timer = 0;
+			let ackWaiter = null;
 			const finish = (ok, value) => {
 				if (state === 'done') {
 					return;
@@ -2430,6 +2431,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 				state = 'done';
 				clearTimeout(timer);
+				ackWaiter?.(false);
+				ackWaiter = null;
 				try {
 					port.disconnect();
 				} catch {}
@@ -2438,17 +2441,32 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			};
 
 			const lock = {
-				held: () => state === 'held',
-				// Called right before the PATCH: from here on the lock is held
-				// until the request settles, however long it takes.
+				// Right before the PATCH: background.js records the write and
+				// acknowledges it. From then on the port is held until the PATCH settles.
 				write() {
 					if (state !== 'held') {
-						return false;
+						return Promise.resolve(false);
 					}
 
-					state = 'writing';
-					clearTimeout(timer);
-					return true;
+					state = 'acking';
+					return new Promise(r => {
+						ackWaiter = r;
+						try {
+							port.postMessage({type: 'write'});
+						} catch {
+							finish(false, new Error(LOCK_LOST));
+						}
+					});
+				},
+				// After the PATCH settled: 'ok' | 'refused' | 'unknown' ('unknown' quarantines the chat).
+				done(outcome) {
+					if (state !== 'writing') {
+						return;
+					}
+
+					try {
+						port.postMessage({type: 'done', outcome});
+					} catch {}
 				},
 			};
 
@@ -2457,27 +2475,30 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				void API.runtime.lastError; // Read it so Chrome doesn't log it.
 				if (state === 'waiting') {
 					finish(false, new Error(RELOAD_TAB)); // Never granted: the extension went away.
-				} else if (state === 'held') {
-					state = 'lost'; // The steps in flight stop before the PATCH.
-					finish(false, new Error(LOCK_LOST));
+				} else if (state === 'held' || state === 'acking') {
+					finish(false, new Error(LOCK_LOST)); // Nothing was sent.
 				}
 				// 'writing': the PATCH was sent; wait for it to settle.
 			});
 			port.onMessage.addListener(msg => {
-				if (!msg?.granted || state !== 'waiting') {
-					return;
+				if (msg?.granted && state === 'waiting') {
+					state = 'held';
+					clearTimeout(timer);
+					timer = setTimeout(() => {
+						if (state === 'held' || state === 'acking') {
+							finish(false, new Error(LOCK_LOST));
+						}
+					}, CHAT_LOCK_MS);
+					Promise.resolve()
+						.then(() => fn(lock))
+						.then(value => finish(true, value), error => finish(false, error));
+				} else if (msg?.type === 'write-ack' && state === 'acking') {
+					state = 'writing';
+					clearTimeout(timer);
+					const ack = ackWaiter;
+					ackWaiter = null;
+					ack?.(true);
 				}
-
-				state = 'held';
-				clearTimeout(timer);
-				timer = setTimeout(() => {
-					if (state === 'held') {
-						finish(false, new Error(LOCK_LOST));
-					}
-				}, CHAT_LOCK_MS);
-				Promise.resolve()
-					.then(() => fn(lock))
-					.then(value => finish(true, value), error => finish(false, error));
 			});
 		});
 	}
@@ -2520,11 +2541,20 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				throw new Error(staleText);
 			}
 
-			if (!lock.write()) {
+			if (!await lock.write()) {
 				throw new Error(LOCK_LOST);
 			}
 
-			await patchTitle(id, title, token);
+			let outcome = 'unknown';
+			try {
+				await patchTitle(id, title, token);
+				outcome = 'ok';
+			} catch (error) {
+				outcome = error.unknownOutcome ? 'unknown' : 'refused';
+				throw error;
+			} finally {
+				lock.done(outcome);
+			}
 		});
 	}
 
@@ -2537,7 +2567,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				body: JSON.stringify({title}),
 			});
 		} catch {
-			throw new Error(UNKNOWN_OUTCOME); // Sent, but no answer: it may have landed.
+			// Sent, but no answer: it may have landed.
+			throw Object.assign(new Error(UNKNOWN_OUTCOME), {unknownOutcome: true});
 		}
 
 		const body = await readJson(r);

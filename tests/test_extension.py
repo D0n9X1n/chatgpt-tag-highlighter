@@ -84,11 +84,6 @@ def browser_context(playwright_session):
     context.close()
 
 
-def _extension_id(context):
-    sw = next(iter(context.service_workers), None) or context.wait_for_event('serviceworker', timeout=10_000)
-    return _EXT_ID_RE.match(sw.url).group(1)
-
-
 # Match the 32-char lowercase a–p extension ID portion of an extension URL.
 _EXT_ID_RE = re.compile(r'chrome-extension://([a-p]{32})/')
 
@@ -1530,27 +1525,88 @@ class TestConfigWriter(_BgPages):
 class TestChatLock(_BgPages):
     """background.js grants one quick tag rename per chat at a time, across tabs."""
 
+    # Fake runtime ports: content.js's side of the lock protocol.
+    PORTS = """
+        window.mkPort = name => {
+            const p = {name, got: [], ml: [], dl: [],
+                postMessage: m => p.got.push(m && m.granted ? 'granted' : m.type),
+                onMessage: {addListener: f => p.ml.push(f)},
+                onDisconnect: {addListener: f => p.dl.push(f)}};
+            p.send = m => p.ml.forEach(f => f(m, p));
+            p.leave = () => p.dl.forEach(f => f(p));  // released, or the tab closed
+            fire('connect', p);
+            return p;
+        };
+        window.settle = (ms = 50) => new Promise(r => setTimeout(r, ms));
+    """
+
     def test_queue_grants_in_order_and_skips_departed_waiters(self):
-        page = self.bg()
-        res = page.evaluate("""() => {
-            const port = name => {
-                const p = {name, got: 0, dl: [], postMessage: m => { if (m && m.granted) p.got++; },
-                           onDisconnect: {addListener: f => p.dl.push(f)}};
-                p.leave = () => p.dl.forEach(f => f(p));  // tab closed or released
-                fire('connect', p);
-                return p;
-            };
-            const a = port('cth-chat-lock:c5'), b = port('cth-chat-lock:c5'), c = port('cth-chat-lock:c5');
-            const x = port('cth-chat-lock:c9'), other = port('something-else');
-            const s = () => [a.got, b.got, c.got, x.got, other.got];
+        page = self.bg(setup=self.PORTS)
+        res = page.evaluate("""async () => {
+            const a = mkPort('cth-chat-lock:c5'), b = mkPort('cth-chat-lock:c5'), c = mkPort('cth-chat-lock:c5');
+            const x = mkPort('cth-chat-lock:c9'), other = mkPort('something-else');
+            const s = () => [a, b, c, x, other].map(p => p.got.length);
+            await settle();
             const out = [s()];
-            b.leave(); out.push(s());   // a waiter leaves: nothing granted
-            a.leave(); out.push(s());   // the holder leaves: the next live waiter
+            b.leave(); await settle(); out.push(s());   // a waiter leaves: nothing granted
+            a.leave(); await settle(); out.push(s());   // the holder leaves before writing: the next live waiter
             c.leave();
-            const d = port('cth-chat-lock:c5'); out.push([...s(), d.got]);  // free again
+            const d = mkPort('cth-chat-lock:c5'); await settle(); out.push([...s(), d.got.length]);  // free again
             return out;
         }""")
         assert res == [[1, 0, 0, 1, 0], [1, 0, 0, 1, 0], [1, 0, 1, 1, 0], [1, 0, 1, 1, 0, 1]]
+
+    def test_write_phase_quarantine_and_restart(self):
+        page = self.bg(setup=self.PORTS + 'window.__session = {cthTestQuarantineMs: 700};')
+        res = page.evaluate("""async () => {
+            const rec = () => (__session.cthWritingChats || {}).c5 ?? null;
+            const out = {};
+            const a = mkPort('cth-chat-lock:c5'), b = mkPort('cth-chat-lock:c5');
+            await settle();
+            a.send({type: 'write'}); await settle();
+            out.ack = [[...a.got], typeof rec()];
+            a.send({type: 'done', outcome: 'refused'}); a.leave(); await settle();
+            out.answered = [[...b.got], rec()];
+            const c = mkPort('cth-chat-lock:c5'); await settle();
+            b.leave(); await settle();
+            out.preLeave = [...c.got];
+            const d = mkPort('cth-chat-lock:c5');
+            c.send({type: 'write'}); await settle(); c.leave(); await settle(300);
+            out.closedWhileWriting = [[...d.got], typeof rec()];
+            await settle(700);
+            out.afterQuarantine = [[...d.got], rec()];
+            const e = mkPort('cth-chat-lock:c5');
+            d.send({type: 'write'}); await settle(); d.send({type: 'done', outcome: 'unknown'}); d.leave(); await settle(300);
+            out.unknown = [...e.got];
+            await settle(700);
+            out.afterUnknown = [...e.got];
+            e.send({type: 'write'}); await settle(); e.leave();  // a tab closes mid-PATCH ...
+            await settle();
+            out.session = __session;                            // ... and the worker restarts
+            return out;
+        }""")
+        assert res['ack'] == [['granted', 'write-ack'], 'number'], 'the write start is recorded before the ack'
+        assert res['answered'] == [['granted'], None], 'an answered PATCH releases at once and clears the record'
+        assert res['preLeave'] == ['granted'], 'leaving before writing releases at once'
+        assert res['closedWhileWriting'] == [[], 'number'], 'leaving mid-PATCH quarantines the chat'
+        assert res['afterQuarantine'] == [['granted'], None]
+        assert res['unknown'] == [], 'an unknown outcome quarantines the chat'
+        assert res['afterUnknown'] == ['granted']
+        session = dict(res['session'], cthTestQuarantineMs=2000)
+        restarted = self.bg(setup=self.PORTS + f'window.__session = {json.dumps(session)};')
+        early, late = restarted.evaluate("""async () => {
+            const f = mkPort('cth-chat-lock:c5');
+            await settle(200); const early = [...f.got];
+            await settle(2500); return [early, f.got];
+        }""")
+        assert (early, late) == ([], ['granted']), 'a restarted worker honours the stored write'
+        default = self.bg(setup=self.PORTS + 'window.__session = {cthWritingChats: {c5: Date.now() - 58500}};')
+        early, late = default.evaluate("""async () => {
+            const f = mkPort('cth-chat-lock:c5');
+            await settle(150); const early = [...f.got];
+            await settle(2500); return [early, f.got];
+        }""")
+        assert (early, late) == ([], ['granted']), 'the quarantine is 60 s by default'
 
 
 class TestOpenSettings(_BgPages):
@@ -1798,6 +1854,8 @@ class TestContentScript:
             """([key, cfg, uiKey, filters]) => Promise.all([
                 new Promise(r => chrome.storage.sync.set({[key]: cfg}, r)),
                 new Promise(r => chrome.storage.local.set({[uiKey]: {activeFilters: filters}}, r)),
+                // A rename quarantined by an earlier test must not block this one.
+                new Promise(r => chrome.storage.session.remove(['cthWritingChats', 'cthTestQuarantineMs'], r)),
             ])""",
             [STORAGE_KEY, cfg, 'tagHighlighterUiStateV1', active_filters or []],
         )
@@ -3798,8 +3856,10 @@ class TestAppShellContentScript:
         self._pick(tab_b, 'c5', '[TODO]')
         tab_b.wait_for_timeout(500)
         assert self._chat_calls(calls_b) == []
+        closed = time.monotonic()
         tab_a.close()
         assert self._title_is(tab_b, 'c5', '[TODO] plain chat', timeout=8000), 'closing the tab releases its lock'
+        assert min(c['t'] for c in self._chat_calls(calls_b)) - closed < 2, 'before the PATCH: released at once'
         assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET', 'PATCH']
         assert titles['c5'] == '[TODO] plain chat'
 
@@ -3848,7 +3908,9 @@ class TestAppShellContentScript:
     def test_invalidated_extension_fails_closed(self, playwright_session):
         private = _launch(playwright_session, tempfile.mkdtemp(prefix='cth-reload-'))
         shared = (self.context, self.ext_id)
-        self.context, self.ext_id = private, _extension_id(private)
+        # An unpacked extension's ID comes from its path: the same as the shared browser's.
+        # (Waiting for the private worker races with its startup.)
+        self.context = private
         titles = dict(DEFAULT_CHATS)
         held_a = []
         try:
@@ -3882,3 +3944,70 @@ class TestAppShellContentScript:
                     pass
             self.context, self.ext_id = shared
             private.close()
+
+    # ---- Lock survives a closed tab and an unknown outcome ----
+
+    def _session(self, values=None, remove=()):
+        """storage.session from an extension page: web pages and content scripts can't reach it."""
+        page = self.context.new_page()
+        try:
+            page.goto(f'chrome-extension://{self.ext_id}/options.html')
+            page.evaluate("""([v, rm]) => Promise.all([
+                new Promise(r => chrome.storage.session.set(v, r)),
+                new Promise(r => chrome.storage.session.remove(rm, r))])""", [values or {}, list(remove)])
+        finally:
+            page.close()
+
+    def test_tab_closed_mid_patch_quarantines_chat(self):
+        titles = dict(DEFAULT_CHATS)
+        tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_patch_at': 1})
+        self._session({'cthTestQuarantineMs': 6000})
+        try:
+            tab_a.bring_to_front()
+            self._pick(tab_a, 'c5', '[BUG]')
+            self._wait_held(tab_a, held_a)  # A's PATCH is on its way to ChatGPT
+            dispatched = time.monotonic()
+            tab_b.bring_to_front()
+            self._pick(tab_b, 'c5', '[TODO]')
+            tab_b.wait_for_timeout(500)
+            assert self._chat_calls(calls_b) == []
+            held_a.clear()  # its route dies with the tab
+            tab_a.close()
+            tab_b.wait_for_timeout(2500)
+            assert self._chat_calls(calls_b) == [], 'closing the tab mid-PATCH must not release the chat'
+            titles['c5'] = '[BUG] plain chat'  # A's late PATCH lands on the server
+            self._alert(tab_b, 'Title changed — try again')
+            assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET'], 'B saw A\'s title and sent nothing'
+            assert min(c['t'] for c in self._chat_calls(calls_b)) - dispatched >= 5.5, 'B waited out the quarantine'
+            assert titles['c5'] == '[BUG] plain chat'
+        finally:
+            self._session(remove=['cthTestQuarantineMs'])
+
+    def test_unknown_outcome_quarantines_queued_waiter(self):
+        titles = dict(DEFAULT_CHATS)
+        tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_get_at': 1, 'patch_abort': True})
+        self._session({'cthTestQuarantineMs': 6000})
+        try:
+            tab_a.bring_to_front()
+            self._pick(tab_a, 'c5', '[BUG]')
+            self._wait_held(tab_a, held_a)
+            tab_b.bring_to_front()
+            self._pick(tab_b, 'c5', '[TODO]')
+            tab_b.wait_for_timeout(300)
+            assert self._chat_calls(calls_b) == []
+            held_a.pop().fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'id': 'c5', 'title': 'plain chat'}))
+            self._alert(tab_a, 'Not sure the rename finished. Reload to check.')
+            settled = time.monotonic()
+            tab_b.wait_for_timeout(2000)
+            assert self._chat_calls(calls_b) == [], 'an unknown outcome keeps the chat blocked'
+            assert self._title_is(tab_b, 'c5', '[TODO] plain chat', timeout=8000)
+            assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET', 'PATCH']
+            assert min(c['t'] for c in self._chat_calls(calls_b)) - settled >= 5.0
+        finally:
+            self._session(remove=['cthTestQuarantineMs'])
+            for r in held_a:
+                try:
+                    r.fulfill(status=200, body='{}')
+                except Exception:
+                    pass

@@ -321,17 +321,130 @@
 	seedOrMigrate();
 
 	// ---- Per-chat rename lock (quick tag), across tabs in this browser ----
-	// content.js connects a port named `cth-chat-lock:<id>`; the head of each
-	// chat's queue holds the lock. A port disconnects when its rename ends or
-	// its tab closes or navigates, so a lock can never leak.
+	// content.js connects a port named `cth-chat-lock:<id>`; ports queue per
+	// chat and the head is granted. Holder phases: 'pre' (granted) -> 'writing'
+	// (asked to send its PATCH; acknowledged only after the start is recorded in
+	// storage.session, so a restarted worker honours it) -> settled ('done').
+	// Leaving before writing releases at once. A PATCH whose outcome is unknown
+	// (its tab closed mid-PATCH, or the request failed after it was sent) keeps
+	// the chat blocked for QUARANTINE_MS from the write start; the next holder
+	// then reads the server's fresh title before renaming.
 	const CHAT_LOCK_PREFIX = 'cth-chat-lock:';
-	const chatLocks = new Map(); // id -> ports, head holds the lock
+	const WRITING_KEY = 'cthWritingChats';
+	// Tests only: storage.session can't be reached from web pages or content scripts.
+	const TEST_QUARANTINE_KEY = 'cthTestQuarantineMs';
+	const QUARANTINE_MS = 60_000;
+	const chatLocks = new Map(); // id -> [{port, phase}], head holds the lock
+	const quarantineTimers = new Map();
+	let lockChain = Promise.resolve();
 
-	function grantChatLock(id) {
-		const head = chatLocks.get(id)?.[0];
+	// Every lock change runs on one chain, so storage reads never race.
+	function lockJob(job) {
+		lockChain = lockChain.then(job).catch(() => {});
+		return lockChain;
+	}
+
+	async function writingStarts() {
 		try {
-			head?.postMessage({granted: true});
+			return (await sessionArea.get(WRITING_KEY))?.[WRITING_KEY] || {};
+		} catch {
+			return {};
+		}
+	}
+
+	async function setWritingStart(id, at) {
+		const all = {...await writingStarts()};
+		if (at === null) {
+			delete all[id];
+		} else {
+			all[id] = at;
+		}
+
+		try {
+			await sessionArea.set({[WRITING_KEY]: all});
+		} catch {}
+	}
+
+	async function quarantineMs() {
+		try {
+			const v = Number((await sessionArea.get(TEST_QUARANTINE_KEY))?.[TEST_QUARANTINE_KEY]);
+			return v > 0 ? Math.min(v, QUARANTINE_MS) : QUARANTINE_MS;
+		} catch {
+			return QUARANTINE_MS;
+		}
+	}
+
+	function removeLockEntry(id, entry) {
+		const queue = chatLocks.get(id);
+		const i = queue ? queue.indexOf(entry) : -1;
+		if (i === -1) {
+			return false;
+		}
+
+		queue.splice(i, 1);
+		if (queue.length === 0) {
+			chatLocks.delete(id);
+		}
+
+		return true;
+	}
+
+	async function grantNext(id) {
+		const head = chatLocks.get(id)?.[0];
+		if (!head || head.phase !== 'waiting') {
+			return;
+		}
+
+		const started = (await writingStarts())[id];
+		if (typeof started === 'number') {
+			const left = started + await quarantineMs() - Date.now();
+			if (left > 0) {
+				clearTimeout(quarantineTimers.get(id));
+				quarantineTimers.set(id, setTimeout(() => {
+					quarantineTimers.delete(id);
+					lockJob(() => grantNext(id));
+				}, left));
+				return;
+			}
+
+			await setWritingStart(id, null); // Quarantine over.
+		}
+
+		if (chatLocks.get(id)?.[0] !== head || head.phase !== 'waiting') {
+			return;
+		}
+
+		head.phase = 'pre';
+		try {
+			head.port.postMessage({granted: true});
 		} catch {} // Already gone: its onDisconnect grants the next one.
+	}
+
+	async function onLockMessage(id, entry, msg) {
+		const isHead = chatLocks.get(id)?.[0] === entry;
+		if (msg?.type === 'write' && isHead && entry.phase === 'pre') {
+			await setWritingStart(id, Date.now());
+			entry.phase = 'writing';
+			try {
+				entry.port.postMessage({type: 'write-ack'});
+			} catch {}
+		} else if (msg?.type === 'done' && isHead && entry.phase === 'writing') {
+			entry.phase = 'settled';
+			removeLockEntry(id, entry);
+			if (msg.outcome === 'ok' || msg.outcome === 'refused') {
+				await setWritingStart(id, null); // ChatGPT answered: release now.
+			}
+
+			await grantNext(id);
+		}
+	}
+
+	async function leaveLock(id, entry) {
+		const wasHead = chatLocks.get(id)?.[0] === entry;
+		if (removeLockEntry(id, entry) && wasHead) {
+			// Mid-PATCH ('writing'), its stored record keeps the chat quarantined.
+			await grantNext(id);
+		}
 	}
 
 	API.runtime?.onConnect?.addListener?.(port => {
@@ -340,26 +453,15 @@
 		}
 
 		const id = port.name.slice(CHAT_LOCK_PREFIX.length);
-		const queue = chatLocks.get(id) || [];
-		chatLocks.set(id, queue);
-		queue.push(port);
-		port.onDisconnect.addListener(() => {
-			const q = chatLocks.get(id) || [];
-			const i = q.indexOf(port);
-			if (i === -1) {
-				return;
-			}
-
-			q.splice(i, 1);
-			if (q.length === 0) {
-				chatLocks.delete(id);
-			} else if (i === 0) {
-				grantChatLock(id);
-			}
+		const entry = {port, phase: 'waiting'};
+		port.onMessage?.addListener?.(msg => lockJob(() => onLockMessage(id, entry, msg)));
+		port.onDisconnect.addListener(() => lockJob(() => leaveLock(id, entry)));
+		lockJob(async () => {
+			const queue = chatLocks.get(id) || [];
+			chatLocks.set(id, queue);
+			queue.push(entry);
+			await grantNext(id);
 		});
-		if (queue.length === 1) {
-			grantChatLock(id);
-		}
 	});
 
 	// ---- Messages: badge counter + config writes ----
