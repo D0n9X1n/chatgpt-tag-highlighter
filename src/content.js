@@ -2291,7 +2291,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const title = effectiveTitle(a);
 		const cur = currentPrefixTag(title, compiled.rules);
 		qtBound = {id, title};
-		const items = compiled.rules.filter(r => r.match === 'startsWith').map(r => {
+		// Hide rules are not offered (#80); `cur` still sees them, so a hidden
+		// prefix can be removed or replaced.
+		const items = compiled.rules.filter(r => r.match === 'startsWith' && !r.hide).map(r => {
 			const swatch = el('span', {class: 'cth-qt-swatch'});
 			swatch.style.background = r.color;
 			return el('div', {
@@ -2622,29 +2624,84 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
-	const titleNodeOf = a => {
-		const s = a.querySelector('[data-thread-title="true"] span[dir="auto"], .truncate span[dir="auto"]');
-		return s?.childNodes.length === 1 && s.firstChild.nodeType === Node.TEXT_NODE ? s.firstChild : null;
-	};
+	function textNodesOf(root) {
+		const nodes = [];
+		const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		while (w.nextNode()) {
+			nodes.push(w.currentNode);
+		}
+
+		return nodes;
+	}
+
+	const joinedText = nodes => nodes.map(n => n.nodeValue).join('').trim();
+
+	// A title may be duplicated (marquee) and each copy split into text nodes,
+	// whatever the markup. L is the lowest element holding all non-empty text:
+	// if L's text is one title (`isTitle`), or fewer than two of its children
+	// hold text, L is the only copy; otherwise each such child is a copy.
+	function titleCopies(a, isTitle) {
+		const t = a?.querySelector('[data-thread-title="true"], .truncate');
+		if (!t) {
+			return [];
+		}
+
+		const texts = textNodesOf(t).filter(n => n.nodeValue.trim());
+		if (texts.length === 0) {
+			return [t];
+		}
+
+		let l = texts[0].parentElement;
+		while (l !== t && !texts.every(n => l.contains(n))) {
+			l = l.parentElement;
+		}
+
+		const parts = [...l.children].filter(c => c.textContent.trim());
+		return parts.length < 2 || isTitle(joinedText(textNodesOf(l))) ? [l] : parts;
+	}
+
+	// Rewrite every copy showing one of `olds` to `next`, in place: never add
+	// or remove nodes, and never write a copy that already shows `next`.
+	function writeTitle(a, olds, next) {
+		for (const copy of titleCopies(a, text => text === next || olds.has(text))) {
+			const nodes = textNodesOf(copy);
+			const text = joinedText(nodes);
+			if (!text || text === next || !olds.has(text)) {
+				continue;
+			}
+
+			const first = nodes.find(n => n.nodeValue.trim());
+			for (const n of nodes) {
+				const value = n === first ? next : '';
+				if (n.nodeValue !== value) {
+					n.nodeValue = value;
+				}
+			}
+		}
+	}
+
+	// The open chat's name is usually in the tab title too.
+	function retitleDocument(id, a, old, next) {
+		const open = (a && isActiveChat(a)) || location.pathname === `/c/${id}`;
+		if (open && old && document.title.includes(old)) {
+			document.title = document.title.replace(old, () => next);
+		}
+	}
 
 	function effectiveTitle(a) {
 		const shown = getChatTitleText(a);
 		const id = chatIdOf(a);
 		const o = id && titleOverrides.get(id);
-		if (!o || shown === o.new) {
+		if (!o) {
 			return shown;
 		}
 
-		if (!o.olds.has(shown)) {
+		if (shown !== o.new && !o.olds.has(shown)) {
 			titleOverrides.delete(id); // An unknown title: renamed elsewhere.
 			return shown;
 		}
 
-		const node = titleNodeOf(a);
-		if (node) {
-			node.nodeValue = o.new; // Stale remount; converges on the next scan.
-		}
-
+		writeTitle(a, o.olds, o.new); // Repair any stale remounted copy.
 		return o.new;
 	}
 
@@ -2678,21 +2735,19 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 	}
 
-	// Write the confirmed title into the existing text node (never add or
+	// Write the confirmed title into the existing text nodes (never add or
 	// remove nodes) only if the row still shows `expected`.
 	function commitTitle(id, expected, next) {
 		if (!titleIs(id, expected)) {
 			return false;
 		}
 
-		const node = titleNodeOf(findChatAnchorById(id));
-		if (node) {
-			node.nodeValue = next;
-		}
-
 		const olds = new Set(titleOverrides.get(id)?.olds);
 		olds.add(expected);
 		olds.delete(next);
+		const a = findChatAnchorById(id);
+		writeTitle(a, olds, next);
+		retitleDocument(id, a, expected, next);
 		titleOverrides.set(id, {new: next, olds});
 		scheduleSidebarScan();
 		return true;

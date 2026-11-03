@@ -1021,6 +1021,137 @@ class TestOptionsPage:
         page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
         assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
 
+    # Width each select needs for its selected label vs the width it has.
+    CLIPPED_SELECTS = """() => [...document.querySelectorAll('#rows select.color, #rows select.match')].map(s => {
+        const c = s.cloneNode(true);
+        for (const o of [...c.options]) if (o.value !== s.value) o.remove();
+        c.style.cssText = 'position:absolute;visibility:hidden;width:auto;min-width:0';
+        s.parentElement.append(c);
+        const need = c.offsetWidth;
+        c.remove();
+        return [s.selectedOptions[0].textContent, need, s.offsetWidth, s.scrollWidth <= s.clientWidth];
+    }).filter(([, need, has, fits]) => need > has || !fits)"""
+
+    # Wider than macOS's default font, like Linux CI's: layout must not depend on font metrics.
+    WIDE_FONT = '* { font-family: Verdana, "DejaVu Sans", sans-serif !important; letter-spacing: 0.02em; }'
+    ALL_COLOURS = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff', '#123456']
+
+    def _rules_page(self, width, height, font):
+        page = self._fresh(_full([_rule(f'[T{i}]', c, 'includes' if i % 2 else 'startsWith') for i, c in enumerate(self.ALL_COLOURS)]))
+        if font == 'wide':
+            page.add_style_tag(content=self.WIDE_FONT)
+        page.set_viewport_size({'width': width, 'height': height})
+        page.wait_for_timeout(150)
+        return page
+
+    NO_SIDEWAYS_SCROLL = 'document.documentElement.scrollWidth <= innerWidth'
+
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width, height', [(1040, 760), (1024, 700)])
+    def test_settings_window_rows_fit_on_one_line(self, width, height, font):
+        page = self._rules_page(width, height, font)
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        if font == 'wide':
+            return  # Any font: no sideways scroll. The default font also fits every label on one line.
+        assert page.evaluate(self.CLIPPED_SELECTS) == [], 'no select label is cut off'
+        assert page.evaluate("[...document.querySelectorAll('#rows tr')].every(tr => new Set([...tr.children].map(td => td.getBoundingClientRect().top)).size === 1)")
+        assert page.evaluate("[...document.querySelectorAll('#rows .input, #rows .select')].every(e => e.getBoundingClientRect().height < 40)"), 'no control wraps'
+
+    FIELD_WIDTHS = "[...document.querySelectorAll('#rows .tag, #rows .match, #rows .color, #rows .hex')].map(e => Math.round(e.getBoundingClientRect().width))"
+
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width', [641, 700, 800, 899, 900, 999])
+    def test_mid_width_uses_readable_cards(self, width, font):
+        page = self._rules_page(width, 800, font)
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'grid'
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        widths = page.evaluate(self.FIELD_WIDTHS)
+        assert widths and min(widths) >= 120, sorted(set(widths))
+
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width', [1000, 1024, 1040])
+    def test_wide_table_fields_readable(self, width, font):
+        page = self._rules_page(width, 760, font)
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        widths = page.evaluate(self.FIELD_WIDTHS)
+        assert widths and min(widths) >= 90, sorted(set(widths))
+
+    def test_colour_presets_show_names_with_hex_values(self):
+        page = self._fresh(_full([_rule('[A]', '#fabd2f')]))
+        opts = page.evaluate("[...document.querySelector('#rows select.color').options].map(o => [o.value, o.textContent])")
+        assert opts[:4] == [['', 'Custom…'], ['#fb4934', 'Gruvbox Red'], ['#b8bb26', 'Gruvbox Green'], ['#fabd2f', 'Gruvbox Yellow']]
+        assert page.input_value('#rows select.color') == '#fabd2f'
+        assert page.input_value('#rows .hex') == '#fabd2f'
+
+    def test_rule_tester_misses_are_not_faded(self):
+        page = self._fresh(_full([_rule('[A]'), _rule('[B]', '#fb4934')]))
+        page.fill('#debugTitle', '[A] example')
+        page.wait_for_selector('#debugResult .matchMiss')
+        assert page.evaluate("[...document.querySelectorAll('#debugResult .matchMiss')].map(e => getComputedStyle(e).opacity)") == ['1']
+
+    # ---- Keyboard reorder (#77) ----
+
+    MOVE_STATE = """() => [...document.querySelectorAll('#rows tr')].map(tr => [
+        tr.querySelector('.tag').value, tr.querySelector('.moveUp').disabled, tr.querySelector('.moveDown').disabled])"""
+    FOCUSED_MOVE = """() => { const b = document.activeElement; const tr = b.closest('#rows tr');
+        return tr ? [b.className, tr.querySelector('.tag').value] : null; }"""
+
+    def _stored_order(self, page, want):
+        deadline = time.time() + 5
+        while time.time() < deadline and _tags(self._get_config(page)) != want:
+            page.wait_for_timeout(100)
+        return _tags(self._get_config(page))
+
+    def test_keyboard_reorder_with_move_buttons(self):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934'), _rule('[C]', '#83a598')]))
+        assert page.evaluate(self.MOVE_STATE) == [['[TODO]', True, False], ['[BUG]', False, False], ['[C]', False, True]]
+        assert page.get_attribute('#rows tr .moveUp', 'aria-label') == 'Move rule up'
+        assert page.get_attribute('#rows tr .moveDown', 'aria-label') == 'Move rule down'
+        page.focus('#rows tr:nth-child(1) .tag')
+        page.keyboard.press('Shift+Tab')  # Up is disabled on the first row, so this lands on Down.
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[TODO]']
+        assert page.evaluate("getComputedStyle(document.activeElement).outlineStyle") == 'solid', 'visible keyboard focus'
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[TODO]'], 'focus follows the moved row'
+        assert self._stored_order(page, ['[BUG]', '[TODO]', '[C]']) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate("[...document.querySelectorAll('#rows .rowNum')].map(c => c.textContent)") == ['1', '2', '3']
+        page.keyboard.press('Enter')  # Down again: [TODO] becomes last, so its Down is disabled.
+        assert page.evaluate(self.MOVE_STATE) == [['[BUG]', True, False], ['[C]', False, False], ['[TODO]', False, True]]
+        # A disabled button can't keep focus: it moves to the same row's Up.
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveUp', '[TODO]']
+        assert self._stored_order(page, ['[BUG]', '[C]', '[TODO]']) == ['[BUG]', '[C]', '[TODO]']
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveUp', '[TODO]']
+        assert self._stored_order(page, ['[BUG]', '[TODO]', '[C]']) == ['[BUG]', '[TODO]', '[C]']
+
+    def test_move_buttons_update_after_add_and_delete(self):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934')]))
+        page.click('#addRow')
+        assert [s[1:] for s in page.evaluate(self.MOVE_STATE)] == [[True, False], [False, False], [False, True]]
+        page.click('#rows tr:nth-child(3) .del')
+        assert [s[1:] for s in page.evaluate(self.MOVE_STATE)] == [[True, False], [False, True]]
+
+    @pytest.mark.parametrize('width', [400, 1040])
+    def test_move_buttons_size_and_card_layout(self, width):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934')]))
+        page.set_viewport_size({'width': width, 'height': 800})
+        page.wait_for_timeout(150)
+        sizes = page.evaluate("[...document.querySelectorAll('#rows .moveUp, #rows .moveDown')].map(b => { const r = b.getBoundingClientRect(); return [r.width, r.height]; })")
+        assert sizes and all(w >= 24 and h >= 24 for w, h in sizes), sizes
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.focus('#rows tr:nth-child(2) .moveUp')
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[BUG]'], 'now first: its Up is disabled, focus moves to Down'
+        assert self._stored_order(page, ['[BUG]', '[TODO]']) == ['[BUG]', '[TODO]']
+
+    def test_reorder_help_mentions_buttons(self):
+        page = self._fresh(_full([_rule('[TODO]')]))
+        assert 'Drag ≡ or use ↑/↓ to reorder.' in page.inner_text('body')
+
     @pytest.mark.parametrize('width', [400, 640])
     def test_narrow_layout_no_horizontal_scroll(self, width):
         page = self._fresh(_full([_rule('[A]'), _rule('[B]', '#fb4934')]))
@@ -1038,7 +1169,7 @@ class TestOptionsPage:
                 return {top: r.top, left: r.left};
             })""")
             assert match['top'] == color['top'] and match['left'] != color['left']
-        page.set_viewport_size({'width': 900, 'height': 900})
+        page.set_viewport_size({'width': 1000, 'height': 900})
         page.wait_for_timeout(100)
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
 
@@ -1336,7 +1467,10 @@ _BG_HARNESS = """([store, delay]) => {
             openOptionsPage: rec('openOptionsPage'),
             sendMessage: m => window.down ? Promise.reject(new Error('down')) : send(m),
         },
-        windows: {create: rec('create'), update: rec('update'), get: rec('get'), onRemoved: ev('removed')},
+        windows: {
+            create: rec('create'), update: rec('update'), get: rec('get'), onRemoved: ev('removed'),
+            getLastFocused: async () => window.__focused ?? {id: 1, width: 1920, height: 1080},
+        },
         action: {onClicked: ev('clicked'), setBadgeText() {}, setBadgeBackgroundColor() {}},
         storage: {
             onChanged: ev('changed'),
@@ -1374,6 +1508,18 @@ def _rule(tag, color='#fabd2f', match='startsWith', **kw):
 def _full(rules, **kw):
     return {'rules': rules, 'maxChatTurns': 0, 'hideNavBar': True, 'dimUntagged': False, 'showBadge': True,
             'lazyRenderTurns': True, 'showDeleteUntagged': False, 'showQuickTag': True, **kw}
+
+
+# Watch a title element: count childList mutations and remember its text nodes.
+_WATCH_TITLE = """sel => {
+    const t = document.querySelector(sel);
+    const texts = () => { const w = document.createTreeWalker(t, NodeFilter.SHOW_TEXT); const a = []; while (w.nextNode()) a.push(w.currentNode); return a; };
+    window.__childList = 0;
+    new MutationObserver(rs => { window.__childList += rs.filter(r => r.type === 'childList').length; })
+        .observe(t, {childList: true, subtree: true});
+    window.__texts = texts();
+    window.__sameTexts = () => { const now = texts(); return now.length === __texts.length && now.every((n, i) => n === __texts[i]); };
+}"""
 
 
 def _tjs(cid):
@@ -1642,13 +1788,59 @@ class TestOpenSettings(_BgPages):
     def test_popup_args_and_refocus(self):
         page = self.bg()
         page.evaluate(self.OPEN)
-        assert self._args(page, 'create') == [[{'url': 'ext://options.html', 'type': 'popup', 'width': 560, 'height': 720, 'focused': True}]]
+        assert self._args(page, 'create') == [[{'url': 'ext://options.html', 'type': 'popup', 'width': 1040, 'height': 760, 'focused': True}]]
         page.evaluate(self.OPEN)
         assert page.evaluate("count('create')") == 1
         assert self._args(page, 'update') == [[7, {'focused': True}]]
         page.evaluate("fire('removed', 7)")
         page.evaluate(self.OPEN)
         assert page.evaluate("count('create')") == 2
+
+    def _size(self, page):
+        args = self._args(page, 'create')
+        assert len(args) == 1
+        return args[0][0]['width'], args[0][0]['height']
+
+    def test_popup_capped_to_focused_window(self):
+        page = self.bg(setup='window.__focused = {id: 1, width: 900, height: 700};')
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (900, 700)
+
+    def test_popup_caps_each_dimension_separately(self):
+        page = self.bg(setup='window.__focused = {id: 1, width: 1280, height: 600};')
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (1040, 600)
+
+    @pytest.mark.parametrize('setup, size', [
+        ('window.__focused = {id: 1, width: 800};', (800, 760)),
+        ('window.__focused = {id: 1, height: 650};', (1040, 650)),
+        ('window.__focused = {id: 1, width: 800}; browser.windows.getCurrent = async () => ({id: 1, width: 900, height: 650});', (800, 650)),
+        ('window.__focused = {id: 1, width: 0, height: 650}; browser.windows.getCurrent = async () => ({id: 1, width: 700, height: 600});', (700, 650)),
+    ], ids=['width-only', 'height-only', 'width-then-current-height', 'zero-width'])
+    def test_popup_size_per_side(self, setup, size):
+        page = self.bg(setup=setup)
+        page.evaluate(self.OPEN)
+        assert self._size(page) == size
+
+    @pytest.mark.parametrize('last', [
+        'delete browser.windows.getLastFocused;',
+        "browser.windows.getLastFocused = () => Promise.reject(new Error('no window'));",
+        'window.__focused = {id: 1};',
+    ], ids=['missing', 'rejects', 'no-size'])
+    def test_popup_size_falls_back_to_get_current(self, last):
+        page = self.bg(setup=last + " browser.windows.getCurrent = async () => ({id: 1, width: 800, height: 650});")
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (800, 650)
+
+    @pytest.mark.parametrize('setup', [
+        'delete browser.windows.getLastFocused;',
+        "browser.windows.getLastFocused = () => Promise.reject(new Error('no window'));",
+        'window.__focused = {id: 1};',
+    ], ids=['missing', 'rejects', 'no-size'])
+    def test_popup_default_size_without_focused_window(self, setup):
+        page = self.bg(setup=setup)
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (1040, 760)
 
     def test_refocus_after_worker_restart(self):
         page = self.bg(setup='window.__session = {cthSettingsWindowId: 7};')
@@ -1775,8 +1967,11 @@ API_CHATS = [
 
 
 def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
-                  turn_tag='section', turns=6):
+                  turn_tag='section', turns=6, title_html=None, doc_title='ChatGPT fixture'):
     """Build a minimal ChatGPT-shaped page.
+
+    title_html: {chat_id: raw inner HTML of the row's .truncate}, for
+                titles split across several text nodes.
 
     active: None, a chat id (empty-string data-active, as on live), or a
             dict {chat_id: data-active value}.
@@ -1787,13 +1982,15 @@ def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
         active = {active: ''}
     active = active or {}
 
+    title_html = title_html or {}
     links = []
     for cid, title in chats:
         attr = f' data-active="{_html.escape(active[cid])}"' if cid in active else ''
+        inner = title_html.get(cid, f'<span dir="auto">{_html.escape(title)}</span>')
         links.append(
             f'<a href="/c/{cid}" data-sidebar-item="true"{attr}>'
             f'<div class="flex min-w-0 grow items-center"><div class="truncate">'
-            f'<span dir="auto">{_html.escape(title)}</span></div></div></a>'
+            f'{inner}</div></div></a>'
         )
 
     turn_html = ''.join(
@@ -1818,7 +2015,7 @@ def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
         composer_html = ''
 
     return f'''<!doctype html>
-<html class="dark"><head><meta charset="utf-8"><title>ChatGPT fixture</title>
+<html class="dark"><head><meta charset="utf-8"><title>{_html.escape(doc_title)}</title>
 <style>
   html, body {{ margin: 0; height: 100%; }}
   body {{ display: flex; }}
@@ -2297,6 +2494,26 @@ class TestContentScript:
         assert len(self._patches(calls)) == 2
         assert [c['method'] for c in calls if '/backend-api/conversation/' in c['url']] == ['GET', 'PATCH', 'GET', 'PATCH']
 
+    # The open chat is found by URL (/c/c1) or, on other paths, by data-active.
+    @pytest.mark.parametrize('path, active', [('/c/c1', None), ('/', 'c1')], ids=['by-url', 'by-data-active'])
+    def test_legacy_rename_split_title_and_document_title(self, path, active):
+        self._configure()
+        page = self._open_chat(path=path, active=active, doc_title='[TODO] ship release',
+                               title_html={'c1': '<span dir="auto">[TODO] <!-- -->ship release</span>'})
+        self._mock_chat_api(page)
+        link = '#history a[href="/c/c1"]'
+        span = f"document.querySelector('{link} .truncate span[dir=auto]')"
+        page.evaluate(_WATCH_TITLE, f'{link} .truncate')
+        page.hover(link)
+        page.click('#cth-qt-btn')
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        assert self._poll(page, f"() => {span}.textContent === '[BUG] ship release'")
+        assert page.title() == '[BUG] ship release'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._poll(page, f"() => {span}.textContent === '[TODO] ship release'")
+        assert page.title() == '[TODO] ship release'
+        assert page.evaluate('__childList') == 0 and page.evaluate('__sameTexts()')
+
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
@@ -2739,15 +2956,18 @@ class TestContentScript:
 
 # App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
 # fixture-only IDs let tests inspect rows without coupling to extension markers.
-def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None):
+# title_html: {chat_id: raw inner HTML of the row's [data-thread-title]}.
+def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None,
+                       title_html=None, doc_title='App-shell fixture'):
+    title_html = title_html or {}
     rows = []
     for i, (cid, title) in enumerate(chats):
         selected = ' aria-current="page"' if cid == active else ''
+        inner = title_html.get(cid, f'<span data-marquee-content><span dir="auto">{_html.escape(title)}</span></span>')
         row = (f'<div role="group" id="row-{cid}"{selected}>'
                f'<div data-thread-title-trigger><a data-interactive-row-link="true" '
                f'href="/c/{cid}"{selected}><span data-thread-title="true">'
-               f'<span data-marquee-content><span dir="auto">{_html.escape(title)}</span>'
-               f'</span></span></a></div><button class="menu">menu</button></div>')
+               f'{inner}</span></a></div><button class="menu">menu</button></div>')
         rows.append(f'<div role="listitem" id="item-{cid}">{row}</div>' if i < 2 else row)
     groups = ''.join(
         f'<div data-turn-key="t{i}" class="turn"><div data-content-search-turn-key="t{i}">'
@@ -2755,7 +2975,7 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height
         f'<div data-conversation-role="assistant">Reply {i}</div></div></div>'
         for i in range(turns))
     return f'''<!doctype html><html class="dark"><head><meta charset="utf-8">
-    <title>App-shell fixture</title><style>
+    <title>{_html.escape(doc_title)}</title><style>
     body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
     [data-app-action-sidebar-scroll] {{height:{f'{sidebar_height}px' if sidebar_height else '100%'};overflow:auto}}
     [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
@@ -2804,6 +3024,8 @@ class TestAppShellContentScript:
         page = self._open_chat()
         self._ready(page)
         assert not page.locator('#history, #prompt-textarea, [data-sidebar-item]').count()
+        # The bar can appear a frame before the rows are painted; wait for the paint.
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c2')).backgroundColor === 'rgba(251, 73, 52, 0.12)'")
         assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e).backgroundColor") == 'rgba(250, 189, 47, 0.2)'
         assert page.eval_on_selector('#row-c2', "e => getComputedStyle(e).backgroundColor") == 'rgba(251, 73, 52, 0.12)'
         assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e, '::before').width") == '6px'
@@ -3082,8 +3304,7 @@ class TestAppShellContentScript:
         assert page.evaluate(self.QT_ITEMS) == [
             ['[TODO]', 'false', 'rgb(250, 189, 47)'],
             ['[BUG]', 'true', 'rgb(251, 73, 52)'],
-            ['[ARCHIVE]', 'false', 'rgb(146, 131, 116)'],
-        ]
+        ], 'Hide rules ([ARCHIVE]) are not offered'
         assert page.is_visible('#cth-qt-menu [data-action=remove]')
         assert page.is_visible('#cth-qt-menu [data-action=new]')
         page.keyboard.press('Escape')
@@ -3094,6 +3315,25 @@ class TestAppShellContentScript:
         assert self._poll(page, "() => !document.querySelector('#row-c1[data-cth]')")
         self._open_qt(page, 'c5')
         assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+
+    def test_quick_tag_menu_empty_when_every_prefix_rule_hides(self):
+        page, _, _ = self._qt_page(rules=[dict(r, hide=True) for r in CONTENT_RULES[:3]] + [CONTENT_RULES[3]])
+        self._open_qt(page, 'c5')
+        assert page.evaluate(self.QT_ITEMS) == []
+        assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+        assert page.is_visible('#cth-qt-menu [data-action=new]')
+
+    def test_quick_tag_menu_on_hidden_prefix_chat(self):
+        page, calls, _ = self._qt_page()
+        page.keyboard.press('Alt+h')
+        assert self._poll(page, "() => document.querySelector('#row-c4').getClientRects().length > 0")
+        self._open_qt(page, 'c4')
+        assert [t for t, _, _ in page.evaluate(self.QT_ITEMS)] == ['[TODO]', '[BUG]']
+        assert page.locator('#cth-qt-menu [data-tag="[ARCHIVE]"]').count() == 0
+        assert page.is_visible('#cth-qt-menu [data-action=remove]'), 'a hidden prefix can still be removed'
+        page.click('#cth-qt-menu [data-tag="[TODO]"]')
+        assert self._title_is(page, 'c4', '[TODO] old notes')
+        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == ['[TODO] old notes']
 
     def test_quick_tag_menu_keyboard(self):
         page, _, _ = self._qt_page()
@@ -3216,6 +3456,86 @@ class TestAppShellContentScript:
             const s = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]');
             return s.firstChild === window.__node && s.childNodes.length === 1;
         }""")
+
+    SPLIT_TITLES = {
+        # React-style adjacent text nodes in one span.
+        'split': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span></span>',
+        # A marquee wrapper with a duplicated, aria-hidden copy of the title.
+        'marquee': '<span data-marquee-content><span dir="auto">[BUG] plain chat</span>'
+                   '<span aria-hidden="true">[BUG] plain chat</span></span>',
+        'marquee-dir': '<span data-marquee-content><span dir="auto">[BUG] plain chat</span>'
+                       '<span dir="auto" aria-hidden="true">[BUG] plain chat</span></span>',
+        # The visible copy split into text nodes, the marquee copy whole.
+        'split-marquee': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
+                         '<span dir="auto" aria-hidden="true">[BUG] plain chat</span></span>',
+        'split-without-dir': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
+                             '<span aria-hidden="true">[BUG] <!-- -->plain chat</span></span>',
+        # Both copies split.
+        'split-both': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
+                      '<span dir="auto" aria-hidden="true">[BUG] <!-- -->plain chat</span></span>',
+        # One copy whose text is split across child elements.
+        'split-elements': '<span data-marquee-content><span dir="auto"><span>[BUG] </span>'
+                          '<span>plain chat</span></span></span>',
+    }
+    # The text of each copy: the children of the marquee wrapper.
+    COPIES = "() => [...document.querySelector('#row-c5 [data-thread-title] [data-marquee-content]').children].map(s => s.textContent)"
+
+    @pytest.mark.parametrize('variant', ['split', 'marquee', 'marquee-dir', 'split-marquee', 'split-without-dir',
+                                         'split-both', 'split-elements'])
+    def test_rename_rewrites_every_title_text_node(self, variant):
+        page, _, _ = self._qt_page(chats=[('c1', '[TODO] ship release'), ('c5', '[BUG] plain chat')],
+                                   fixture={'title_html': {'c5': self.SPLIT_TITLES[variant]}})
+        title = "document.querySelector('#row-c5 [data-thread-title]')"
+        page.evaluate(_WATCH_TITLE, '#row-c5 [data-thread-title]')
+        before = page.evaluate(f'{title}.textContent')
+        copies = len(page.evaluate(self.COPIES))
+        self._pick(page, 'c5', '[TODO]')
+        assert self._title_is(page, 'c5', '[TODO] plain chat')
+        assert page.evaluate(self.COPIES) == ['[TODO] plain chat'] * copies, 'every copy is renamed'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.evaluate(self.COPIES) == ['[BUG] plain chat'] * copies
+        assert page.evaluate(f'{title}.textContent') == before
+        assert page.evaluate('__childList') == 0, 'no nodes added or removed'
+        assert page.evaluate('__sameTexts()'), 'the same text nodes are reused'
+
+    def test_stale_marquee_copy_is_repaired_without_a_loop(self):
+        page, _, _ = self._qt_page(chats=[('c1', '[TODO] ship release'), ('c5', '[BUG] plain chat')],
+                                   fixture={'title_html': {'c5': self.SPLIT_TITLES['marquee']}})
+        self._pick(page, 'c5', '[TODO]')
+        assert self._title_is(page, 'c5', '[TODO] plain chat')
+        page.evaluate("""() => {
+            const h = document.querySelector('#row-c5 [data-thread-title] [aria-hidden=true]');
+            const stale = h.cloneNode(false);
+            stale.textContent = '[BUG] plain chat';
+            h.replaceWith(stale);
+        }""")
+        assert self._poll(page, "() => document.querySelector('#row-c5 [data-thread-title] [aria-hidden=true]').textContent === '[TODO] plain chat'"), \
+            page.evaluate(self.COPIES)
+        page.evaluate("""() => {
+            window.__chars = 0;
+            new MutationObserver(rs => { window.__chars += rs.length; })
+                .observe(document.querySelector('#row-c5 [data-thread-title]'), {characterData: true, subtree: true});
+        }""")
+        page.wait_for_timeout(300)
+        assert page.evaluate('__chars') == 0, 'repairs converge without rewriting'
+        assert page.evaluate(self.COPIES) == ['[TODO] plain chat'] * 2
+
+    def test_rename_open_chat_updates_document_title(self):
+        page, _, _ = self._qt_page(fixture={'doc_title': '[TODO] ship release'})
+        self._pick(page, 'c1', '[BUG]')
+        assert self._title_is(page, 'c1', '[BUG] ship release')
+        assert page.title() == '[BUG] ship release'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c1', '[TODO] ship release')
+        assert page.title() == '[TODO] ship release'
+
+    def test_rename_other_chat_leaves_document_title(self):
+        # The tab title happens to contain c5's title, but c1 is the open chat.
+        page, _, _ = self._qt_page(fixture={'doc_title': 'plain chat'})
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.title() == 'plain chat'
 
     @pytest.mark.parametrize('mock, message', [
         ({'patch_abort': True}, 'Not sure the rename finished. Reload to check.'),
@@ -3491,8 +3811,9 @@ class TestAppShellContentScript:
         self._pick(page, 'c5', '[BUG]')
         assert self._title_is(page, 'c5', '[BUG] plain chat')
         page.mouse.move(640, 5)
-        self._pick(page, 'c5', '[ARCHIVE]')
+        self._new_tag(page, 'c5', '[ARCHIVE]')  # Hide rules are not in the menu (#80)
         assert self._title_is(page, 'c5', '[ARCHIVE] plain chat')
+        assert len(self._stored_rules()) == len(CONTENT_RULES), 'New tag… reuses the hidden rule'
         assert self._poll(page, "() => !document.querySelector('#row-c5').getClientRects().length")
         page.evaluate(f"{span}.textContent = 'plain chat'")
         page.wait_for_timeout(300)

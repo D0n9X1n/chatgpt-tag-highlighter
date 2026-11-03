@@ -277,6 +277,34 @@
 		return (await sessionArea.get(SETTINGS_WIN_KEY))?.[SETTINGS_WIN_KEY];
 	}
 
+	// Wide enough for every rule row on one line; never larger than the browser window.
+	const SETTINGS_WIDTH = 1040;
+	const SETTINGS_HEIGHT = 760;
+
+	const usable = n => Number.isFinite(n) && n > 0;
+
+	// Each side: the last-focused window's, else the current window's, capped
+	// to the default; the default if neither window reports that side.
+	async function settingsWindowSize() {
+		const size = {};
+		for (const get of ['getLastFocused', 'getCurrent']) {
+			if (size.width && size.height) {
+				break;
+			}
+
+			try {
+				const win = await API.windows[get]?.();
+				size.width ||= usable(win?.width) ? win.width : 0;
+				size.height ||= usable(win?.height) ? win.height : 0;
+			} catch {}
+		}
+
+		return {
+			width: size.width ? Math.min(SETTINGS_WIDTH, size.width) : SETTINGS_WIDTH,
+			height: size.height ? Math.min(SETTINGS_HEIGHT, size.height) : SETTINGS_HEIGHT,
+		};
+	}
+
 	function openSettings() {
 		return settingsQueue(async () => {
 			try {
@@ -293,8 +321,9 @@
 					} catch {} // Closed while we were not watching: open a new one.
 				}
 
+				const {width, height} = await settingsWindowSize();
 				const w = await API.windows.create({
-					url: API.runtime.getURL('options.html'), type: 'popup', width: 560, height: 720, focused: true,
+					url: API.runtime.getURL('options.html'), type: 'popup', width, height, focused: true,
 				});
 				await sessionArea.set({[SETTINGS_WIN_KEY]: w?.id ?? null});
 			} catch {

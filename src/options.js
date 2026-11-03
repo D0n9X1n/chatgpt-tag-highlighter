@@ -260,7 +260,7 @@
 		for (const element of PALETTE) {
 			const o = document.createElement('option');
 			o.value = element[1];
-			o.textContent = `${element[0]} (${element[1]})`;
+			o.textContent = element[0]; // The hex is in its own column.
 			selectElement.append(o);
 		}
 	}
@@ -327,11 +327,16 @@
 		runDebugTest();
 	}
 
+	// Also disables Move up on the first row and Move down on the last.
 	function updateRowNumbers() {
 		const trs = els.rows.querySelectorAll('tr');
 		for (let i = 0; i < trs.length; i++) {
 			const cell = trs[i].querySelector('.rowNum');
 			if (cell) cell.textContent = String(i + 1);
+			const up = trs[i].querySelector('.moveUp');
+			const down = trs[i].querySelector('.moveDown');
+			if (up) up.disabled = i === 0;
+			if (down) down.disabled = i === trs.length - 1;
 		}
 	}
 
@@ -636,6 +641,28 @@
 			tr.remove();
 			onRulesChanged();
 			return;
+		}
+
+		// Keyboard-friendly reorder (#77): the same save path as a drop.
+		const move = e.target.closest('.moveUp, .moveDown');
+		if (move) {
+			const up = move.classList.contains('moveUp');
+			const sibling = up ? tr.previousElementSibling : tr.nextElementSibling;
+			if (!sibling) {
+				return;
+			}
+
+			if (up) {
+				sibling.before(tr);
+			} else {
+				sibling.after(tr);
+			}
+
+			onRulesChanged();
+			// Moving the row blurs the button; keep focus on it, or on its
+			// enabled twin if it just became disabled at an end.
+			const twin = tr.querySelector(up ? '.moveDown' : '.moveUp');
+			(move.disabled ? twin : move).focus();
 		}
 	});
 

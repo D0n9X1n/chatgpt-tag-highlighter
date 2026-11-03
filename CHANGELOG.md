@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-11-03
+
+### Fixed
+- **The settings window is wide enough for the rules**
+  ([#79](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/79)).
+  It now opens at 1040×760, so every rule fits on one line with no cut-off
+  menus, and it is never larger than the browser window it opens from.
+  Below 1000 px wide each rule shows as a stacked card (previously only at
+  640 px or narrower), so the fields stay readable. Colour presets now
+  show just their names; the hex code stays in its own column.
+- **The quick tag menu no longer lists Hide rules**
+  ([#80](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/80)).
+  Picking one made the chat vanish from the sidebar at once. A chat that
+  already starts with a hidden tag (shown with `Alt+H`) still offers
+  **Remove tag**, and picking another tag replaces it. **New tag…** with a
+  Hide rule's exact text still applies that rule.
+- **The chat's new name shows right after a quick tag rename**
+  ([#81](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/81)).
+  The sidebar kept the old name when ChatGPT split the title into several
+  pieces or showed a scrolling copy of it; every copy is now updated, and
+  a copy ChatGPT redraws with the old name is corrected again.
+  Renaming the open chat, or undoing that rename, also updates its name in
+  the browser tab title.
+- Rules that don't match in the settings' rule tester are no longer faded,
+  so they are easier to read.
+- Rules can be reordered from the keyboard with **Move up** / **Move down**
+  ([#77](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/77)).
+  The ↑/↓ buttons sit next to the ≡ drag handle; the first rule's ↑ and
+  the last rule's ↓ are disabled, and focus stays on the moved rule.
+
 ## [1.3.0] — 2026-11-03
 
 ### Added
