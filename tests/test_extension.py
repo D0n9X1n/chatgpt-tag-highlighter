@@ -3115,8 +3115,7 @@ class TestAppShellContentScript:
         assert page.evaluate(self.QT_ITEMS) == [
             ['[TODO]', 'false', 'rgb(250, 189, 47)'],
             ['[BUG]', 'true', 'rgb(251, 73, 52)'],
-            ['[ARCHIVE]', 'false', 'rgb(146, 131, 116)'],
-        ]
+        ], 'Hide rules ([ARCHIVE]) are not offered'
         assert page.is_visible('#cth-qt-menu [data-action=remove]')
         assert page.is_visible('#cth-qt-menu [data-action=new]')
         page.keyboard.press('Escape')
@@ -3127,6 +3126,25 @@ class TestAppShellContentScript:
         assert self._poll(page, "() => !document.querySelector('#row-c1[data-cth]')")
         self._open_qt(page, 'c5')
         assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+
+    def test_quick_tag_menu_empty_when_every_prefix_rule_hides(self):
+        page, _, _ = self._qt_page(rules=[dict(r, hide=True) for r in CONTENT_RULES[:3]] + [CONTENT_RULES[3]])
+        self._open_qt(page, 'c5')
+        assert page.evaluate(self.QT_ITEMS) == []
+        assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+        assert page.is_visible('#cth-qt-menu [data-action=new]')
+
+    def test_quick_tag_menu_on_hidden_prefix_chat(self):
+        page, calls, _ = self._qt_page()
+        page.keyboard.press('Alt+h')
+        assert self._poll(page, "() => document.querySelector('#row-c4').getClientRects().length > 0")
+        self._open_qt(page, 'c4')
+        assert [t for t, _, _ in page.evaluate(self.QT_ITEMS)] == ['[TODO]', '[BUG]']
+        assert page.locator('#cth-qt-menu [data-tag="[ARCHIVE]"]').count() == 0
+        assert page.is_visible('#cth-qt-menu [data-action=remove]'), 'a hidden prefix can still be removed'
+        page.click('#cth-qt-menu [data-tag="[TODO]"]')
+        assert self._title_is(page, 'c4', '[TODO] old notes')
+        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == ['[TODO] old notes']
 
     def test_quick_tag_menu_keyboard(self):
         page, _, _ = self._qt_page()
@@ -3524,8 +3542,9 @@ class TestAppShellContentScript:
         self._pick(page, 'c5', '[BUG]')
         assert self._title_is(page, 'c5', '[BUG] plain chat')
         page.mouse.move(640, 5)
-        self._pick(page, 'c5', '[ARCHIVE]')
+        self._new_tag(page, 'c5', '[ARCHIVE]')  # Hide rules are not in the menu (#80)
         assert self._title_is(page, 'c5', '[ARCHIVE] plain chat')
+        assert len(self._stored_rules()) == len(CONTENT_RULES), 'New tag… reuses the hidden rule'
         assert self._poll(page, "() => !document.querySelector('#row-c5').getClientRects().length")
         page.evaluate(f"{span}.textContent = 'plain chat'")
         page.wait_for_timeout(300)

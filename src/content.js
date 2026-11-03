@@ -2291,7 +2291,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const title = effectiveTitle(a);
 		const cur = currentPrefixTag(title, compiled.rules);
 		qtBound = {id, title};
-		const items = compiled.rules.filter(r => r.match === 'startsWith').map(r => {
+		// Hide rules are not offered (#80); `cur` still sees them, so a hidden
+		// prefix can be removed or replaced.
+		const items = compiled.rules.filter(r => r.match === 'startsWith' && !r.hide).map(r => {
 			const swatch = el('span', {class: 'cth-qt-swatch'});
 			swatch.style.background = r.color;
 			return el('div', {
