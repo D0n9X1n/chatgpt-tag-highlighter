@@ -2401,25 +2401,82 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// PATCH /backend-api/conversation/{id} {title}, the request ChatGPT's own
 	// Rename sends. `stillValid` is re-checked after the token arrives, right
 	// before the PATCH, so a title that changed meanwhile is never overwritten.
-	// `serverTitle` (Undo): the server must still have this title, read right
-	// before the PATCH, so a rename from another tab or device is never undone.
-	async function renameChat(id, title, stillValid = () => true, staleText = 'Title changed — try again', serverTitle = null) {
+	// One extension rename per chat at a time across tabs in this browser:
+	// background.js queues ports per chat id and grants the head. Closing or
+	// navigating a tab disconnects its port, so the lock is always released.
+	const CHAT_LOCK_MS = 20_000;
+	const LOCK_LOST = "Couldn't finish the rename. Nothing changed.";
+
+	function withChatLock(id, fn) {
+		let port;
+		try {
+			port = API.runtime.connect({name: `cth-chat-lock:${id}`});
+		} catch {
+			return fn(() => true); // No runtime: this tab's qtPending still serializes.
+		}
+
+		return new Promise((resolve, reject) => {
+			let held = false;
+			let done = false;
+			const finish = (ok, value) => {
+				if (done) {
+					return;
+				}
+
+				done = true;
+				held = false;
+				clearTimeout(timer);
+				try {
+					port.disconnect();
+				} catch {}
+
+				(ok ? resolve : reject)(value);
+			};
+
+			// Waiting too long for the lock, or holding it too long: give it up.
+			let timer = setTimeout(() => finish(false, new Error('Still saving this chat — try again')), CHAT_LOCK_MS);
+			port.onDisconnect.addListener(() => {
+				void API.runtime.lastError; // Read it so Chrome doesn't log it.
+				held = false;
+				if (!done) {
+					finish(false, new Error(LOCK_LOST));
+				}
+			});
+			port.onMessage.addListener(msg => {
+				if (!msg?.granted || held || done) {
+					return;
+				}
+
+				held = true;
+				clearTimeout(timer);
+				timer = setTimeout(() => finish(false, new Error(LOCK_LOST)), CHAT_LOCK_MS);
+				Promise.resolve()
+					.then(() => fn(() => held))
+					.then(value => finish(true, value), error => finish(false, error));
+			});
+		});
+	}
+
+	// Token -> GET the server's current title -> compare -> PATCH, inside the
+	// chat's lock. The server must still have `expected` (the title this rename
+	// replaces), so a rename from another tab or device is never overwritten.
+	async function renameChat(id, title, {expected, stillValid = () => true, staleText = 'Title changed — try again'}) {
 		if (!CHAT_ID_RE.test(id)) {
 			throw new Error(staleText);
 		}
 
-		let token;
-		try {
-			token = await getAccessToken();
-		} catch (error) {
-			throw new Error(error instanceof TypeError ? "Couldn't reach ChatGPT. Nothing changed." : 'Sign in to ChatGPT first. Nothing changed.');
-		}
+		return withChatLock(id, async lockHeld => {
+			let token;
+			try {
+				token = await getAccessToken();
+			} catch (error) {
+				throw new Error(error instanceof TypeError ? "Couldn't reach ChatGPT. Nothing changed." : 'Sign in to ChatGPT first. Nothing changed.');
+			}
 
-		if (!stillValid()) {
-			throw new Error(staleText);
-		}
+			if (!stillValid()) {
+				throw new Error(staleText);
+			}
 
-		if (serverTitle !== null) {
 			let g;
 			try {
 				g = await pageFetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
@@ -2434,11 +2491,19 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				throw new Error("Couldn't check the chat. Nothing changed.");
 			}
 
-			if (current !== serverTitle || !stillValid()) {
+			if (current.trim() !== expected || !stillValid()) {
 				throw new Error(staleText);
 			}
-		}
 
+			if (!lockHeld()) {
+				throw new Error(LOCK_LOST);
+			}
+
+			await patchTitle(id, title, token);
+		});
+	}
+
+	async function patchTitle(id, title, token) {
 		let r;
 		try {
 			r = await pageFetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
@@ -2578,7 +2643,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		busyIfBound(bound);
 		qtPending.add(bound.id);
 		try {
-			await renameChat(bound.id, next, () => titleIs(bound.id, bound.title));
+			await renameChat(bound.id, next, {expected: bound.title, stillValid: () => titleIs(bound.id, bound.title)});
 		} catch (error) {
 			closeIfBound(bound);
 			qtToast(error.message, {error: true});
@@ -2610,7 +2675,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		qtPending.add(id);
 		try {
-			await renameChat(id, old, () => titleIs(id, tagged), 'Title changed — not undone', tagged);
+			await renameChat(id, old, {expected: tagged, stillValid: () => titleIs(id, tagged), staleText: 'Title changed — not undone'});
 		} catch (error) {
 			qtToast(error.message, {error: true});
 			return;

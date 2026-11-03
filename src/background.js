@@ -320,6 +320,48 @@
 	// Helpful for dev: seed on background load.
 	seedOrMigrate();
 
+	// ---- Per-chat rename lock (quick tag), across tabs in this browser ----
+	// content.js connects a port named `cth-chat-lock:<id>`; the head of each
+	// chat's queue holds the lock. A port disconnects when its rename ends or
+	// its tab closes or navigates, so a lock can never leak.
+	const CHAT_LOCK_PREFIX = 'cth-chat-lock:';
+	const chatLocks = new Map(); // id -> ports, head holds the lock
+
+	function grantChatLock(id) {
+		const head = chatLocks.get(id)?.[0];
+		try {
+			head?.postMessage({granted: true});
+		} catch {} // Already gone: its onDisconnect grants the next one.
+	}
+
+	API.runtime?.onConnect?.addListener?.(port => {
+		if (!String(port?.name || '').startsWith(CHAT_LOCK_PREFIX)) {
+			return;
+		}
+
+		const id = port.name.slice(CHAT_LOCK_PREFIX.length);
+		const queue = chatLocks.get(id) || [];
+		chatLocks.set(id, queue);
+		queue.push(port);
+		port.onDisconnect.addListener(() => {
+			const q = chatLocks.get(id) || [];
+			const i = q.indexOf(port);
+			if (i === -1) {
+				return;
+			}
+
+			q.splice(i, 1);
+			if (q.length === 0) {
+				chatLocks.delete(id);
+			} else if (i === 0) {
+				grantChatLock(id);
+			}
+		});
+		if (queue.length === 1) {
+			grantChatLock(id);
+		}
+	});
+
 	// ---- Messages: badge counter + config writes ----
 	API.runtime?.onMessage?.addListener((msg, sender, sendResponse) => {
 		if (msg?.type === 'badgeCount') {

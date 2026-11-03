@@ -30,7 +30,7 @@ flowchart LR
 
 设置页的写入只有在存储中的值仍等于它所基于的 `base` 时才会生效；否则不写入任何内容，设置页显示冲突横幅。两个窗口中的并发修改永远不会合并：后保存的一方必须 Reload。`addRule` 总是追加到最新的存储值上。新增配置字段必须在三个脚本中都有安全的默认值。颜色始终以 `#rrggbb` 保存。
 
-快速标签的重命名请求由 `content.js` 直接发往 ChatGPT（`PATCH /backend-api/conversation/{id}`，内容为 `{"title"}`），不经过 `background.js`；见 [隐私](Privacy-zh-CN)。
+快速标签的重命名请求由 `content.js` 直接发往 ChatGPT（先 `GET`，再 `PATCH /backend-api/conversation/{id}`，内容为 `{"title"}`），不经过 `background.js`。`background.js` 只负责排队：通过 `cth-chat-lock:<id>` 端口，让各标签页对同一会话一次只进行一个重命名；重命名结束或标签页关闭时释放。见 [隐私](Privacy-zh-CN)。
 
 ## ChatGPT 页面钩子
 

@@ -1322,7 +1322,7 @@ _BG_HARNESS = """([store, delay]) => {
     const rec = n => (...a) => { __calls.push([n, a]); return Promise.resolve({id: 7}); };
     window.browser = {
         runtime: {
-            onInstalled: ev('i'), onStartup: ev('s'), onMessage: ev('m'),
+            onInstalled: ev('i'), onStartup: ev('s'), onMessage: ev('m'), onConnect: ev('connect'),
             getURL: p => 'ext://' + p,
             openOptionsPage: rec('openOptionsPage'),
             sendMessage: m => window.down ? Promise.reject(new Error('down')) : send(m),
@@ -1511,6 +1511,32 @@ class TestConfigWriter(_BgPages):
         page = self.bg(setup='delete __store.tagHighlighterConfigV1.showQuickTag')
         page.wait_for_function('() => cfg().showQuickTag === true', timeout=3000)
         assert list(page.evaluate('cfg()'))[-1] == 'showQuickTag'
+
+
+class TestChatLock(_BgPages):
+    """background.js grants one quick tag rename per chat at a time, across tabs."""
+
+    def test_queue_grants_in_order_and_skips_departed_waiters(self):
+        page = self.bg()
+        res = page.evaluate("""() => {
+            const port = name => {
+                const p = {name, got: 0, dl: [], postMessage: m => { if (m && m.granted) p.got++; },
+                           onDisconnect: {addListener: f => p.dl.push(f)}};
+                p.leave = () => p.dl.forEach(f => f(p));  // tab closed or released
+                fire('connect', p);
+                return p;
+            };
+            const a = port('cth-chat-lock:c5'), b = port('cth-chat-lock:c5'), c = port('cth-chat-lock:c5');
+            const x = port('cth-chat-lock:c9'), other = port('something-else');
+            const s = () => [a.got, b.got, c.got, x.got, other.got];
+            const out = [s()];
+            b.leave(); out.push(s());   // a waiter leaves: nothing granted
+            a.leave(); out.push(s());   // the holder leaves: the next live waiter
+            c.leave();
+            const d = port('cth-chat-lock:c5'); out.push([...s(), d.got]);  // free again
+            return out;
+        }""")
+        assert res == [[1, 0, 0, 1, 0], [1, 0, 0, 1, 0], [1, 0, 1, 1, 0], [1, 0, 1, 1, 0, 1]]
 
 
 class TestOpenSettings(_BgPages):
@@ -2175,7 +2201,7 @@ class TestContentScript:
         page.click('#cth-qt-toast .cth-qt-undo')
         assert self._poll(page, f"() => {span}.textContent === 'plain chat'")
         assert len(self._patches(calls)) == 2
-        assert [c['method'] for c in calls if '/backend-api/conversation/' in c['url']] == ['PATCH', 'GET', 'PATCH']
+        assert [c['method'] for c in calls if '/backend-api/conversation/' in c['url']] == ['GET', 'PATCH', 'GET', 'PATCH']
 
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
@@ -2183,7 +2209,8 @@ class TestContentScript:
                        server_limit=None, patch_status=None, hold_first_patch=False,
                        hold_list_pass=None, patch_body=None, patch_abort=False,
                        patch_statuses=None, hold_session=False, hold_session_at=None,
-                       hold_patch_at=None, session_abort=False, titles=None, get_status=None):
+                       hold_patch_at=None, session_abort=False, titles=None, get_statuses=None,
+                       hold_get_at=None):
         """Mock /api/auth/session, the conversation list, and per-chat PATCH.
 
         Records every API request in the returned list. `server_limit` caps
@@ -2196,7 +2223,9 @@ class TestContentScript:
         `session_abort` fails session requests at the network level;
         `titles` is a chat id -> title store (pass one dict to several pages to
         share server state): a successful PATCH {title} updates it and
-        GET /backend-api/conversation/{id} returns it (`get_status` overrides);
+        GET /backend-api/conversation/{id} returns it (defaults to the fixture's
+        DEFAULT_CHATS titles; `get_statuses` answers the Nth GET with the Nth
+        status; `hold_get_at` holds the Nth GET);
         `patch_abort` fails PATCHes
         at the network level.
         """
@@ -2205,14 +2234,14 @@ class TestContentScript:
         held = []
         passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
         pn = {'n': 0}  # PATCHes answered so far
-        arrived = {'session': 0, 'patch': 0}
-        titles = {} if titles is None else titles
+        arrived = {'session': 0, 'patch': 0, 'get': 0}
+        titles = dict(DEFAULT_CHATS) if titles is None else titles
 
         def record(route):
             req = route.request
             calls.append({'method': req.method, 'url': req.url,
                           'auth': req.all_headers().get('authorization'),
-                          'body': req.post_data})
+                          'body': req.post_data, 't': time.monotonic()})
 
         def session(route):
             record(route)
@@ -2244,8 +2273,13 @@ class TestContentScript:
         def conversation(route):
             if route.request.method == 'GET':
                 record(route)
+                arrived['get'] += 1
+                if hold_get_at == arrived['get']:
+                    held.append(route)  # fulfilled later by the test
+                    return
                 cid = route.request.url.rsplit('/', 1)[1]
-                status = get_status or (200 if cid in titles else 404)
+                n = arrived['get'] - 1
+                status = get_statuses[n] if get_statuses and n < len(get_statuses) else (200 if cid in titles else 404)
                 body = {'id': cid, 'title': titles[cid]} if status == 200 else {'detail': 'conversation_not_found'}
                 return route.fulfill(status=status, content_type='application/json', body=json.dumps(body))
             return patch(route)
@@ -2917,6 +2951,8 @@ class TestAppShellContentScript:
     QT_FOCUS = "() => document.activeElement.dataset.tag || document.activeElement.dataset.action || document.activeElement.id"
 
     def _qt_page(self, chats=None, rules=None, fixture=None, **mock):
+        if chats is not None:
+            mock.setdefault('titles', dict(chats))  # the mock server knows these chats
         self._configure(rules=rules)
         page = self._open_chat(**({'chats': chats} if chats is not None else {}), **(fixture or {}))
         self._ready(page)
@@ -3283,8 +3319,9 @@ class TestAppShellContentScript:
         assert patches[1]['auth'] == 'Bearer test-token'
         chat_calls = [c for c in calls if '/backend-api/conversation/' in c['url']]
         assert [(c['method'], c['url'].rsplit('/', 1)[1], c['auth']) for c in chat_calls] == [
-            ('PATCH', 'c5', 'Bearer test-token'), ('GET', 'c5', 'Bearer test-token'), ('PATCH', 'c5', 'Bearer test-token')], \
-            'Undo reads the server title right before its PATCH'
+            ('GET', 'c5', 'Bearer test-token'), ('PATCH', 'c5', 'Bearer test-token'),
+            ('GET', 'c5', 'Bearer test-token'), ('PATCH', 'c5', 'Bearer test-token')], \
+            'every rename reads the server title right before its PATCH'
 
     def test_undo_failure_keeps_tag(self):
         page, _, _ = self._qt_page(patch_statuses=[200, 500])
@@ -3642,7 +3679,7 @@ class TestAppShellContentScript:
         assert all(not c['url'].endswith('/c5') for c in self._patches(calls))
 
     def test_undo_refuses_when_server_title_is_unknown(self):
-        page, calls, _ = self._qt_page(get_status=500)
+        page, calls, _ = self._qt_page(get_statuses=[200, 500])
         self._pick(page, 'c5', '[BUG]')
         page.click('#cth-qt-toast .cth-qt-undo')
         self._alert(page, "Couldn't check the chat. Nothing changed.")
@@ -3650,7 +3687,7 @@ class TestAppShellContentScript:
         assert page.evaluate(_tjs('c5')) == '[BUG] plain chat'
 
     def test_cross_tab_undo_refuses_newer_rename(self):
-        titles = {}  # one server, two tabs
+        titles = dict(DEFAULT_CHATS)  # one server, two tabs
         self._configure()
         tab_a = self._open_chat()
         self._ready(tab_a)
@@ -3663,6 +3700,7 @@ class TestAppShellContentScript:
         tab_a.wait_for_selector('#cth-qt-toast .cth-qt-undo')
         tab_a.hover('#cth-qt-toast')  # keep tab A's Undo toast open meanwhile
         tab_b.bring_to_front()
+        self._show_server_title(tab_b, 'c5', '[BUG] plain chat')
         self._pick(tab_b, 'c5', '[TODO]')
         assert self._title_is(tab_b, 'c5', '[TODO] plain chat')
         assert titles['c5'] == '[TODO] plain chat'
@@ -3671,4 +3709,81 @@ class TestAppShellContentScript:
         self._alert(tab_a, 'Title changed — not undone')
         sent = [json.loads(c['body'])['title'] for c in self._patches(calls_a) + self._patches(calls_b)]
         assert sent == ['[BUG] plain chat', '[TODO] plain chat'], 'Undo must not overwrite the newer rename'
+        assert titles['c5'] == '[TODO] plain chat'
+
+    # ---- Renames are checked against the server and serialized across tabs ----
+
+    def _show_server_title(self, page, cid, title):
+        """Make this tab's sidebar show `title`, as ChatGPT would after a rename elsewhere."""
+        page.evaluate("([cid, t]) => { document.querySelector(`#row-${cid} [data-thread-title] span[dir=auto]`).textContent = t; }", [cid, title])
+        assert self._title_is(page, cid, title)
+
+    def _two_tabs(self, titles, a_mock=None, b_mock=None):
+        self._configure()
+        tab_a = self._open_chat()
+        self._ready(tab_a)
+        calls_a, held_a = self._mock_chat_api(tab_a, titles=titles, **(a_mock or {}))
+        tab_b = self._open_chat()
+        self._ready(tab_b)
+        calls_b, held_b = self._mock_chat_api(tab_b, titles=titles, **(b_mock or {}))
+        return tab_a, calls_a, held_a, tab_b, calls_b, held_b
+
+    @staticmethod
+    def _chat_calls(calls):
+        return [c for c in calls if '/backend-api/conversation/' in c['url']]
+
+    @pytest.mark.parametrize('server, get_statuses, message', [
+        ({'c5': 'renamed on another device'}, None, 'Title changed — try again'),
+        (None, [500], "Couldn't check the chat. Nothing changed."),
+    ], ids=['server-title-differs', 'get-fails'])
+    def test_pick_checks_server_title_first(self, server, get_statuses, message):
+        page, calls, _ = self._qt_page(**({'titles': server} if server else {}), get_statuses=get_statuses)
+        self._pick(page, 'c5', '[BUG]')
+        self._alert(page, message)
+        assert [c['method'] for c in self._chat_calls(calls)] == ['GET']
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+
+    def test_cross_tab_rename_waits_for_undo_holding_the_lock(self):
+        titles = dict(DEFAULT_CHATS)
+        tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_get_at': 2})
+        try:
+            tab_a.bring_to_front()
+            self._pick(tab_a, 'c5', '[BUG]')
+            tab_a.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+            tab_a.hover('#cth-qt-toast')
+            tab_a.click('#cth-qt-toast .cth-qt-undo')
+            self._wait_held(tab_a, held_a)  # tab A's Undo holds the lock, its GET in flight
+            tab_b.bring_to_front()
+            self._show_server_title(tab_b, 'c5', '[BUG] plain chat')
+            self._pick(tab_b, 'c5', '[TODO]')
+            tab_b.wait_for_timeout(800)
+            assert self._chat_calls(calls_b) == [], "tab B must wait for tab A's rename to finish"
+            held_a.pop().fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'id': 'c5', 'title': '[BUG] plain chat'}))
+            assert self._poll(tab_a, "() => document.querySelector('#cth-qt-toast')?.textContent === 'Undone'", timeout=5000)
+            self._alert(tab_b, 'Title changed — try again')
+            assert [json.loads(c['body'])['title'] for c in self._patches(calls_a)] == ['[BUG] plain chat', 'plain chat']
+            assert self._patches(calls_b) == [], 'tab B saw the newer title and sent nothing'
+            assert min(c['t'] for c in self._chat_calls(calls_b)) > self._patches(calls_a)[-1]['t']
+            assert titles['c5'] == 'plain chat'
+        finally:
+            for r in held_a:
+                try:
+                    r.fulfill(status=200, body='{}')
+                except Exception:
+                    pass
+
+    def test_chat_lock_released_when_holding_tab_closes(self):
+        titles = dict(DEFAULT_CHATS)
+        tab_a, _, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_get_at': 1})
+        tab_a.bring_to_front()
+        self._pick(tab_a, 'c5', '[BUG]')
+        self._wait_held(tab_a, held_a)  # tab A holds the lock mid-GET
+        tab_b.bring_to_front()
+        self._pick(tab_b, 'c5', '[TODO]')
+        tab_b.wait_for_timeout(500)
+        assert self._chat_calls(calls_b) == []
+        tab_a.close()
+        assert self._title_is(tab_b, 'c5', '[TODO] plain chat', timeout=8000), 'closing the tab releases its lock'
+        assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET', 'PATCH']
         assert titles['c5'] == '[TODO] plain chat'

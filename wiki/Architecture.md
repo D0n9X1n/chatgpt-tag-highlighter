@@ -30,7 +30,7 @@ flowchart LR
 
 A write from the options page is applied only if the stored value still equals the `base` it was built from; otherwise nothing is written and the page shows its conflict banner. Concurrent edits in two windows are never merged: the second one must Reload. `addRule` always appends to the freshest stored value. A new config field must default safely in all three scripts. Colors are always saved as `#rrggbb`.
 
-Quick tag renames go straight from `content.js` to ChatGPT (`PATCH /backend-api/conversation/{id}` with `{"title"}`), not through `background.js`; see [Privacy](Privacy).
+Quick tag renames go straight from `content.js` to ChatGPT (`GET` then `PATCH /backend-api/conversation/{id}` with `{"title"}`), not through `background.js`. `background.js` only queues them: one rename per chat at a time across tabs, through a `cth-chat-lock:<id>` port that is released when the rename ends or the tab closes. See [Privacy](Privacy).
 
 ## ChatGPT page hooks
 
