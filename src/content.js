@@ -1196,14 +1196,39 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		return btn;
 	}
 
-	const COG_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">'
-		+ '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>';
+	// A 14px stroke icon built with DOM calls (no innerHTML). `shapes` is [[tag, attrs], …].
+	function svgIcon(shapes) {
+		const ns = 'http://www.w3.org/2000/svg';
+		const svg = document.createElementNS(ns, 'svg');
+		const attrs = {
+			width: '14', height: '14', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.75', 'aria-hidden': 'true',
+		};
+		for (const [k, v] of Object.entries(attrs)) {
+			svg.setAttribute(k, v);
+		}
+
+		for (const [tag, shapeAttrs] of shapes) {
+			const node = document.createElementNS(ns, tag);
+			for (const [k, v] of Object.entries(shapeAttrs)) {
+				node.setAttribute(k, v);
+			}
+
+			svg.append(node);
+		}
+
+		return svg;
+	}
+
+	const COG_SHAPES = [
+		['circle', {cx: '12', cy: '12', r: '3'}],
+		['path', {d: 'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1'}],
+	];
 
 	function createSettingsButton() {
 		const btn = el('button', {
 			type: 'button', id: SETTINGS_BTN_ID, 'aria-label': 'Tag Highlighter settings', title: 'Tag Highlighter settings',
 		});
-		btn.innerHTML = COG_SVG; // Static markup, no user data.
+		btn.append(svgIcon(COG_SHAPES));
 		btn.addEventListener('click', () => {
 			sendRuntimeMessage({type: 'openSettings'}).catch(() => {});
 		});
@@ -2070,8 +2095,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// ---- Quick tag: one body-level button, menu and toast ----
 	// They live on <body>, outside the history observer's root, so showing or
 	// moving them never triggers a sidebar rescan.
-	const TAG_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">'
-		+ '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>';
+	const TAG_SHAPES = [
+		['path', {d: 'M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z'}],
+		['circle', {cx: '7.5', cy: '7.5', r: '1.5'}],
+	];
 
 	const chatIdOf = a => {
 		const m = /^\/c\/([^/?#]+)$/.exec(a?.getAttribute('href') || '');
@@ -2121,7 +2148,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		qtBtn = el('button', {
 			type: 'button', id: QT_BTN_ID, 'aria-label': 'Tag chat', 'aria-haspopup': 'menu', 'aria-expanded': 'false', hidden: true,
 		});
-		qtBtn.innerHTML = TAG_SVG; // Static markup, no user data.
+		qtBtn.append(svgIcon(TAG_SHAPES));
 		qtBtn.addEventListener('click', () => {
 			if (qtMenu) {
 				closeQtMenu(true);
@@ -2269,15 +2296,34 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return;
 		}
 
+		const anchor = qtAnchor;
+		const id = qtBound?.id;
 		qtMenu.remove();
 		qtMenu = null;
 		qtBound = null;
 		qtBusy = false;
 		qtBtn?.setAttribute('aria-expanded', 'false');
-		if (refocus) {
-			qtBtn?.focus();
+		// The button is shared: never leave it bound to a row it may no longer sit on.
+		hideQtButton();
+		if (refocus && anchor?.isConnected && chatIdOf(anchor) === id) {
+			showQtFor(anchor); // Re-measure the row before handing focus back.
+			(qtBtn && !qtBtn.hidden ? qtBtn : anchor).focus();
 		}
 	}
+
+	// Rows move under the fixed button on scroll or resize: close and hide.
+	function dropQuickTag() {
+		closeQtMenu(false);
+		hideQtButton();
+	}
+
+	document.addEventListener('scroll', e => {
+		const t = e.target;
+		if (historyRoot && (t.contains?.(historyRoot) || historyRoot.contains(t))) {
+			dropQuickTag();
+		}
+	}, {capture: true, passive: true});
+	window.addEventListener('resize', dropQuickTag, {passive: true});
 
 	function onQtMenuKey(e) {
 		const items = qtItems();
@@ -2364,8 +2410,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 	}
 
-	// Confirmed renames: id -> {old, new}. ChatGPT may re-render a stale copy of
-	// the old title; show the new one until a third title appears.
+	// Confirmed renames: id -> {new, olds}. ChatGPT may re-render a stale copy of
+	// any title we replaced; show the new one until an unknown title appears.
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
@@ -2382,8 +2428,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return shown;
 		}
 
-		if (shown !== o.old) {
-			titleOverrides.delete(id); // A third title: renamed elsewhere.
+		if (!o.olds.has(shown)) {
+			titleOverrides.delete(id); // An unknown title: renamed elsewhere.
 			return shown;
 		}
 
@@ -2437,7 +2483,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			node.nodeValue = next;
 		}
 
-		titleOverrides.set(id, {old: expected, new: next});
+		const olds = new Set(titleOverrides.get(id)?.olds);
+		olds.add(expected);
+		olds.delete(next);
+		titleOverrides.set(id, {new: next, olds});
 		scheduleSidebarScan();
 		return true;
 	}
@@ -2550,20 +2599,25 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 			busyIfBound(bound);
 			const res = await sendRuntimeMessage({type: 'addRule', tag}).catch(() => null);
-			if (!res?.ok) {
-				closeIfBound(bound);
-				qtToast(res?.error || "Couldn't save the tag. Nothing changed.", {error: true});
-				return;
-			}
-
-			// compileConfig has DOM side effects, so build the rule directly;
-			// storage.onChanged recompiles shortly after.
-			const newTag = String(res.rule.tag).trim();
-			const rules = compiled.rules.some(r => r.tag === newTag)
-				? compiled.rules
-				: [...compiled.rules, {tag: newTag, match: 'startsWith', color: toHex(res.rule.color), hide: false, overlay: true}];
-			await applyTag(bound, newTag, rules);
+			await finishNewTag(bound, res);
 		});
+	}
+
+	// After addRule: rename the chat captured before the await, never the menu's current one.
+	async function finishNewTag(bound, res) {
+		if (!res?.ok) {
+			closeIfBound(bound);
+			qtToast(res?.error || "Couldn't save the tag. Nothing changed.", {error: true});
+			return;
+		}
+
+		// compileConfig has DOM side effects, so build the rule directly;
+		// storage.onChanged recompiles shortly after.
+		const newTag = String(res.rule.tag).trim();
+		const rules = compiled.rules.some(r => r.tag === newTag)
+			? compiled.rules
+			: [...compiled.rules, {tag: newTag, match: 'startsWith', color: toHex(res.rule.color), hide: false, overlay: true}];
+		await applyTag(bound, newTag, rules);
 	}
 
 	// One toast at a time, centered just above the overlay (or the composer).
@@ -2594,19 +2648,29 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		t.style.setProperty('--cth-qt-center', `${r ? r.left + (r.width / 2) : innerWidth / 2}px`);
 		document.body.append(t);
 		if (!error) {
+			// Paused while hovered or while focus is inside; re-armed only when both end.
+			let hovered = false;
 			const arm = () => {
 				clearTimeout(qtToastTimer);
 				qtToastTimer = setTimeout(() => t.remove(), 6000);
 			};
 
-			for (const type of ['pointerenter', 'focusin']) {
-				t.addEventListener(type, () => clearTimeout(qtToastTimer));
-			}
-
-			for (const type of ['pointerleave', 'focusout']) {
-				t.addEventListener(type, arm);
-			}
-
+			t.addEventListener('pointerenter', () => {
+				hovered = true;
+				clearTimeout(qtToastTimer);
+			});
+			t.addEventListener('focusin', () => clearTimeout(qtToastTimer));
+			t.addEventListener('pointerleave', () => {
+				hovered = false;
+				if (!t.contains(document.activeElement)) {
+					arm();
+				}
+			});
+			t.addEventListener('focusout', e => {
+				if (!hovered && !t.contains(e.relatedTarget)) {
+					arm();
+				}
+			});
 			arm();
 		}
 
@@ -2648,7 +2712,6 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			|| document.querySelector('#history');
 		if (hr && hr !== historyRoot) {
 			historyRoot = hr;
-			hr.addEventListener('scroll', hideQtButton, {passive: true});
 			attachHistoryObserver();
 			scheduleSidebarScan();
 			scheduleOverlayUpdate();
@@ -2812,6 +2875,12 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	document.addEventListener('keydown', e => {
 		// Alt+T: tag the focused chat row, else the active chat.
 		if (isAltKey(e, 't')) {
+			const t = e.target;
+			const editable = (t?.isContentEditable || t?.closest?.('input, textarea, select')) && !historyRoot?.contains(t);
+			if (!compiled?.showQuickTag || editable) {
+				return; // Leave it to the page: macOS Option+T types "†".
+			}
+
 			e.preventDefault();
 			const a = anchorFrom(document.activeElement) || (historyRoot && getActiveChatAnchor(historyRoot));
 			if (a) {
