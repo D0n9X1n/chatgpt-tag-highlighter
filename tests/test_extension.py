@@ -668,7 +668,11 @@ class TestOptionsPage:
         """Stubbed options page; optionally the real background.js in the same page."""
         page = self.context.new_page()
         self._pages.append(page)
-        page.set_content((Path(EXT_PATH) / 'options.html').read_text().replace('<script src="options.js"></script>', ''))
+        markup = (Path(EXT_PATH) / 'options.html').read_text()
+        link = '<link rel="stylesheet" href="options.css" />'
+        assert link in markup
+        css = (Path(EXT_PATH) / 'options.css').read_text()
+        page.set_content(markup.replace('<script src="options.js"></script>', '').replace(link, f'<style>{css}</style>'))
         if clock:
             page.clock.install()
         page.evaluate(_BG_HARNESS, [{STORAGE_KEY: cfg}, delay])
@@ -689,6 +693,11 @@ class TestOptionsPage:
                       ' browser.runtime.sendMessage = m => { if (!first) return real(m); first = false;'
                       ' return new Promise(go => releases.push(go)).then(() => real(m)).then(r => new Promise(ok => releases.push(() => ok(r)))); };')
 
+    @staticmethod
+    def _toast_visible(page):
+        time.sleep(0.3)  # the opacity transition runs on real time, not the page's fake clock
+        return page.evaluate("() => { const t = document.getElementById('toast'); return t.classList.contains('show') && Number(getComputedStyle(t).opacity) > 0; }")
+
     def _banner(self, page):
         page.wait_for_selector('#conflict', state='visible', timeout=3000)
         assert page.inner_text('#conflict').startswith('Settings changed in another window.')
@@ -706,6 +715,23 @@ class TestOptionsPage:
         page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
         assert page.evaluate('msgs') == [{'type': 'writeConfig', 'base': _full([_rule('[A]')]), 'next': {**_full([_rule('[A]')]), 'dimUntagged': True}}]
         assert page.evaluate("count('set')") == 1
+
+    MUTE = 'window.muted = false; const realFire = fire; window.fire = (n, ...a) => { if (n === "changed" && muted) return; realFire(n, ...a); };'
+
+    def test_conflict_reply_alone_shows_banner(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.HOLD + ' ' + self.MUTE)
+        page.check('#dimUntagged')            # held before dispatch
+        page.evaluate('muted = true')         # this page never hears about the next change
+        self._add(page, '[NEW]')
+        assert page.is_hidden('#conflict')
+        page.evaluate('releases[0]()')        # only the conflict reply can raise the banner now
+        self._banner(page)
+        assert page.is_checked('#dimUntagged')
+        assert self._row_tags(page) == ['[A]']
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+        assert page.evaluate('cfg().dimUntagged') is False
+        assert page.evaluate("count('set')") == 1
+        assert page.text_content('#toast') != 'Auto-saved ✓'
 
     def test_external_change_rerenders_when_clean(self):
         page = self._opts(_full([_rule('[A]')]), with_bg=True)
@@ -772,12 +798,15 @@ class TestOptionsPage:
         page.clock.run_for(10)
         assert page.evaluate('sent.length') == 1
         assert page.text_content('#toast') == 'Not saved — retrying'
+        assert self._toast_visible(page)
         page.clock.run_for(1000)
         assert page.evaluate('sent.length') == 2
         page.clock.run_for(3000)
         assert page.evaluate('sent.length') == 3
+        assert self._toast_visible(page)
         page.clock.run_for(10000)
         assert page.evaluate('sent.length') == 3
+        assert self._toast_visible(page), 'the retry toast stays up until a save succeeds'
         assert page.evaluate('sent[0] === sent[1] && sent[1] === sent[2]') is True
         assert page.is_checked('#dimUntagged')
         assert page.evaluate("count('set')") == 0
@@ -1169,6 +1198,18 @@ class TestMigration:
         assert cfg['lazyRenderTurns'] is False
 
 
+    def test_explicit_show_quick_tag_false_survives_migration(self, browser_context, ext_id):
+        self._set_raw_config({'rules': [{'tag': '[Q]', 'match': 'startsWith', 'color': '#fabd2f'}], 'maxChatTurns': 0, 'showQuickTag': False})
+        cfg = self._get_config_via_options()  # options init migrates the missing fields
+        assert cfg['hideNavBar'] is True and cfg['rules'][0]['hide'] is False
+        assert cfg['showQuickTag'] is False
+        page = self.context.new_page()
+        page.goto(self.options_url)
+        page.wait_for_selector('#rows tr')
+        page.wait_for_timeout(300)
+        assert page.is_checked('#showQuickTag') is False
+        page.close()
+
     def test_background_migration_preserves_intentionally_empty_rules(self, browser_context):
         page = browser_context.new_page()
         try:
@@ -1354,7 +1395,10 @@ class TestConfigWriter(_BgPages):
         assert page.evaluate('cfg().dimUntagged') is False
 
     def test_add_rule_trims_and_dedupes(self):
-        page = self.bg(rules=[_rule('[A]'), _rule('code', '#83a598', 'includes')])
+        page = self.bg(rules=[_rule('[A]'), _rule('code', '#83a598', 'includes')], showQuickTag=False, maxChatTurns=7, dimUntagged=True)
+        general = lambda: {k: v for k, v in page.evaluate('cfg()').items() if k != 'rules'}
+        before = general()
+        assert before['showQuickTag'] is False and before['maxChatTurns'] == 7
         res = page.evaluate("() => send({type: 'addRule', tag: '  [NEW]  '})")
         assert res['ok'] is True and res['created'] is True
         assert res['rule']['tag'] == '[NEW]' and res['rule']['match'] == 'startsWith'
@@ -1362,6 +1406,7 @@ class TestConfigWriter(_BgPages):
             res = page.evaluate('t => send({type: "addRule", tag: t})', tag)
             assert res['ok'] is True and res['created'] is False, tag
         assert len(page.evaluate('cfg().rules')) == 3
+        assert general() == before, 'appending a rule must keep every other setting'
 
     def test_add_rule_length_bounds(self):
         page = self.bg()
@@ -1382,6 +1427,31 @@ class TestConfigWriter(_BgPages):
         res = page.evaluate("() => Promise.all(['[1]', '[2]', '[3]', '[4]', '[5]'].map(tag => send({type: 'addRule', tag})))")
         assert all(r['created'] for r in res)
         assert len(page.evaluate('cfg().rules')) == 7
+
+    def test_migration_shares_writer_chain(self):
+        setup = 'delete __store.tagHighlighterConfigV1.showQuickTag; window.raw = structuredClone(__store.tagHighlighterConfigV1);'
+        page = self.bg(delay=100, setup=setup)  # migration is reading/writing while these arrive
+        assert page.evaluate("() => send({type: 'addRule', tag: '[NEW]'})")['created'] is True
+        page.wait_for_timeout(400)
+        assert page.evaluate('cfg().showQuickTag') is True, 'addRule overwrote the migration'
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+        page = self.bg(delay=100, setup=setup)
+        res = page.evaluate("() => send({type: 'writeConfig', base: raw, next: {...raw, dimUntagged: true}})")
+        page.wait_for_timeout(400)
+        assert res['conflict'] is True
+        assert page.evaluate('cfg().showQuickTag') is True, 'a write against the pre-migration value overwrote the migration'
+        assert page.evaluate('cfg().dimUntagged') is False
+
+    def test_migration_keeps_explicit_show_quick_tag_false(self):
+        page = self.bg(showQuickTag=False, setup='delete __store.tagHighlighterConfigV1.showBadge')
+        page.wait_for_function('() => cfg().showBadge === true', timeout=3000)
+        assert page.evaluate('cfg().showQuickTag') is False
+
+    def test_seed_on_fresh_install(self):
+        page = self.bg(setup='delete __store.tagHighlighterConfigV1')
+        page.wait_for_function('() => Array.isArray(cfg()?.rules)', timeout=3000)
+        assert page.evaluate('cfg().showQuickTag') is True
+        assert _tags(page.evaluate('cfg()')) == ['[TODO]', '[BUG]', 'code', 'help']
 
     def test_migration_adds_show_quick_tag(self):
         page = self.bg(setup='delete __store.tagHighlighterConfigV1.showQuickTag')
