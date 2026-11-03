@@ -112,6 +112,12 @@ th{
   outline: none;
 }
 
+/* Where the full table fits (the 1040 px settings window), don't squeeze a
+   select below its widest label. Narrower tables shrink rather than scroll. */
+@media (min-width: 800px){
+  #rows .select{ min-width: max-content; }
+}
+
 .input:focus, .select:focus{
   border-color: rgba(96,165,250,.8);
   box-shadow: 0 0 0 3px rgba(96,165,250,.15);
@@ -250,7 +256,6 @@ th{
 
 .debugResult .matchMiss{
   color: var(--muted);
-  opacity: 0.5;
 }
 
 .debugResult .matchNone{

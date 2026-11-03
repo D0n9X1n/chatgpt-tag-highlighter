@@ -260,7 +260,7 @@
 		for (const element of PALETTE) {
 			const o = document.createElement('option');
 			o.value = element[1];
-			o.textContent = `${element[0]} (${element[1]})`;
+			o.textContent = element[0]; // The hex is in its own column.
 			selectElement.append(o);
 		}
 	}

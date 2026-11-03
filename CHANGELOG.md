@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#79](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/79)).
   It now opens at 1040×760, so every rule fits on one line with no cut-off
   menus, and it is never larger than the browser window it opens from. In
-  a smaller window the rule cards still stack.
+  a smaller window the rule cards still stack. Colour presets now show
+  just their names; the hex code stays in its own column.
 - **The quick tag menu no longer lists Hide rules**
   ([#80](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/80)).
   Picking one made the chat vanish from the sidebar at once. A chat that
@@ -24,9 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The chat's new name shows right after a quick tag rename**
   ([#81](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/81)).
   The sidebar kept the old name when ChatGPT split the title into several
-  pieces or showed a scrolling copy of it; every piece is now updated.
+  pieces or showed a scrolling copy of it; every copy is now updated, and
+  a copy ChatGPT redraws with the old name is corrected again.
   Renaming the open chat, or undoing that rename, also updates its name in
   the browser tab title.
+- Rules that don't match in the settings' rule tester are no longer faded,
+  so they are easier to read.
 
 ## [1.3.0] — 2026-11-03
 

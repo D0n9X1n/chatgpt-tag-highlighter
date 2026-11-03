@@ -281,16 +281,20 @@
 	const SETTINGS_WIDTH = 1040;
 	const SETTINGS_HEIGHT = 760;
 
-	async function settingsWindowSize() {
-		let win;
-		try {
-			win = API.windows.getLastFocused
-				? await API.windows.getLastFocused()
-				: await API.windows.getCurrent?.();
-		} catch {}
+	const usableSize = w => Number.isFinite(w?.width) && w.width > 0 && Number.isFinite(w?.height) && w.height > 0;
 
-		const cap = (max, n) => (Number.isFinite(n) && n > 0 ? Math.min(max, n) : max);
-		return {width: cap(SETTINGS_WIDTH, win?.width), height: cap(SETTINGS_HEIGHT, win?.height)};
+	// The last-focused window, else the current one, else the default size.
+	async function settingsWindowSize() {
+		for (const get of ['getLastFocused', 'getCurrent']) {
+			try {
+				const win = await API.windows[get]?.();
+				if (usableSize(win)) {
+					return {width: Math.min(SETTINGS_WIDTH, win.width), height: Math.min(SETTINGS_HEIGHT, win.height)};
+				}
+			} catch {}
+		}
+
+		return {width: SETTINGS_WIDTH, height: SETTINGS_HEIGHT};
 	}
 
 	function openSettings() {

@@ -2624,43 +2624,46 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
-	// ChatGPT may split a title across text nodes or duplicate it (marquee).
-	function titleTextNodes(a) {
+	// A title may be duplicated (marquee) and each copy split into text nodes.
+	// Each outermost span[dir="auto"] is one copy; else the title element is.
+	function titleCopies(a) {
 		const t = a?.querySelector('[data-thread-title="true"], .truncate');
+		if (!t) {
+			return [];
+		}
+
+		const spans = [...t.querySelectorAll('span[dir="auto"]')];
+		const outer = spans.filter(s => !spans.some(o => o !== s && o.contains(s)));
+		return outer.length > 0 ? outer : [t];
+	}
+
+	function textNodesOf(copy) {
 		const nodes = [];
-		if (t) {
-			const w = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
-			while (w.nextNode()) {
-				nodes.push(w.currentNode);
-			}
+		const w = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+		while (w.nextNode()) {
+			nodes.push(w.currentNode);
 		}
 
 		return nodes;
 	}
 
-	// Rewrite the row's title text in place: never add or remove nodes.
-	function writeTitle(a, old, next) {
-		if (!old) {
-			return;
-		}
-
-		const nodes = titleTextNodes(a);
-		const whole = nodes.filter(n => n.nodeValue.trim() === old);
-		if (whole.length > 0) {
-			for (const n of whole) {
-				n.nodeValue = next;
+	// Rewrite every copy showing one of `olds` to `next`, in place: never add
+	// or remove nodes, and never write a copy that already shows `next`.
+	function writeTitle(a, olds, next) {
+		for (const copy of titleCopies(a)) {
+			const nodes = textNodesOf(copy);
+			const text = nodes.map(n => n.nodeValue).join('').trim();
+			if (!text || text === next || !olds.has(text)) {
+				continue;
 			}
 
-			return;
-		}
-
-		if (nodes.map(n => n.nodeValue).join('').trim() !== old) {
-			return;
-		}
-
-		const first = nodes.find(n => n.nodeValue.trim());
-		for (const n of nodes) {
-			n.nodeValue = n === first ? next : '';
+			const first = nodes.find(n => n.nodeValue.trim());
+			for (const n of nodes) {
+				const value = n === first ? next : '';
+				if (n.nodeValue !== value) {
+					n.nodeValue = value;
+				}
+			}
 		}
 	}
 
@@ -2676,16 +2679,16 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const shown = getChatTitleText(a);
 		const id = chatIdOf(a);
 		const o = id && titleOverrides.get(id);
-		if (!o || shown === o.new) {
+		if (!o) {
 			return shown;
 		}
 
-		if (!o.olds.has(shown)) {
+		if (shown !== o.new && !o.olds.has(shown)) {
 			titleOverrides.delete(id); // An unknown title: renamed elsewhere.
 			return shown;
 		}
 
-		writeTitle(a, shown, o.new); // Stale remount; converges on the next scan.
+		writeTitle(a, o.olds, o.new); // Repair any stale remounted copy.
 		return o.new;
 	}
 
@@ -2726,13 +2729,12 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return false;
 		}
 
-		const a = findChatAnchorById(id);
-		writeTitle(a, expected, next);
-		retitleDocument(id, a, expected, next);
-
 		const olds = new Set(titleOverrides.get(id)?.olds);
 		olds.add(expected);
 		olds.delete(next);
+		const a = findChatAnchorById(id);
+		writeTitle(a, olds, next);
+		retitleDocument(id, a, expected, next);
 		titleOverrides.set(id, {new: next, olds});
 		scheduleSidebarScan();
 		return true;
