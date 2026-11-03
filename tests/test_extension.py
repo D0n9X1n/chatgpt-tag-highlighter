@@ -1057,20 +1057,25 @@ class TestOptionsPage:
         assert page.evaluate("[...document.querySelectorAll('#rows tr')].every(tr => new Set([...tr.children].map(td => td.getBoundingClientRect().top)).size === 1)")
         assert page.evaluate("[...document.querySelectorAll('#rows .input, #rows .select')].every(e => e.getBoundingClientRect().height < 40)"), 'no control wraps'
 
+    FIELD_WIDTHS = "[...document.querySelectorAll('#rows .tag, #rows .match, #rows .color, #rows .hex')].map(e => Math.round(e.getBoundingClientRect().width))"
+
     @pytest.mark.parametrize('font', ['default', 'wide'])
     @pytest.mark.parametrize('width', [641, 700, 800, 899, 900, 999])
-    def test_mid_width_table_no_horizontal_scroll(self, width, font):
+    def test_mid_width_uses_readable_cards(self, width, font):
         page = self._rules_page(width, 800, font)
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'grid'
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        widths = page.evaluate(self.FIELD_WIDTHS)
+        assert widths and min(widths) >= 120, sorted(set(widths))
+
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width', [1000, 1024, 1040])
+    def test_wide_table_fields_readable(self, width, font):
+        page = self._rules_page(width, 760, font)
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
         assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
-        # Every control stays inside its row.
-        assert page.evaluate("""() => [...document.querySelectorAll('#rows tr')].every(tr => {
-            const r = tr.getBoundingClientRect();
-            return [...tr.querySelectorAll('input, select, button')].every(c => c.getBoundingClientRect().right <= r.right + 0.5);
-        })""")
-        # No header or cell spills into the next column.
-        assert page.evaluate("""() => [...document.querySelectorAll('.table thead th, #rows td')]
-            .filter(c => c.scrollWidth > c.clientWidth + 1).map(c => [c.textContent.trim() || c.dataset.label, c.clientWidth, c.scrollWidth])""") == []
+        widths = page.evaluate(self.FIELD_WIDTHS)
+        assert widths and min(widths) >= 90, sorted(set(widths))
 
     def test_colour_presets_show_names_with_hex_values(self):
         page = self._fresh(_full([_rule('[A]', '#fabd2f')]))
@@ -1164,7 +1169,7 @@ class TestOptionsPage:
                 return {top: r.top, left: r.left};
             })""")
             assert match['top'] == color['top'] and match['left'] != color['left']
-        page.set_viewport_size({'width': 900, 'height': 900})
+        page.set_viewport_size({'width': 1000, 'height': 900})
         page.wait_for_timeout(100)
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
 

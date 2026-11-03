@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The settings window is wide enough for the rules**
   ([#79](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/79)).
   It now opens at 1040×760, so every rule fits on one line with no cut-off
-  menus, and it is never larger than the browser window it opens from. In
-  a smaller window the rule cards still stack. Colour presets now show
-  just their names; the hex code stays in its own column.
+  menus, and it is never larger than the browser window it opens from.
+  Below 1000 px wide each rule shows as a stacked card (previously only at
+  640 px or narrower), so the fields stay readable. Colour presets now
+  show just their names; the hex code stays in its own column.
 - **The quick tag menu no longer lists Hide rules**
   ([#80](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/80)).
   Picking one made the chat vanish from the sidebar at once. A chat that

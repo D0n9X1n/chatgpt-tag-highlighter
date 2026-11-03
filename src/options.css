@@ -101,25 +101,6 @@ button.ghost{
 .table thead th:nth-child(9){ width: 6%; }
 .table thead th:nth-child(10){ width: 4%; }
 
-/* 641–999 px: a fixed layout is never wider than the window, whatever the
-   font. Small columns get fixed widths; the four fields share the rest. */
-@media (min-width: 641px) and (max-width: 999px){
-  .table{ table-layout: fixed; }
-  .table th, .table td{ padding-left: 6px; padding-right: 6px; }
-  .table thead th{ overflow-wrap: anywhere; } /* Long headers wrap inside their column. */
-  .table thead th:nth-child(1){ width: 36px; }
-  .table thead th:nth-child(2){ width: 56px; }
-  .table thead th:nth-child(3),
-  .table thead th:nth-child(4),
-  .table thead th:nth-child(5),
-  .table thead th:nth-child(6){ width: auto; }
-  .table thead th:nth-child(7){ width: 80px; }
-  .table thead th:nth-child(8){ width: 104px; }
-  .table thead th:nth-child(9){ width: 80px; }
-  .table thead th:nth-child(10){ width: 50px; }
-  #rows .input, #rows .select{ min-width: 0; }
-}
-
 th, td{
   text-align: left;
   padding: 8px;
@@ -143,8 +124,8 @@ th{
   outline: none;
 }
 
-/* Where the full table fits (the 1040 px settings window), don't squeeze a
-   select below its widest label. Narrower tables shrink rather than scroll. */
+/* The one-line table (1000 px and up, e.g. the 1040 px settings window):
+   never squeeze a select below its widest label. */
 @media (min-width: 1000px){
   #rows .select{ min-width: max-content; }
 }
@@ -450,14 +431,18 @@ tr.drag-over td{
   display: none;
 }
 
-/* Narrow windows (the settings popup): each rule becomes a stacked card.
-   Card rows: # / drag / swatch / delete · tag · match + colour · hex · hide + overlay. */
+/* Narrow windows: tighter page chrome. */
 @media (max-width: 640px){
   body{ padding: 12px; }
   .header, .actions{ flex-wrap: wrap; }
   .actions{ flex-basis: 100%; }
   .title{ min-width: 0; }
+}
 
+/* Below 1000 px the one-line table would squeeze the fields unreadably, so
+   each rule becomes a stacked card. Card rows:
+   # / drag / swatch / delete · tag · match + colour · hex · hide + overlay. */
+@media (max-width: 999px){
   .table, .table tbody{
     display: block;
     width: 100%;
