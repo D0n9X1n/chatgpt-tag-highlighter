@@ -3169,6 +3169,8 @@ class TestAppShellContentScript:
         page.click('#cth-qt-menu [data-action=new]')
         page.wait_for_selector('#cth-qt-menu input')
         assert page.get_attribute('#cth-qt-menu input', 'placeholder') == '[TAG]'
+        # A menu may only own items, separators or groups: the textbox sits in a labelled group.
+        assert page.evaluate("() => { const g = document.querySelector('#cth-qt-menu input').parentElement; return [g.getAttribute('role'), g.getAttribute('aria-label'), g.parentElement.id]; }") == ['group', 'New tag', 'cth-qt-menu']
         page.keyboard.press('Escape')
         assert page.locator('#cth-qt-menu [data-action=new]').count() == 1
         assert page.locator('#cth-qt-menu input').count() == 0
@@ -3498,7 +3500,7 @@ class TestAppShellContentScript:
             .map(n => [n.namespaceURI, n.localName, n.getAttribute('viewBox') || n.getAttribute('d') || n.getAttribute('r')])""")
         svg_ns = 'http://www.w3.org/2000/svg'
         assert icon == [[svg_ns, 'svg', '0 0 24 24'], [svg_ns, 'circle', '3'],
-                        [svg_ns, 'path', 'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1']], icon
+                        [svg_ns, 'path', 'M10.3 2h3.4l.5 2.6 1.9.8 2.2-1.5 2.4 2.4-1.5 2.2.8 1.9 2.6.5v3.4l-2.6.5-.8 1.9 1.5 2.2-2.4 2.4-2.2-1.5-1.9.8-.5 2.6h-3.4l-.5-2.6-1.9-.8-2.2 1.5-2.4-2.4 1.5-2.2-.8-1.9L2 13.7v-3.4l2.6-.5.8-1.9-1.5-2.2 2.4-2.4 2.2 1.5 1.9-.8z']], icon
         assert page.eval_on_selector('#cth-settings svg', 'e => e.getBoundingClientRect().width') == 14
         page.hover('#row-c3')
         assert page.eval_on_selector('#cth-qt-btn svg', "e => [e.namespaceURI, e.children.length, e.getBoundingClientRect().width]") == [svg_ns, 2, 14]

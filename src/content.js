@@ -604,6 +604,7 @@ html.cth-light #${QT_BTN_ID}:hover { background: rgba(0,0,0,0.06); }
   top: var(--cth-qt-top);
   left: var(--cth-qt-left);
   z-index: 2147482000;
+  box-sizing: border-box;
   width: 220px;
   padding: 4px;
   border-radius: 12px;
@@ -614,7 +615,7 @@ html.cth-light #${QT_BTN_ID}:hover { background: rgba(0,0,0,0.06); }
   color: #fff;
 }
 html.cth-light #${QT_MENU_ID} { background: #fff; border-color: rgba(0,0,0,0.10); color: #000; }
-.cth-qt-list { max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
+.cth-qt-list { max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; padding: 4px; margin: -4px; }
 .cth-qt-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 8px; cursor: pointer; }
 .cth-qt-item:hover { background: rgba(255,255,255,0.08); }
 html.cth-light .cth-qt-item:hover { background: rgba(0,0,0,0.06); }
@@ -624,9 +625,14 @@ html.cth-light .cth-qt-item:hover { background: rgba(0,0,0,0.06); }
 .cth-qt-check { width: 14px; }
 .cth-qt-danger { color: #fb4934; }
 html.cth-light .cth-qt-danger { color: #cc241d; }
+.cth-qt-danger:hover { background: #242424; } /* keeps #fb4934 at 4.5:1 */
+html.cth-light .cth-qt-danger:hover { background: rgba(0,0,0,0.06); }
 #${QT_MENU_ID} [role=separator] { height: 1px; margin: 4px 0; background: rgba(255,255,255,0.12); }
+html.cth-light #${QT_MENU_ID} [role=separator] { background: rgba(0,0,0,0.10); }
 .cth-qt-empty { padding: 8px; opacity: 0.6; }
 .cth-qt-input { width: 100%; height: 28px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; }
+html.cth-light .cth-qt-input { border-color: rgba(0,0,0,0.10); }
+html.cth-light #${QT_BTN_ID}:focus-visible { background: rgba(0,0,0,0.06); }
 #${QT_BTN_ID}:focus-visible, #${QT_MENU_ID} :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 
 #${QT_TOAST_ID} {
@@ -647,7 +653,8 @@ html.cth-light .cth-qt-danger { color: #cc241d; }
 }
 html.cth-light #${QT_TOAST_ID} { background: #fff; color: #000; border-color: rgba(0,0,0,0.10); }
 #${QT_TOAST_ID}.cth-qt-error { border-left: 3px solid #fb4934; }
-.cth-qt-close { width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+html.cth-light #${QT_TOAST_ID}.cth-qt-error { border-left-color: #cc241d; }
+.cth-qt-close { flex: 0 0 24px; width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
 #${QT_TOAST_ID} button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .cth-qt-undo { padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; cursor: pointer; }
 html.cth-light .cth-qt-undo { border-color: rgba(0,0,0,0.10); }
@@ -1221,7 +1228,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 	const COG_SHAPES = [
 		['circle', {cx: '12', cy: '12', r: '3'}],
-		['path', {d: 'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1'}],
+		['path', {d: 'M10.3 2h3.4l.5 2.6 1.9.8 2.2-1.5 2.4 2.4-1.5 2.2.8 1.9 2.6.5v3.4l-2.6.5-.8 1.9 1.5 2.2-2.4 2.4-2.2-1.5-1.9.8-.5 2.6h-3.4l-.5-2.6-1.9-.8-2.2 1.5-2.4-2.4 1.5-2.2-.8-1.9L2 13.7v-3.4l2.6-.5.8-1.9-1.5-2.2 2.4-2.4 2.2 1.5 1.9-.8z'}],
 	];
 
 	function createSettingsButton() {
@@ -2569,7 +2576,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	function startNewTag(item) {
 		const bound = qtBound; // Capture the chat now, before any await.
 		const input = el('input', {type: 'text', placeholder: '[TAG]', 'aria-label': 'New tag', class: 'cth-qt-input'});
-		item.replaceWith(input);
+		// A menu may only own menu items or groups, so the textbox sits in a group.
+		const group = el('div', {role: 'group', 'aria-label': 'New tag'}, [input]);
+		item.replaceWith(group);
 		input.focus();
 		input.addEventListener('keydown', async e => {
 			if (e.key === 'Tab') {
@@ -2580,7 +2589,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			e.stopPropagation();
 			if (e.key === 'Escape') {
 				e.preventDefault();
-				input.replaceWith(item);
+				group.replaceWith(item);
 				item.focus();
 				return;
 			}

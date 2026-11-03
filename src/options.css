@@ -167,6 +167,7 @@ th{
    beside the first line instead of centered between lines. */
 .generalRow .checkboxWrap{
   align-items: flex-start;
+  min-height: 24px;
 }
 .generalRow .checkboxWrap input{
   margin-top: 3px;
@@ -386,6 +387,7 @@ tr.drag-over td{
 @media (max-width: 640px){
   body{ padding: 12px; }
   .header, .actions{ flex-wrap: wrap; }
+  .actions{ flex-basis: 100%; }
   .title{ min-width: 0; }
 
   .table, .table tbody{
@@ -428,3 +430,5 @@ tr.drag-over td{
   #rows tr.drag-over{ box-shadow: 0 -2px 0 var(--accent); }
   #rows .input, #rows .select{ width: 100%; }
 }
+
+#conflictReload:focus-visible{ outline: 2px solid currentColor; outline-offset: 2px; }

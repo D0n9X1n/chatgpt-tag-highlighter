@@ -157,22 +157,22 @@
       <td class="dragCell" data-label="Move"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
 
       <td data-label="Tag">
-        <input class="input tag" placeholder="[TODO]" />
+        <input class="input tag" placeholder="[TODO]" aria-label="Tag" />
       </td>
 
       <td data-label="Match">
-        <select class="select match">
+        <select class="select match" aria-label="Match">
           <option value="startsWith">startsWith</option>
           <option value="includes">includes</option>
         </select>
       </td>
 
       <td data-label="Color">
-        <select class="select color"></select>
+        <select class="select color" aria-label="Color preset"></select>
       </td>
 
       <td data-label="Hex">
-        <input class="input hex" placeholder="#fabd2f" />
+        <input class="input hex" placeholder="#fabd2f" aria-label="Hex color" />
       </td>
 
       <td class="hideCell" data-label="Hide">
@@ -185,7 +185,7 @@
       <td class="overlayCell" data-label="Overlay">
         <label class="checkboxWrap" title="Show in overlay banner when active">
           <input class="overlay" type="checkbox" checked />
-          <span>Show</span>
+          <span>Overlay</span>
         </label>
       </td>
 
