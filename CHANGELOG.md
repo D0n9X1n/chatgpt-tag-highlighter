@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   6 seconds (it stays while hovered or focused). Undo is refused if the
   chat was renamed again in the meantime. Errors appear in a toast and
   change nothing.
+- Every quick tag rename and Undo first reads the chat's current title from
+  ChatGPT and is refused if it changed. Renames of the same chat from
+  different tabs in this browser run one at a time. If a rename's result is
+  unknown (the request was cut off or its tab closed), that chat stays
+  blocked until you reload ChatGPT to check the title or choose **Tag
+  anyway**. ChatGPT has no conditional rename, so a rename made in ChatGPT
+  itself or on another device at the same moment can still race.
 - **Show quick tag button** option, on by default.
 - **Settings button** in the sidebar filter bar
   ([#74](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/74)).
@@ -38,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   even with no rules, and Firefox now has a toolbar button too.
 
 ### Changed
-- **Settings are never silently overwritten**
+- **Settings are not silently overwritten in this browser**
   ([#76](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/76)).
   `background.js` is now the only script that writes settings, one write
   at a time. A save from the options page is applied only if the stored
@@ -46,7 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An options page with no unsaved edits picks up changes made elsewhere;
   one with unsaved edits keeps its draft and shows “Settings changed in
   another window” with **Reload**. A save that fails to reach the
-  extension shows “Not saved — retrying” and is sent again.
+  extension shows “Not saved — retrying” and is sent again; a save the
+  browser refuses (for example over the sync size limit) shows the error and
+  lets your next edit save. A change synced from another device at the same
+  moment can still win.
 - Rule cards stack in windows 640 px wide or narrower, so the settings fit
   the floating window without scrolling sideways.
 - Long titles in the rule tester wrap instead of overflowing.
