@@ -870,6 +870,183 @@ class TestMigration:
 
 
 # ============================================================
+# Background config writer — background.js run in a plain page against an
+# in-memory browser.* harness (no extension, no network).
+# ============================================================
+
+_BG_HARNESS = """([store, delay]) => {
+    window.__store = store;
+    window.__calls = [];
+    const L = [];
+    const ev = n => ({addListener: f => L.push([n, f])});
+    const wait = () => new Promise(r => setTimeout(r, delay));
+    const rec = n => (...a) => { __calls.push([n, a]); return Promise.resolve({id: 7}); };
+    window.browser = {
+        runtime: {
+            onInstalled: ev('i'), onStartup: ev('s'), onMessage: ev('m'),
+            getURL: p => 'ext://' + p,
+            openOptionsPage: rec('openOptionsPage'),
+            sendMessage: m => window.down ? Promise.reject(new Error('down')) : send(m),
+        },
+        windows: {create: rec('create'), update: rec('update'), get: rec('get'), onRemoved: ev('removed')},
+        action: {onClicked: ev('clicked'), setBadgeText() {}, setBadgeBackgroundColor() {}},
+        storage: {
+            onChanged: ev('changed'),
+            session: {
+                get: async k => ({[k]: (window.__session ||= {})[k]}),
+                set: async o => { Object.assign(window.__session ||= {}, o); },
+            },
+            sync: {
+                get: async k => { await wait(); return {[k]: structuredClone(__store[k])}; },
+                set: async o => {
+                    await wait();
+                    const ch = Object.fromEntries(Object.keys(o).map(k => [k, {oldValue: structuredClone(__store[k]), newValue: structuredClone(o[k])}]));
+                    Object.assign(__store, structuredClone(o));
+                    __calls.push(['set', o]);
+                    fire('changed', ch, 'sync');
+                },
+            },
+        },
+    };
+    // A message nobody answers fails after 5 s instead of hanging the test.
+    window.send = m => new Promise((r, j) => {
+        for (const [n, f] of L) if (n === 'm') f(m, {}, r);
+        setTimeout(() => j(new Error('Timeout: no reply to ' + m?.type)), 5000);
+    });
+    window.fire = (n, ...a) => { for (const [k, f] of L) if (k === n) f(...a); };
+    window.cfg = () => __store.tagHighlighterConfigV1;
+    window.count = n => __calls.filter(c => c[0] === n).length;
+}"""
+
+
+def _rule(tag, color='#fabd2f', match='startsWith', **kw):
+    return {'tag': tag, 'match': match, 'color': color, 'hide': False, 'overlay': True, **kw}
+
+
+def _full(rules, **kw):
+    return {'rules': rules, 'maxChatTurns': 0, 'hideNavBar': True, 'dimUntagged': False, 'showBadge': True,
+            'lazyRenderTurns': True, 'showDeleteUntagged': False, 'showQuickTag': True, **kw}
+
+
+def _tjs(cid):
+    return f"document.querySelector('#row-{cid} [data-thread-title] span[dir=auto]').textContent"
+
+
+class _BgPages:
+    @pytest.fixture(autouse=True)
+    def _ctx(self, browser_context):
+        self.context, self._bg_pages = browser_context, []
+        yield
+        for p in self._bg_pages:
+            p.close()
+
+    def bg(self, rules=None, delay=0, setup='', **kw):
+        store = {STORAGE_KEY: _full([_rule('[A]'), _rule('[B]', '#fb4934')] if rules is None else rules, **kw)}
+        page = self.context.new_page()
+        self._bg_pages.append(page)
+        page.set_content('<html><body></body></html>')
+        page.evaluate(_BG_HARNESS, [store, delay])
+        if setup:
+            page.evaluate(f'() => {{ {setup} }}')  # statement body, never an auto-invoked expression
+        page.add_script_tag(content=(Path(EXT_PATH) / 'background.js').read_text())
+        return page
+
+
+def _tags(cfg):
+    return [r['tag'] for r in cfg['rules']]
+
+
+class TestConfigWriter(_BgPages):
+    """background.js is the only config writer: compare-and-set writes and addRule on one chain."""
+
+    def test_cas_writes_when_base_matches(self):
+        page = self.bg()
+        res = page.evaluate("async () => { const b = cfg(); return send({type: 'writeConfig', base: b, next: {...b, dimUntagged: true}}); }")
+        assert res['ok'] is True and res['value']['dimUntagged'] is True
+        assert page.evaluate('cfg().dimUntagged') is True
+        assert page.evaluate("count('set')") == 1
+        # Same content, different key order: still the same base.
+        res = page.evaluate("""async () => {
+            const b = cfg();
+            const reordered = Object.fromEntries(Object.entries(b).reverse());
+            reordered.rules = b.rules.map(r => Object.fromEntries(Object.entries(r).reverse()));
+            return send({type: 'writeConfig', base: reordered, next: {...b, maxChatTurns: 4}});
+        }""")
+        assert res['ok'] is True
+        assert page.evaluate('cfg().maxChatTurns') == 4
+        assert page.evaluate("count('set')") == 2
+
+    def test_cas_conflict_writes_nothing(self):
+        page = self.bg()
+        res = page.evaluate("""async () => {
+            const b = cfg();
+            await send({type: 'addRule', tag: '[NEW]'});
+            return send({type: 'writeConfig', base: b, next: {...b, dimUntagged: true}});
+        }""")
+        assert res['ok'] is False and res['conflict'] is True
+        assert _tags(res['value']) == ['[A]', '[B]', '[NEW]']
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+        assert page.evaluate('cfg().dimUntagged') is False
+        assert page.evaluate("count('set')") == 1
+
+    def test_retry_after_landed_write_is_ok(self):
+        page = self.bg()
+        res = page.evaluate("""async () => {
+            const b = cfg(), n = {...b, maxChatTurns: 3};
+            return [await send({type: 'writeConfig', base: b, next: n}), await send({type: 'writeConfig', base: b, next: n})];
+        }""")
+        assert res[0]['ok'] is True and res[1]['ok'] is True
+        assert page.evaluate('cfg().maxChatTurns') == 3
+        assert page.evaluate("count('set')") == 1
+
+    def test_interleaved_add_rule_then_stale_write_conflicts(self):
+        page = self.bg(delay=20)
+        res = page.evaluate("""async () => {
+            const b = cfg();
+            return Promise.all([send({type: 'addRule', tag: '[NEW]'}), send({type: 'writeConfig', base: b, next: {...b, dimUntagged: true}})]);
+        }""")
+        assert res[1]['conflict'] is True
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+        assert page.evaluate('cfg().dimUntagged') is False
+
+    def test_add_rule_trims_and_dedupes(self):
+        page = self.bg(rules=[_rule('[A]'), _rule('code', '#83a598', 'includes')])
+        res = page.evaluate("() => send({type: 'addRule', tag: '  [NEW]  '})")
+        assert res['ok'] is True and res['created'] is True
+        assert res['rule']['tag'] == '[NEW]' and res['rule']['match'] == 'startsWith'
+        for tag in ('[A]', 'code', '[NEW]'):
+            res = page.evaluate('t => send({type: "addRule", tag: t})', tag)
+            assert res['ok'] is True and res['created'] is False, tag
+        assert len(page.evaluate('cfg().rules')) == 3
+
+    def test_add_rule_length_bounds(self):
+        page = self.bg()
+        for tag in ('', '   ', 'x' * 41):
+            assert page.evaluate('t => send({type: "addRule", tag: t})', tag) == {'ok': False, 'error': 'Tags are 1–40 characters.'}
+        assert page.evaluate('t => send({type: "addRule", tag: t})', 'x' * 40)['ok'] is True
+        assert page.evaluate("count('set')") == 1
+
+    def test_add_rule_palette_first_unused_then_gray(self):
+        page = self.bg(rules=[_rule('[R]', '#fb4934'), _rule('[Y]', '#fabd2f')])
+        assert page.evaluate("() => send({type: 'addRule', tag: '[N]'})")['rule']['color'] == '#b8bb26'
+        palette = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff']
+        page = self.bg(rules=[_rule(f'[{i}]', c) for i, c in enumerate(palette)])
+        assert page.evaluate("() => send({type: 'addRule', tag: '[N]'})")['rule']['color'] == '#a7a7a7'
+
+    def test_queue_serializes_concurrent_add_rules(self):
+        page = self.bg(delay=15)
+        res = page.evaluate("() => Promise.all(['[1]', '[2]', '[3]', '[4]', '[5]'].map(tag => send({type: 'addRule', tag})))")
+        assert all(r['created'] for r in res)
+        assert len(page.evaluate('cfg().rules')) == 7
+
+    def test_migration_adds_show_quick_tag(self):
+        page = self.bg(setup='delete __store.tagHighlighterConfigV1.showQuickTag')
+        page.wait_for_function('() => cfg().showQuickTag === true', timeout=3000)
+        assert list(page.evaluate('cfg()'))[-1] == 'showQuickTag'
+
+
+
+# ============================================================
 # Content Script Tests — the packaged content.js against synthetic
 # ChatGPT markup served at https://chatgpt.com/ via request routing.
 # Fixtures mirror the DOM hooks observed on the live site (Sep 2026):

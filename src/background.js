@@ -121,14 +121,92 @@
 		return out.length > 0 ? out : null;
 	}
 
-	async function seedOrMigrate() {
+	// ---- Config writer: every config write runs on one promise chain ----
+	const PALETTE_HEX = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff']; // keep in sync with options.js PALETTE
+
+	let chain = Promise.resolve();
+	function enqueue(job) {
+		const run = chain.then(job);
+		chain = run.catch(() => {});
+		return run;
+	}
+
+	// Key order does not matter when comparing configs.
+	function canon(value) {
+		return JSON.stringify(value, (k, x) => {
+			if (x && typeof x === 'object' && !Array.isArray(x)) {
+				return Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]]));
+			}
+
+			return x;
+		});
+	}
+
+	const same = (a, b) => canon(a ?? null) === canon(b ?? null);
+
+	async function readCfg() {
+		const data = await storageGet(STORAGE_KEY);
+		return data?.[STORAGE_KEY] ?? null;
+	}
+
+	// Compare-and-set: never applies a write made against an outdated value.
+	function writeConfig(base, next) {
+		return enqueue(async () => {
+			if (!next || !Array.isArray(next.rules)) {
+				throw new Error('Invalid config');
+			}
+
+			const current = await readCfg();
+			if (same(current, base)) {
+				await storageSet({[STORAGE_KEY]: next});
+				return {value: next};
+			}
+
+			if (same(current, next)) {
+				return {value: current}; // A retried write that already landed.
+			}
+
+			return {conflict: true, value: current}; // Changed elsewhere: write nothing.
+		});
+	}
+
+	function validTag(t) {
+		const s = String(t ?? '').trim();
+		return s.length >= 1 && s.length <= 40 ? s : null;
+	}
+
+	// content.js "New tag": appended to the freshest stored value.
+	function addRule(rawTag) {
+		const tag = validTag(rawTag);
+		if (!tag) {
+			return Promise.reject(new Error('Tags are 1–40 characters.'));
+		}
+
+		return enqueue(async () => {
+			const cfg = (await readCfg()) || {};
+			const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
+			const existing = rules.find(r => String(r.tag).trim() === tag); // Any match type.
+			if (existing) {
+				return {rule: existing, created: false};
+			}
+
+			const used = new Set(rules.map(r => String(r.color).toLowerCase()));
+			const rule = {
+				tag, match: 'startsWith', color: PALETTE_HEX.find(h => !used.has(h)) || '#a7a7a7', hide: false, overlay: true,
+			};
+			await storageSet({[STORAGE_KEY]: {...cfg, rules: [...rules, rule]}});
+			return {rule, created: true};
+		});
+	}
+
+	async function seedOrMigrateNow() {
 		try {
 			const data = await storageGet(STORAGE_KEY);
 			const existing = data?.[STORAGE_KEY];
 
 			if (!existing) {
 				await storageSet({
-					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR, dimUntagged: false, showBadge: true, lazyRenderTurns: true, showDeleteUntagged: false},
+					[STORAGE_KEY]: {rules: DEFAULT_RULES, maxChatTurns: DEFAULT_MAX_CHAT_TURNS, hideNavBar: DEFAULT_HIDE_NAV_BAR, dimUntagged: false, showBadge: true, lazyRenderTurns: true, showDeleteUntagged: false, showQuickTag: true},
 				});
 				return;
 			}
@@ -149,6 +227,7 @@
 			const showBadge = existing.showBadge !== false;
 			const lazyRenderTurns = existing.lazyRenderTurns !== false;
 			const showDeleteUntagged = existing.showDeleteUntagged === true;
+			const showQuickTag = existing.showQuickTag !== false;
 
 			// Only write if missing/invalid fields.
 			const needWrite
@@ -160,15 +239,18 @@
         	|| typeof existing.dimUntagged !== 'boolean'
         	|| typeof existing.showBadge !== 'boolean'
         	|| typeof existing.lazyRenderTurns !== 'boolean'
-        	|| typeof existing.showDeleteUntagged !== 'boolean';
+        	|| typeof existing.showDeleteUntagged !== 'boolean'
+        	|| typeof existing.showQuickTag !== 'boolean';
 
 			if (needWrite) {
-				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns, showDeleteUntagged}});
+				await storageSet({[STORAGE_KEY]: {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns, showDeleteUntagged, showQuickTag}});
 			}
 		} catch {
 			// Best-effort: do not block extension startup.
 		}
 	}
+
+	const seedOrMigrate = () => enqueue(seedOrMigrateNow); // Migration shares the write chain.
 
 	API.runtime?.onInstalled?.addListener(() => seedOrMigrate());
 	API.runtime?.onStartup?.addListener?.(() => seedOrMigrate());
@@ -176,8 +258,8 @@
 	// Helpful for dev: seed on background load.
 	seedOrMigrate();
 
-	// ---- Badge counter ----
-	API.runtime?.onMessage?.addListener((msg) => {
+	// ---- Messages: badge counter + config writes ----
+	API.runtime?.onMessage?.addListener((msg, sender, sendResponse) => {
 		if (msg?.type === 'badgeCount') {
 			const count = Number(msg.count) || 0;
 			const text = count > 0 ? String(count) : '';
@@ -192,5 +274,22 @@
 				} catch {}
 			}
 		}
+
+		let job = null;
+		if (msg?.type === 'writeConfig') {
+			job = writeConfig(msg.base ?? null, msg.next);
+		} else if (msg?.type === 'addRule') {
+			job = addRule(msg.tag);
+		}
+
+		if (!job) {
+			return false;
+		}
+
+		job.then(
+			r => sendResponse({ok: !r.conflict, ...r}),
+			e => sendResponse({ok: false, error: String(e?.message || e)}),
+		);
+		return true; // Reply asynchronously.
 	});
 })();
