@@ -19,6 +19,7 @@
 	const FILTER_BAR_ID = 'cth-filter-bar';
 	const DELETE_BTN_ID = 'cth-delete-untagged';
 	const DELETE_DIALOG_ID = 'cth-delete-dialog';
+	const SETTINGS_BTN_ID = 'cth-settings';
 	// Per-row custom properties set by applyRuleToAnchor.
 	const CTH_COLOR_VARS = ['color', 'bg', 'bg-strong', 'bg-light', 'bg-strong-light', 'ring'];
 	const DEBUG = false;
@@ -78,6 +79,29 @@
 				} catch {
 					resolve();
 				}
+			}
+		});
+	}
+
+	function sendRuntimeMessage(msg) { // Keep in sync with options.js
+		return new Promise((resolve, reject) => {
+			try {
+				const callback = API === globalThis.chrome
+					? res => {
+						const e = API.runtime.lastError;
+						if (e) {
+							reject(new Error(e.message));
+						} else {
+							resolve(res);
+						}
+					}
+					: undefined;
+				const r = API.runtime.sendMessage(msg, callback);
+				if (r?.then) {
+					r.then(resolve, reject);
+				}
+			} catch (e) {
+				reject(e);
 			}
 		});
 	}
@@ -432,6 +456,32 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
   border-color: rgba(204,36,29,0.60);
   color: #cc241d;
 }
+
+/* Settings gear: always last in the bar. */
+#${SETTINGS_BTN_ID} {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.60);
+  margin-inline-start: auto;
+}
+html.cth-light #${SETTINGS_BTN_ID} {
+  border-color: rgba(0,0,0,0.10);
+  color: rgba(0,0,0,0.55);
+}
+#${DELETE_BTN_ID} ~ #${SETTINGS_BTN_ID} {
+  margin-inline-start: 0;
+}
+#${SETTINGS_BTN_ID}:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
 `;
 
 		const deleteCss = `
@@ -677,6 +727,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const showBadge = cfg?.showBadge !== false; // default true
 		const lazyRenderTurns = cfg?.lazyRenderTurns !== false; // default true
 		const showDeleteUntagged = cfg?.showDeleteUntagged === true; // default false
+		const showQuickTag = cfg?.showQuickTag !== false; // default true
 
 		// Toggle CSS class for nav bar visibility
 		document.documentElement.classList.toggle('cth-hide-navbar', hideNavBar);
@@ -684,7 +735,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		document.documentElement.classList.toggle('cth-lazy-turns', lazyRenderTurns);
 
-		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns, showDeleteUntagged};
+		return {rules, maxChatTurns, hideNavBar, dimUntagged, showBadge, lazyRenderTurns, showDeleteUntagged, showQuickTag};
 	}
 
 	function matchRule(title, rules) {
@@ -810,7 +861,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const showPills = visibleRules.length >= 2;
 		// Never offer deletion without a rule: every chat would count as untagged.
 		const showDelete = compiled?.showDeleteUntagged === true && compiled.rules.length > 0;
-		if (!showPills && !showDelete) {
+		if (!compiled || compiled.rules.length === 0) {
 			const bar = document.getElementById(FILTER_BAR_ID);
 			if (bar) {
 				bar.classList.remove('cth-visible');
@@ -836,6 +887,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		if (showDelete) {
 			bar.append(createDeleteButton());
 		}
+
+		bar.append(createSettingsButton());
 
 		if (focusedIndex >= 0) {
 			bar.children[focusedIndex]?.focus();
@@ -1060,6 +1113,20 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			e.preventDefault();
 			e.stopPropagation();
 			openDeleteUntaggedDialog();
+		});
+		return btn;
+	}
+
+	const COG_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">'
+		+ '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>';
+
+	function createSettingsButton() {
+		const btn = el('button', {
+			type: 'button', id: SETTINGS_BTN_ID, 'aria-label': 'Tag Highlighter settings', title: 'Tag Highlighter settings',
+		});
+		btn.innerHTML = COG_SVG; // Static markup, no user data.
+		btn.addEventListener('click', () => {
+			sendRuntimeMessage({type: 'openSettings'}).catch(() => {});
 		});
 		return btn;
 	}
@@ -1980,8 +2047,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		rootObserver = new MutationObserver(() => {
 			bindHistoryRoot();
 			const bar = document.getElementById(FILTER_BAR_ID);
-			const needsBar = getVisibleRules().length >= 2
-				|| (compiled?.showDeleteUntagged && compiled.rules.length > 0);
+			const needsBar = compiled?.rules.length > 0;
 			if (historyRoot && needsBar && bar?.parentElement !== historyRoot) renderFilterBar();
 			scheduleOverlayLayout();
 		});
@@ -2126,7 +2192,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			e.preventDefault();
 			const bar = document.getElementById(FILTER_BAR_ID);
 			if (bar && bar.classList.contains('cth-visible')) {
-				const firstPill = bar.querySelector(`.cth-pill, #${DELETE_BTN_ID}`);
+				const firstPill = bar.querySelector(`.cth-pill, #${DELETE_BTN_ID}, #${SETTINGS_BTN_ID}`);
 				if (firstPill) firstPill.focus();
 			}
 		}

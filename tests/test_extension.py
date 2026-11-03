@@ -2573,3 +2573,39 @@ class TestAppShellContentScript:
         }""")
         assert self._poll(page, "() => document.querySelector('#item-a2').getClientRects().length > 0"), \
             'a recycled link must not inherit another chat\'s deleted marker after a config change'
+
+    # ---- Settings gear (#76) ----
+
+    BAR_IDS = "() => [...(document.querySelector('#cth-filter-bar.cth-visible')?.children || [])].map(e => e.id || e.className)"
+
+    def test_settings_gear_thresholds_and_label(self):
+        self._configure(rules=[CONTENT_RULES[0]])
+        page = self._open_chat()
+        self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible')")
+        assert page.evaluate(self.BAR_IDS) == ['cth-settings']
+        gear = page.locator('#cth-settings')
+        assert gear.get_attribute('aria-label') == 'Tag Highlighter settings'
+        assert gear.get_attribute('title') == 'Tag Highlighter settings'
+        assert gear.text_content() == ''
+        page.keyboard.press('Alt+f')
+        assert page.evaluate('document.activeElement.id') == 'cth-settings'
+        self._configure(showDeleteUntagged=True)
+        assert self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible .cth-pill')")
+        ids = page.evaluate(self.BAR_IDS)
+        assert ids[0].startswith('cth-pill'), ids
+        assert ids[-2:] == ['cth-delete-untagged', 'cth-settings'], ids
+
+    def test_settings_gear_opens_one_settings_page(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        with self.context.expect_page() as info:
+            page.click('#cth-settings')
+        opened = info.value
+        self._pages.append(opened)
+        opened.wait_for_load_state()
+        assert opened.url.endswith('/options.html'), opened.url
+        page.click('#cth-settings')
+        page.wait_for_timeout(800)
+        options = [p for p in self.context.pages if p.url.endswith('/options.html')]
+        assert len(options) == 1, [p.url for p in self.context.pages]
