@@ -1336,7 +1336,10 @@ _BG_HARNESS = """([store, delay]) => {
             openOptionsPage: rec('openOptionsPage'),
             sendMessage: m => window.down ? Promise.reject(new Error('down')) : send(m),
         },
-        windows: {create: rec('create'), update: rec('update'), get: rec('get'), onRemoved: ev('removed')},
+        windows: {
+            create: rec('create'), update: rec('update'), get: rec('get'), onRemoved: ev('removed'),
+            getLastFocused: async () => window.__focused ?? {id: 1, width: 1920, height: 1080},
+        },
         action: {onClicked: ev('clicked'), setBadgeText() {}, setBadgeBackgroundColor() {}},
         storage: {
             onChanged: ev('changed'),
@@ -1642,13 +1645,43 @@ class TestOpenSettings(_BgPages):
     def test_popup_args_and_refocus(self):
         page = self.bg()
         page.evaluate(self.OPEN)
-        assert self._args(page, 'create') == [[{'url': 'ext://options.html', 'type': 'popup', 'width': 560, 'height': 720, 'focused': True}]]
+        assert self._args(page, 'create') == [[{'url': 'ext://options.html', 'type': 'popup', 'width': 1040, 'height': 760, 'focused': True}]]
         page.evaluate(self.OPEN)
         assert page.evaluate("count('create')") == 1
         assert self._args(page, 'update') == [[7, {'focused': True}]]
         page.evaluate("fire('removed', 7)")
         page.evaluate(self.OPEN)
         assert page.evaluate("count('create')") == 2
+
+    def _size(self, page):
+        args = self._args(page, 'create')
+        assert len(args) == 1
+        return args[0][0]['width'], args[0][0]['height']
+
+    def test_popup_capped_to_focused_window(self):
+        page = self.bg(setup='window.__focused = {id: 1, width: 900, height: 700};')
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (900, 700)
+
+    def test_popup_caps_each_dimension_separately(self):
+        page = self.bg(setup='window.__focused = {id: 1, width: 1280, height: 600};')
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (1040, 600)
+
+    def test_popup_size_falls_back_to_get_current(self):
+        page = self.bg(setup="delete browser.windows.getLastFocused; browser.windows.getCurrent = async () => ({id: 1, width: 800, height: 650});")
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (800, 650)
+
+    @pytest.mark.parametrize('setup', [
+        'delete browser.windows.getLastFocused;',
+        "browser.windows.getLastFocused = () => Promise.reject(new Error('no window'));",
+        'window.__focused = {id: 1};',
+    ], ids=['missing', 'rejects', 'no-size'])
+    def test_popup_default_size_without_focused_window(self, setup):
+        page = self.bg(setup=setup)
+        page.evaluate(self.OPEN)
+        assert self._size(page) == (1040, 760)
 
     def test_refocus_after_worker_restart(self):
         page = self.bg(setup='window.__session = {cthSettingsWindowId: 7};')

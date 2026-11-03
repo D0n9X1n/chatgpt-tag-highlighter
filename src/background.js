@@ -277,6 +277,22 @@
 		return (await sessionArea.get(SETTINGS_WIN_KEY))?.[SETTINGS_WIN_KEY];
 	}
 
+	// Wide enough for every rule row on one line; never larger than the browser window.
+	const SETTINGS_WIDTH = 1040;
+	const SETTINGS_HEIGHT = 760;
+
+	async function settingsWindowSize() {
+		let win;
+		try {
+			win = API.windows.getLastFocused
+				? await API.windows.getLastFocused()
+				: await API.windows.getCurrent?.();
+		} catch {}
+
+		const cap = (max, n) => (Number.isFinite(n) && n > 0 ? Math.min(max, n) : max);
+		return {width: cap(SETTINGS_WIDTH, win?.width), height: cap(SETTINGS_HEIGHT, win?.height)};
+	}
+
 	function openSettings() {
 		return settingsQueue(async () => {
 			try {
@@ -293,8 +309,9 @@
 					} catch {} // Closed while we were not watching: open a new one.
 				}
 
+				const {width, height} = await settingsWindowSize();
 				const w = await API.windows.create({
-					url: API.runtime.getURL('options.html'), type: 'popup', width: 560, height: 720, focused: true,
+					url: API.runtime.getURL('options.html'), type: 'popup', width, height, focused: true,
 				});
 				await sessionArea.set({[SETTINGS_WIN_KEY]: w?.id ?? null});
 			} catch {
