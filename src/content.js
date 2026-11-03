@@ -2404,27 +2404,31 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// One extension rename per chat at a time across tabs in this browser:
 	// background.js queues ports per chat id and grants the head. Closing or
 	// navigating a tab disconnects its port, so the lock is always released.
+	// Fail closed: without a lock (extension updated or reloaded), no request
+	// is sent. The time limit only covers waiting for the lock and the steps
+	// before the PATCH; once the PATCH is sent the lock is held until it settles.
 	const CHAT_LOCK_MS = 20_000;
 	const LOCK_LOST = "Couldn't finish the rename. Nothing changed.";
+	const RELOAD_TAB = 'Reload this ChatGPT tab to tag chats.';
+	const UNKNOWN_OUTCOME = 'Not sure the rename finished. Reload to check.';
 
 	function withChatLock(id, fn) {
 		let port;
 		try {
 			port = API.runtime.connect({name: `cth-chat-lock:${id}`});
 		} catch {
-			return fn(() => true); // No runtime: this tab's qtPending still serializes.
+			return Promise.reject(new Error(RELOAD_TAB));
 		}
 
 		return new Promise((resolve, reject) => {
-			let held = false;
-			let done = false;
+			let state = 'waiting'; // waiting | held | writing | lost | done
+			let timer = 0;
 			const finish = (ok, value) => {
-				if (done) {
+				if (state === 'done') {
 					return;
 				}
 
-				done = true;
-				held = false;
+				state = 'done';
 				clearTimeout(timer);
 				try {
 					port.disconnect();
@@ -2433,25 +2437,46 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				(ok ? resolve : reject)(value);
 			};
 
-			// Waiting too long for the lock, or holding it too long: give it up.
-			let timer = setTimeout(() => finish(false, new Error('Still saving this chat — try again')), CHAT_LOCK_MS);
+			const lock = {
+				held: () => state === 'held',
+				// Called right before the PATCH: from here on the lock is held
+				// until the request settles, however long it takes.
+				write() {
+					if (state !== 'held') {
+						return false;
+					}
+
+					state = 'writing';
+					clearTimeout(timer);
+					return true;
+				},
+			};
+
+			timer = setTimeout(() => finish(false, new Error('Still saving this chat — try again')), CHAT_LOCK_MS);
 			port.onDisconnect.addListener(() => {
 				void API.runtime.lastError; // Read it so Chrome doesn't log it.
-				held = false;
-				if (!done) {
+				if (state === 'waiting') {
+					finish(false, new Error(RELOAD_TAB)); // Never granted: the extension went away.
+				} else if (state === 'held') {
+					state = 'lost'; // The steps in flight stop before the PATCH.
 					finish(false, new Error(LOCK_LOST));
 				}
+				// 'writing': the PATCH was sent; wait for it to settle.
 			});
 			port.onMessage.addListener(msg => {
-				if (!msg?.granted || held || done) {
+				if (!msg?.granted || state !== 'waiting') {
 					return;
 				}
 
-				held = true;
+				state = 'held';
 				clearTimeout(timer);
-				timer = setTimeout(() => finish(false, new Error(LOCK_LOST)), CHAT_LOCK_MS);
+				timer = setTimeout(() => {
+					if (state === 'held') {
+						finish(false, new Error(LOCK_LOST));
+					}
+				}, CHAT_LOCK_MS);
 				Promise.resolve()
-					.then(() => fn(() => held))
+					.then(() => fn(lock))
 					.then(value => finish(true, value), error => finish(false, error));
 			});
 		});
@@ -2465,7 +2490,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			throw new Error(staleText);
 		}
 
-		return withChatLock(id, async lockHeld => {
+		return withChatLock(id, async lock => {
 			let token;
 			try {
 				token = await getAccessToken();
@@ -2495,7 +2520,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				throw new Error(staleText);
 			}
 
-			if (!lockHeld()) {
+			if (!lock.write()) {
 				throw new Error(LOCK_LOST);
 			}
 
@@ -2512,7 +2537,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				body: JSON.stringify({title}),
 			});
 		} catch {
-			throw new Error("Couldn't reach ChatGPT. Nothing changed.");
+			throw new Error(UNKNOWN_OUTCOME); // Sent, but no answer: it may have landed.
 		}
 
 		const body = await readJson(r);

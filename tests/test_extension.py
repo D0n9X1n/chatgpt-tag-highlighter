@@ -48,17 +48,15 @@ def _profile_dir():
 
 
 @pytest.fixture(scope='session')
-def browser_context():
-    """Launch Chromium with the extension loaded.
-
-    Local dev: persistent profile at tests/.test-profile. CI: throwaway
-    temp profile. Both run headless unless HEADED=1. channel='chromium'
-    uses full Chromium's new headless mode, which loads MV3 extensions;
-    the default headless shell does not.
-    """
+def playwright_session():
     pw = sync_playwright().start()
-    context = pw.chromium.launch_persistent_context(
-        _profile_dir(),
+    yield pw
+    pw.stop()
+
+
+def _launch(pw, profile):
+    return pw.chromium.launch_persistent_context(
+        profile,
         channel='chromium',
         headless=not HEADED,
         args=[
@@ -70,9 +68,25 @@ def browser_context():
         ],
         ignore_default_args=['--enable-automation', '--disable-extensions'],
     )
+
+
+@pytest.fixture(scope='session')
+def browser_context(playwright_session):
+    """Launch Chromium with the extension loaded.
+
+    Local dev: persistent profile at tests/.test-profile. CI: throwaway
+    temp profile. Both run headless unless HEADED=1. channel='chromium'
+    uses full Chromium's new headless mode, which loads MV3 extensions;
+    the default headless shell does not.
+    """
+    context = _launch(playwright_session, _profile_dir())
     yield context
     context.close()
-    pw.stop()
+
+
+def _extension_id(context):
+    sw = next(iter(context.service_workers), None) or context.wait_for_event('serviceworker', timeout=10_000)
+    return _EXT_ID_RE.match(sw.url).group(1)
 
 
 # Match the 32-char lowercase a–p extension ID portion of an extension URL.
@@ -3124,7 +3138,7 @@ class TestAppShellContentScript:
         }""")
 
     @pytest.mark.parametrize('mock, message', [
-        ({'patch_abort': True}, "Couldn't reach ChatGPT. Nothing changed."),
+        ({'patch_abort': True}, 'Not sure the rename finished. Reload to check.'),
         ({'patch_status': 401}, 'Sign in to ChatGPT first. Nothing changed.'),
         ({'patch_status': 403}, 'Sign in to ChatGPT first. Nothing changed.'),
         ({'patch_status': 429}, 'ChatGPT is rate-limiting requests (HTTP 429). Wait a minute and try again.'),
@@ -3137,6 +3151,7 @@ class TestAppShellContentScript:
         self._alert(page, message)
         assert page.evaluate(_tjs('c5')) == 'plain chat'
         assert page.get_attribute('#row-c5', 'data-cth') is None
+        assert page.locator('#cth-qt-toast .cth-qt-undo').count() == 0, 'no Undo for a rename that may not have happened'
 
     def test_override_survives_remount_and_yields_to_third_title(self):
         page, _, _ = self._qt_page()
@@ -3787,3 +3802,83 @@ class TestAppShellContentScript:
         assert self._title_is(tab_b, 'c5', '[TODO] plain chat', timeout=8000), 'closing the tab releases its lock'
         assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET', 'PATCH']
         assert titles['c5'] == '[TODO] plain chat'
+
+    # ---- Lock lifecycle: held until the PATCH settles; fail closed without it ----
+
+    def test_chat_lock_held_until_patch_settles(self):
+        """Real time: tab A's PATCH stays in flight past the 20 s lock timeout."""
+        titles = dict(DEFAULT_CHATS)
+        tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_patch_at': 1})
+        try:
+            tab_a.bring_to_front()
+            self._pick(tab_a, 'c5', '[BUG]')
+            self._wait_held(tab_a, held_a)  # A's PATCH dispatched and in flight
+            tab_b.bring_to_front()
+            tab_b.wait_for_timeout(9000)
+            self._pick(tab_b, 'c5', '[TODO]')  # B queues behind A
+            tab_b.wait_for_timeout(13_000)  # A has now held the lock > 20 s
+            assert self._chat_calls(calls_b) == [], 'B must not be granted while A\'s PATCH is in flight'
+            assert tab_a.locator('#cth-qt-toast[role=alert]').count() == 0, 'A must keep waiting for its PATCH'
+            released = time.monotonic()
+            titles['c5'] = '[BUG] plain chat'  # the server applies A's held PATCH
+            held_a.pop().fulfill(status=200, content_type='application/json', body=OK)
+            assert self._title_is(tab_a, 'c5', '[BUG] plain chat', timeout=5000)
+            self._alert(tab_b, 'Title changed — try again')
+            assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET']
+            assert min(c['t'] for c in self._chat_calls(calls_b)) > released
+            assert titles['c5'] == '[BUG] plain chat'
+        finally:
+            for r in held_a:
+                try:
+                    r.fulfill(status=200, body='{}')
+                except Exception:
+                    pass
+
+    def _invalidate_extension(self):
+        """chrome.runtime.reload(): open ChatGPT tabs keep an orphaned content script
+        whose extension context is invalidated. Headless Chromium does not bring
+        the extension back, so this only runs in a private browser."""
+        opts = self.context.new_page()
+        opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+        try:
+            opts.evaluate('chrome.runtime.reload()')
+        except Exception:
+            pass  # the page goes away with the old extension
+
+    def test_invalidated_extension_fails_closed(self, playwright_session):
+        private = _launch(playwright_session, tempfile.mkdtemp(prefix='cth-reload-'))
+        shared = (self.context, self.ext_id)
+        self.context, self.ext_id = private, _extension_id(private)
+        titles = dict(DEFAULT_CHATS)
+        held_a = []
+        try:
+            tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_get_at': 1})
+            tab_a.bring_to_front()
+            self._pick(tab_a, 'c5', '[BUG]')
+            self._wait_held(tab_a, held_a)  # A holds the lock mid-GET
+            tab_b.bring_to_front()
+            self._pick(tab_b, 'c5', '[TODO]')  # B waits for the lock
+            tab_b.wait_for_timeout(300)
+            self._invalidate_extension()
+            self._alert(tab_b, 'Reload this ChatGPT tab to tag chats.')
+            held_a.pop().fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'id': 'c5', 'title': 'plain chat'}))
+            tab_a.wait_for_timeout(500)
+            assert self._patches(calls_a) == [], 'A lost its lock before the PATCH: nothing sent'
+            # A fresh pick in the orphaned tab can't take a lock at all.
+            tab_b.evaluate("document.getElementById('cth-qt-toast')?.remove()")
+            before = len(calls_b)
+            tab_b.mouse.move(640, 5)
+            self._pick(tab_b, 'c3', '[TODO]')
+            self._alert(tab_b, 'Reload this ChatGPT tab to tag chats.')
+            tab_b.wait_for_timeout(300)
+            assert calls_b[before:] == [] and self._chat_calls(calls_b) == [], 'no session, GET or PATCH without the lock'
+            assert titles['c5'] == 'plain chat' and titles['c3'] == 'refactor code path'
+        finally:
+            for r in held_a:
+                try:
+                    r.fulfill(status=200, body='{}')
+                except Exception:
+                    pass
+            self.context, self.ext_id = shared
+            private.close()
