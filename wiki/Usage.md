@@ -40,10 +40,28 @@ When the open chat matches a rule with **Overlay** on, a banner above the messag
 
 The extension icon shows how many loaded sidebar chats are tagged and not hidden by a rule. Turn it off in [Configuration](Configuration).
 
+## Quick tag
+
+Hover or focus a chat in the sidebar and click the tag button that appears next to ChatGPT's own `⋯` menu, or press `Alt+T` (`Option+T` on macOS) to tag the focused chat, or the open chat when no chat is focused.
+
+- The menu lists your `startsWith` rules in rule order, with their colors. The chat's current tag is checked; picking it again changes nothing.
+- Picking another tag renames the chat on ChatGPT: the current prefix tag (the longest matching one) and the spaces after it are replaced, so `[TODO] Fix build` becomes `[BUG] Fix build`. `includes` rules are never stripped.
+- **Remove tag** (shown only for tagged chats) removes the prefix tag.
+- **New tag…** turns into a text box. Type a tag (1–40 characters) and press Enter: a `startsWith` rule is added with the next unused palette color and applied to the chat. If the tag already exists, that rule is reused. Escape goes back to the menu.
+- After a rename, a toast shows **Undo** for 6 seconds (longer while you hover or focus it). Undo restores the old title, unless the chat was renamed again in the meantime.
+- If the title changed while the menu was open, or ChatGPT refuses the rename, an error toast explains it and nothing changes.
+
+The menu works from the keyboard: arrow keys move, Home/End jump, Enter or Space picks, Escape closes and returns to the button, Tab closes. Renaming uses the same request ChatGPT's own **Rename** sends; see [Privacy](Privacy). Turn the button off with **Show quick tag button** in [Configuration](Configuration).
+
+## Settings window
+
+The gear at the end of the filter bar and the extension's toolbar icon open the settings in a small floating window. If it is already open, it is brought to the front instead of opening a second one. If the browser can't open a popup window, the usual options page opens. The filter bar shows whenever at least one rule exists, so the gear is always reachable; the toolbar icon works even with no rules.
+
 ## Keyboard shortcuts
 
 | Keys | Action |
 |---|---|
+| `Alt+T` (`Option+T` on macOS) | Open the quick tag menu for the focused chat, or the open chat |
 | `Alt+H` (`Option+H` on macOS) | Show or hide chats hidden by a Hide rule |
 | `Alt+F` | Move focus to the filter bar |
 | `Enter` or `Space` | Toggle the focused filter pill |

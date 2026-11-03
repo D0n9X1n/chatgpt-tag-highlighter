@@ -2,7 +2,7 @@
 
 [简体中文](Configuration-zh-CN)
 
-Open the extension's **Options** page from the browser's extension menu. Don't open `options.html` as a `file://` path; the storage APIs aren't available there. Every change saves automatically.
+Open the settings with the gear in the sidebar filter bar or the extension's toolbar icon (both open a floating window), or from the browser's extension menu. Don't open `options.html` as a `file://` path; the storage APIs aren't available there. Every change saves automatically.
 
 ![Settings page](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/settings.png)
 
@@ -30,8 +30,13 @@ Rule changes apply live to open ChatGPT tabs. Removing rules clears their stale 
 | Dim untagged conversations | Off | Fades chats that match no rule, except the selected chat. |
 | Show badge counter | On | Shows the number of visible tagged chats on the extension icon. |
 | Show “Delete untagged chats” button | Off | Adds a **Delete untagged…** button to the filter bar. See [Usage](Usage). |
+| Show quick tag button | On | Shows a tag button on hovered or focused sidebar chats and enables `Alt+T`, to add, change or remove a chat's prefix tag. This renames the chat on ChatGPT. See [Usage](Usage). |
 
 Both long-chat options count **turn containers**: a whole user/assistant exchange on the current layout, or an individual message on older layouts. Pruning never splits a grouped exchange. The performance measurements in [Long Chats](Long-Chats) came from the older, individual-message layout; the Sep 28, 2026 compatibility checks used a short live thread and synthetic fixtures, not a long current-layout live thread.
+
+## Saving with more than one window open
+
+Settings can change in more than one place: another settings window or tab, **New tag…** in the quick tag menu, or browser sync. A save never overwrites a change made elsewhere. A settings page with no unsaved edits shows the new settings right away. One with unsaved edits keeps them on screen and shows **Settings changed in another window** with **Reload**; nothing more is saved from that page until you click **Reload**, which loads the current settings and discards its unsaved edits. If a save can't reach the extension, the page shows **Not saved — retrying** and tries again.
 
 ## Rule tester
 

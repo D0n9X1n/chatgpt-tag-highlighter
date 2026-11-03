@@ -8,9 +8,9 @@
 
 | 脚本 | 职责 |
 |---|---|
-| `background.js` | 安装/启动时初始化并迁移设置；根据 `badgeCount` 消息设置图标角标（全局一个角标）。 |
-| `options.js` | 渲染和编辑规则与选项；每次修改都保存完整配置。 |
-| `content.js` | 在 ChatGPT 上运行；编译配置、给侧边栏加样式、显示横幅，处理筛选、快捷键、轮次剪裁和长对话渲染。 |
+| `background.js` | 唯一写入设置的脚本。所有写入都在同一条 Promise 链上执行：安装/启动时的初始化与迁移、设置页发来的比较并设置（compare-and-set）`writeConfig`，以及快速标签菜单发来的 `addRule`（追加标签）。打开或聚焦浮动设置窗口（`openSettings` 消息和工具栏图标），并根据 `badgeCount` 消息设置图标角标（全局一个角标）。 |
+| `options.js` | 渲染和编辑规则与选项；以 `{base, next}` 把完整配置发给 `background.js`，同一时间只有一次保存在进行。只有没有未保存修改时才会重新渲染外部修改，否则显示带 **Reload** 的冲突横幅。自己从不写存储。 |
+| `content.js` | 在 ChatGPT 上运行；编译配置、给侧边栏加样式、显示横幅，处理筛选、设置齿轮、快速标签（重命名与撤销）、快捷键、轮次剪裁和长对话渲染。 |
 
 ## 存储
 
@@ -19,14 +19,18 @@
 
 ```mermaid
 flowchart LR
-  BG["background.js：初始化与迁移"] --> CFG[("tagHighlighterConfigV1")]
-  OPT["options.js：编辑并自动保存"] --> CFG
-  CFG -- "storage.onChanged" --> CS["chatgpt.com 上的 content.js"]
+  OPT["options.js：编辑并自动保存"] -- "writeConfig (compare-and-set)" --> BG["background.js：唯一写入者"]
+  CS["chatgpt.com 上的 content.js"] -- "addRule / openSettings" --> BG
   CS -- "badgeCount 消息" --> BG
+  BG --> CFG[("tagHighlighterConfigV1")]
+  CFG -- "storage.onChanged" --> CS
+  CFG -- "storage.onChanged" --> OPT
   CS <--> UI[("tagHighlighterUiStateV1")]
 ```
 
-新增配置字段必须在三个脚本中都有安全的默认值。颜色始终以 `#rrggbb` 保存。
+设置页的写入只有在存储中的值仍等于它所基于的 `base` 时才会生效；否则不写入任何内容，设置页显示冲突横幅。两个窗口中的并发修改永远不会合并：后保存的一方必须 Reload。`addRule` 总是追加到最新的存储值上。新增配置字段必须在三个脚本中都有安全的默认值。颜色始终以 `#rrggbb` 保存。
+
+快速标签的重命名请求由 `content.js` 直接发往 ChatGPT（`PATCH /backend-api/conversation/{id}`，内容为 `{"title"}`），不经过 `background.js`；见 [隐私](Privacy-zh-CN)。
 
 ## ChatGPT 页面钩子
 

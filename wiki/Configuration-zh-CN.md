@@ -2,7 +2,7 @@
 
 [English](Configuration)
 
-从浏览器的扩展菜单打开扩展的 **Options（设置）** 页。不要用 `file://` 路径打开 `options.html`，那样无法使用存储 API。所有修改都会自动保存。
+点击侧边栏筛选栏中的齿轮按钮或扩展的工具栏图标（两者都会打开浮动窗口），或从浏览器的扩展菜单打开扩展的 **Options（设置）** 页。不要用 `file://` 路径打开 `options.html`，那样无法使用存储 API。所有修改都会自动保存。
 
 ![设置页](https://raw.githubusercontent.com/D0n9X1n/chatgpt-tag-highlighter/main/img/settings.png)
 
@@ -30,8 +30,13 @@
 | Dim untagged conversations（弱化无标签会话） | 关 | 淡化不匹配任何规则的会话，当前选中的会话除外。 |
 | Show badge counter（显示角标计数） | 开 | 在扩展图标上显示可见的已标记会话数量。 |
 | Show “Delete untagged chats” button（显示“删除无标签会话”按钮） | 关 | 在筛选栏添加 **Delete untagged…** 按钮。见 [使用](Usage-zh-CN)。 |
+| Show quick tag button（显示快速标签按钮） | 开 | 在悬停或聚焦的侧边栏会话上显示标签按钮，并启用 `Alt+T`，用于添加、更换或去掉会话的前缀标签。这会在 ChatGPT 上重命名会话。见 [使用](Usage-zh-CN)。 |
 
 两个长对话选项都按**轮次容器**计数：当前布局中一个容器是一整轮用户与助手的问答，旧布局中则是一条消息。裁剪不会拆开一整轮问答。[长对话](Long-Chats-zh-CN) 中的性能数据来自按单条消息组织的旧布局；2026 年 9 月 28 日的兼容性检查使用了真实短对话和仿真测试页面，并未在当前布局的真实长对话上测试。
+
+## 多个窗口同时打开时的保存
+
+设置可能在多处被修改：另一个设置窗口或标签页、快速标签菜单中的 **New tag…**，或浏览器同步。保存永远不会覆盖其他地方做出的修改。没有未保存修改的设置页会立即显示新的设置；有未保存修改的设置页会保留这些修改，并显示 **Settings changed in another window** 和 **Reload** 按钮。在点击 **Reload** 之前，这个页面不会再保存任何内容；点击 **Reload** 会载入当前设置并丢弃未保存的修改。如果保存无法送达扩展，页面会显示 **Not saved — retrying** 并重试。
 
 ## 规则测试器
 

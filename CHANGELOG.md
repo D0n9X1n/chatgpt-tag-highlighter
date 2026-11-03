@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-11-03
+
+### Added
+- **Quick tag**
+  ([#73](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/73)).
+  Hover or focus a chat in the sidebar and click its tag button, or press
+  `Alt+T` for the focused or open chat. The menu lists your `startsWith`
+  rules in order with their colors and checks the current tag. Picking a
+  tag renames the chat on ChatGPT: the current prefix tag and the spaces
+  after it are replaced. **Remove tag** strips it, and **New tag…** adds a
+  `startsWith` rule with the next unused palette color (1–40 characters;
+  an existing tag is reused) and applies it. The menu works with arrow
+  keys, Home/End, Enter, Escape and Tab.
+- **Undo** after a quick tag rename: a toast shows “Tagged · Undo” for
+  6 seconds (it stays while hovered or focused). Undo is refused if the
+  chat was renamed again in the meantime. Errors appear in a toast and
+  change nothing.
+- **Show quick tag button** option, on by default.
+- **Settings button** in the sidebar filter bar
+  ([#74](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/74)).
+  An icon-only gear sits after **Delete untagged…**, and the filter bar
+  now shows whenever at least one rule exists. Pills still need two
+  visible rules.
+- **Floating settings window**
+  ([#75](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/75)).
+  The gear and the toolbar icon open the settings in a 560×720 popup
+  window, or focus the one already open. If the browser can't open a
+  popup, the usual options page opens instead. The toolbar icon works
+  even with no rules, and Firefox now has a toolbar button too.
+
+### Changed
+- **Settings are never silently overwritten**
+  ([#76](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/76)).
+  `background.js` is now the only script that writes settings, one write
+  at a time. A save from the options page is applied only if the stored
+  settings haven't changed since that page loaded them (compare-and-set).
+  An options page with no unsaved edits picks up changes made elsewhere;
+  one with unsaved edits keeps its draft and shows “Settings changed in
+  another window” with **Reload**. A save that fails to reach the
+  extension shows “Not saved — retrying” and is sent again.
+- Rule cards stack in windows 640 px wide or narrower, so the settings fit
+  the floating window without scrolling sideways.
+- Long titles in the rule tester wrap instead of overflowing.
+
 ## [1.2.0] — 2026-10-27
 
 ### Added
