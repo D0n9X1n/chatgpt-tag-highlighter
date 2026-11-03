@@ -1554,6 +1554,8 @@ class TestStatic:
         assert 'qtBound' not in self._fn(src, 'applyTag')
         t = self._fn(src, 'startNewTag')
         assert t.index('const bound = qtBound') < t.index('await'), 'capture the chat before any await'
+        assert 'finishNewTag(bound, res)' in t, 'the captured chat, not the menu, is renamed after addRule'
+        assert 'qtBound' not in self._fn(src, 'finishNewTag')
 
     def test_only_background_writes_config(self):
         options = (ROOT / 'src' / 'options.js').read_text()
@@ -2144,7 +2146,8 @@ class TestContentScript:
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
                        server_limit=None, patch_status=None, hold_first_patch=False,
                        hold_list_pass=None, patch_body=None, patch_abort=False,
-                       patch_statuses=None, hold_session=False):
+                       patch_statuses=None, hold_session=False, hold_session_at=None,
+                       hold_patch_at=None, session_abort=False):
         """Mock /api/auth/session, the conversation list, and per-chat PATCH.
 
         Records every API request in the returned list. `server_limit` caps
@@ -2152,7 +2155,10 @@ class TestContentScript:
         `hold_list_pass` holds the first page of that listing pass (0 = preview,
         1 = the re-check at confirm time) until the test fulfills it.
         `hold_session` holds the first session request; `patch_statuses`
-        answers the Nth PATCH with the Nth status; `patch_abort` fails PATCHes
+        answers the Nth PATCH with the Nth status; `hold_session_at` /
+        `hold_patch_at` hold the Nth session / PATCH request (1-based);
+        `session_abort` fails session requests at the network level;
+        `patch_abort` fails PATCHes
         at the network level.
         """
         chats = API_CHATS if chats is None else chats
@@ -2160,6 +2166,7 @@ class TestContentScript:
         held = []
         passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
         pn = {'n': 0}  # PATCHes answered so far
+        arrived = {'session': 0, 'patch': 0}
 
         def record(route):
             req = route.request
@@ -2169,9 +2176,12 @@ class TestContentScript:
 
         def session(route):
             record(route)
-            if hold_session and not held:
+            arrived['session'] += 1
+            if (hold_session and not held) or hold_session_at == arrived['session']:
                 held.append(route)  # fulfilled later by the test
                 return
+            if session_abort:
+                return route.abort()
             body = {'accessToken': session_token} if session_token else {}
             route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
 
@@ -2193,7 +2203,8 @@ class TestContentScript:
 
         def patch(route):
             record(route)
-            if hold_first_patch and not held:
+            arrived['patch'] += 1
+            if (hold_first_patch and not held) or hold_patch_at == arrived['patch']:
                 held.append(route)  # fulfilled later by the test
                 return
             pn['n'] += 1
@@ -3212,7 +3223,10 @@ class TestAppShellContentScript:
         assert page.evaluate("[...document.getElementById('cth-qt-toast').children].map(c => c.textContent)") == ['Tagged', '·', 'Undo']
         page.click('#cth-qt-toast .cth-qt-undo')
         assert self._title_is(page, 'c5', 'plain chat')
-        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == ['[BUG] plain chat', 'plain chat']
+        patches = self._patches(calls)
+        assert [json.loads(c['body'])['title'] for c in patches] == ['[BUG] plain chat', 'plain chat']
+        assert patches[1]['url'].endswith('/backend-api/conversation/c5'), 'Undo renames the same chat'
+        assert patches[1]['auth'] == 'Bearer test-token'
 
     def test_undo_failure_keeps_tag(self):
         page, _, _ = self._qt_page(patch_statuses=[200, 500])
@@ -3321,3 +3335,164 @@ class TestAppShellContentScript:
         page.focus('#row-c3 a')
         page.keyboard.press('Alt+t')
         page.wait_for_selector('#cth-qt-menu[data-cth-chat="c3"]')
+
+    # ---- Tests-as-spec additions ----
+
+    SPAN5 = "document.querySelector('#row-c5 [data-thread-title] span[dir=auto]')"
+
+    def _stale_clone_row(self, page, cid, title):
+        """Replace the whole row with a clone showing `title`, like a React remount."""
+        page.evaluate("""([cid, title]) => {
+            const row = document.getElementById('row-' + cid);
+            const copy = row.cloneNode(true);
+            copy.querySelector('[data-thread-title] span[dir=auto]').textContent = title;
+            row.replaceWith(copy);
+        }""", [cid, title])
+
+    def test_undo_with_held_session_rechecks_title(self):
+        page, calls, held = self._qt_page(hold_session_at=2)
+        self._pick(page, 'c5', '[BUG]')
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._wait_held(page, held)
+        page.evaluate(f"{self.SPAN5}.textContent = 'other'")
+        held[0].fulfill(status=200, content_type='application/json', body=TOKEN)
+        self._alert(page, 'Title changed — not undone')
+        assert len(self._patches(calls)) == 1, 'no Undo PATCH once the title changed'
+        assert page.evaluate(_tjs('c5')) == 'other'
+
+    def test_undo_with_held_patch_skips_dom_write(self):
+        page, calls, held = self._qt_page(hold_patch_at=2)
+        self._pick(page, 'c5', '[BUG]')
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._wait_held(page, held)
+        page.evaluate(f"{self.SPAN5}.textContent = 'other'")
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        self._alert(page, 'Title changed — not undone')
+        assert page.evaluate(_tjs('c5')) == 'other', 'a title changed meanwhile is never overwritten'
+
+    def test_undo_while_same_chat_rename_pending_is_refused(self):
+        page, calls, held = self._qt_page(hold_patch_at=2)
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+        page.mouse.move(640, 5)
+        self._pick(page, 'c5', '[TODO]')
+        self._wait_held(page, held)
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, 'Still saving this chat — try again')
+        assert len(self._patches(calls)) == 2
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c5', '[TODO] plain chat')
+
+    def test_pending_rename_does_not_block_other_chats(self):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        page.mouse.click(640, 400)
+        self._pick(page, 'c3', '[TODO]')
+        assert self._title_is(page, 'c3', '[TODO] refactor code path')
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+
+    def test_override_survives_stale_row_clone(self):
+        page, _, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        self._stale_clone_row(page, 'c5', 'plain chat')
+        assert self._title_is(page, 'c5', '[BUG] plain chat'), 'overrides are keyed by chat id, not by element'
+
+    def test_failed_rename_leaves_nothing_after_remount(self):
+        page, _, _ = self._qt_page(patch_status=500)
+        self._pick(page, 'c5', '[BUG]')
+        self._alert(page, 'ChatGPT refused the rename (HTTP 500). Nothing changed.')
+        self._stale_clone_row(page, 'c5', 'plain chat')
+        page.wait_for_timeout(300)
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+        assert page.get_attribute('#row-c5', 'data-cth') is None
+
+    QUOTA_RULES = CONTENT_RULES + [_rule('zzzz' + 'y' * 7560, '#ffffff', 'includes', hide=True)]
+
+    @pytest.mark.parametrize('case', ['session-abort', 'no-token', 'add-rule-fails'])
+    def test_setup_failures_show_error_and_patch_nothing(self, case):
+        if case == 'add-rule-fails':
+            # Close to storage.sync's 8 KB per-item quota, so adding one rule is refused.
+            page, calls, _ = self._qt_page(rules=self.QUOTA_RULES)
+            opts = self.context.new_page()
+            opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+            used = opts.evaluate("k => new Promise(r => chrome.storage.sync.getBytesInUse(k, r))", STORAGE_KEY)
+            opts.close()
+            assert 8100 < used < 8192, used
+            self._new_tag(page, 'c5', '[' + 'Q' * 38 + ']')
+            assert self._poll(page, "() => !!document.querySelector('#cth-qt-toast[role=alert]')", timeout=5000)
+            assert len(self._stored_rules()) == len(self.QUOTA_RULES)
+        else:
+            mock = {'session_abort': True} if case == 'session-abort' else {'session_token': None}
+            page, calls, _ = self._qt_page(**mock)
+            self._pick(page, 'c5', '[BUG]')
+            self._alert(page, "Couldn't reach ChatGPT. Nothing changed." if case == 'session-abort'
+                        else 'Sign in to ChatGPT first. Nothing changed.')
+        page.wait_for_timeout(200)
+        assert self._patches(calls) == []
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+
+    @pytest.mark.parametrize('key', ['Enter', ' '], ids=['enter', 'space'])
+    def test_keyboard_activates_menu_item(self, key):
+        page, calls, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.keyboard.press('ArrowDown')
+        assert page.evaluate(self.QT_FOCUS) == '[BUG]'
+        page.keyboard.press(key)
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert [json.loads(c['body']) for c in self._patches(calls)] == [{'title': '[BUG] plain chat'}]
+
+    def test_new_tag_one_character(self):
+        page, _, _ = self._qt_page()
+        self._new_tag(page, 'c5', 'x')
+        assert self._title_is(page, 'c5', 'x plain chat')
+        assert self._stored_rules()[-1]['tag'] == 'x'
+
+    def test_toast_auto_hides_after_six_seconds(self):
+        page, _, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast[role=status]')
+        page.mouse.move(130, 5)
+        page.wait_for_timeout(5500)
+        assert page.locator('#cth-qt-toast').count() == 1, 'still there at 5.5 s'
+        page.wait_for_timeout(1000)
+        assert page.locator('#cth-qt-toast').count() == 0, 'gone by 6.5 s'
+
+    def test_toast_stays_while_focus_is_inside(self):
+        page, _, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+        page.hover('#cth-qt-toast')
+        page.focus('#cth-qt-toast .cth-qt-undo')
+        page.mouse.move(640, 5)
+        page.wait_for_timeout(7000)
+        assert page.locator('#cth-qt-toast').count() == 1, 'keyboard focus keeps the toast open'
+
+    def test_bar_with_only_hidden_rules_shows_gear_only(self):
+        self._configure(rules=[dict(r, hide=True) for r in CONTENT_RULES])
+        page = self._open_chat()
+        self._ready(page)
+        assert page.evaluate(self.BAR_IDS) == ['cth-settings']
+
+    def test_bar_with_two_visible_rules_shows_pills(self):
+        self._configure(rules=CONTENT_RULES[:2])
+        page = self._open_chat()
+        self._ready(page)
+        assert page.evaluate("[...document.querySelectorAll('#cth-filter-bar .cth-pill')].map(p => p.textContent)") == ['All', '[TODO]', '[BUG]']
+        assert page.evaluate(self.BAR_IDS)[-1] == 'cth-settings'
+
+    def test_settings_gear_has_icon(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        assert page.locator('#cth-settings svg').count() == 1
+        icon = page.evaluate("""() => [...document.querySelectorAll('#cth-settings svg, #cth-settings svg *')]
+            .map(n => [n.namespaceURI, n.localName, n.getAttribute('viewBox') || n.getAttribute('d') || n.getAttribute('r')])""")
+        svg_ns = 'http://www.w3.org/2000/svg'
+        assert icon == [[svg_ns, 'svg', '0 0 24 24'], [svg_ns, 'circle', '3'],
+                        [svg_ns, 'path', 'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1']], icon
+        assert page.eval_on_selector('#cth-settings svg', 'e => e.getBoundingClientRect().width') == 14
+        page.hover('#row-c3')
+        assert page.eval_on_selector('#cth-qt-btn svg', "e => [e.namespaceURI, e.children.length, e.getBoundingClientRect().width]") == [svg_ns, 2, 14]
