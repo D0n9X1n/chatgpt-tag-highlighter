@@ -1384,6 +1384,9 @@ CONTENT_RULES = [
     {'tag': 'code', 'match': 'includes', 'color': '#83a598', 'hide': False, 'overlay': True},
 ]
 
+OK = '{"success": true}'
+TOKEN = '{"accessToken": "test-token"}'
+
 DEFAULT_CHATS = [
     ('c1', '[TODO] ship release'),
     ('c2', '[BUG] code crash'),   # first match wins: [BUG], not "code"
@@ -1917,18 +1920,23 @@ class TestContentScript:
 
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
                        server_limit=None, patch_status=None, hold_first_patch=False,
-                       hold_list_pass=None, patch_body=None):
+                       hold_list_pass=None, patch_body=None, patch_abort=False,
+                       patch_statuses=None, hold_session=False):
         """Mock /api/auth/session, the conversation list, and per-chat PATCH.
 
         Records every API request in the returned list. `server_limit` caps
         the page size the mock server returns, like a real server might.
         `hold_list_pass` holds the first page of that listing pass (0 = preview,
         1 = the re-check at confirm time) until the test fulfills it.
+        `hold_session` holds the first session request; `patch_statuses`
+        answers the Nth PATCH with the Nth status; `patch_abort` fails PATCHes
+        at the network level.
         """
         chats = API_CHATS if chats is None else chats
         calls = []
         held = []
         passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
+        pn = {'n': 0}  # PATCHes answered so far
 
         def record(route):
             req = route.request
@@ -1938,6 +1946,9 @@ class TestContentScript:
 
         def session(route):
             record(route)
+            if hold_session and not held:
+                held.append(route)  # fulfilled later by the test
+                return
             body = {'accessToken': session_token} if session_token else {}
             route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
 
@@ -1962,7 +1973,10 @@ class TestContentScript:
             if hold_first_patch and not held:
                 held.append(route)  # fulfilled later by the test
                 return
-            status = patch_status or 200
+            pn['n'] += 1
+            if patch_abort:
+                return route.abort()
+            status = patch_statuses[pn['n'] - 1] if patch_statuses else (patch_status or 200)
             route.fulfill(status=status, content_type='application/json',
                           body=json.dumps(patch_body if patch_body is not None else {'success': status == 200}))
 
@@ -2731,3 +2745,164 @@ class TestAppShellContentScript:
         page.keyboard.press('Alt+t')
         page.wait_for_timeout(300)
         assert page.locator('#cth-qt-menu').count() == 0
+
+    # ---- Renaming from the quick tag menu (#73) ----
+
+    def _pick(self, page, cid, tag):
+        self._open_qt(page, cid)
+        page.click(f'#cth-qt-menu [data-tag="{tag}"]')
+
+    def _title_is(self, page, cid, title, timeout=3000):
+        return self._poll(page, f'([t]) => {_tjs(cid)} === t', arg=[title], timeout=timeout)
+
+    def _alert(self, page, text):
+        assert self._poll(page, """([t]) => {
+            const n = document.querySelector('#cth-qt-toast[role=alert]');
+            return !!n && n.textContent.includes(t);
+        }""", arg=[text], timeout=5000), page.evaluate("document.getElementById('cth-qt-toast')?.textContent")
+
+    @staticmethod
+    def _wait_held(page, held):
+        deadline = time.time() + 5
+        while not held and time.time() < deadline:
+            page.wait_for_timeout(50)
+        assert held, 'held request never arrived'
+
+    def test_pick_tag_patches_exact_chat_with_bearer(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        patches = self._patches(calls)
+        assert len(patches) == 1
+        assert patches[0]['url'].endswith('/backend-api/conversation/c5')
+        assert patches[0]['auth'] == 'Bearer test-token'
+        assert json.loads(patches[0]['body']) == {'title': '[BUG] plain chat'}
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c5')).backgroundColor === 'rgba(251, 73, 52, 0.12)'")
+
+    def test_pick_replaces_longest_prefix_and_spaces(self):
+        rules = [_rule('[A]'), _rule('[A][B]', '#fb4934'), _rule('[C]', '#83a598')]
+        page, calls, _ = self._qt_page(chats=[('c2', '[A][B]   two'), ('c3', '[C] three')], rules=rules)
+        self._pick(page, 'c2', '[C]')
+        assert self._title_is(page, 'c2', '[C] two')
+        self._open_qt(page, 'c3')
+        page.click('#cth-qt-menu [data-action=remove]')
+        assert self._title_is(page, 'c3', 'three')
+        self._pick(page, 'c2', '[C]')
+        page.wait_for_timeout(300)
+        assert len(self._patches(calls)) == 2, 'picking the current tag changes nothing'
+
+    def test_rename_keeps_title_text_node(self):
+        page, _, _ = self._qt_page()
+        page.evaluate("window.__node = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').firstChild")
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.evaluate("""() => {
+            const s = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]');
+            return s.firstChild === window.__node && s.childNodes.length === 1;
+        }""")
+
+    @pytest.mark.parametrize('mock, message', [
+        ({'patch_abort': True}, "Couldn't reach ChatGPT. Nothing changed."),
+        ({'patch_status': 401}, 'Sign in to ChatGPT first. Nothing changed.'),
+        ({'patch_status': 403}, 'Sign in to ChatGPT first. Nothing changed.'),
+        ({'patch_status': 429}, 'ChatGPT is rate-limiting requests (HTTP 429). Wait a minute and try again.'),
+        ({'patch_status': 500}, 'ChatGPT refused the rename (HTTP 500). Nothing changed.'),
+        ({'patch_body': {'success': False}}, "ChatGPT said the rename didn't go through. Nothing changed."),
+    ], ids=['abort', '401', '403', '429', '500', 'success-false'])
+    def test_rename_errors_change_nothing(self, mock, message):
+        page, _, _ = self._qt_page(**mock)
+        self._pick(page, 'c5', '[BUG]')
+        self._alert(page, message)
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+        assert page.get_attribute('#row-c5', 'data-cth') is None
+
+    def test_override_survives_remount_and_yields_to_third_title(self):
+        page, _, _ = self._qt_page()
+        span = "document.querySelector('#row-c5 [data-thread-title] span[dir=auto]')"
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        page.evaluate(f"{span}.textContent = 'plain chat'")  # a stale remount
+        assert self._title_is(page, 'c5', '[BUG] plain chat'), 'the confirmed title wins over a stale copy'
+        page.evaluate(f"""() => {{
+            window.__cd = 0;
+            new MutationObserver(ms => {{ window.__cd += ms.filter(m => m.type === 'characterData').length; }})
+                .observe({span}, {{characterData: true, subtree: true, childList: true}});
+            {span}.textContent = '[BUG] plain chat';
+        }}""")
+        page.wait_for_timeout(300)
+        assert page.evaluate('window.__cd') == 0, 'the new title needs no rewrite'
+        page.evaluate(f"{span}.textContent = 'renamed elsewhere'")
+        assert self._poll(page, "() => !document.querySelector('#row-c5').hasAttribute('data-cth')")
+        page.evaluate(f"{span}.textContent = 'plain chat'")
+        page.wait_for_timeout(300)
+        assert page.evaluate(_tjs('c5')) == 'plain chat', 'a third title ends the override'
+
+    def test_title_changed_before_pick_aborts(self):
+        page, calls, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+
+    def test_recycled_anchor_other_id_aborts(self):
+        page, calls, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.evaluate("document.querySelector('#row-c5 a').setAttribute('href', '/c/c9')")
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+
+    def test_title_change_while_token_pending_aborts(self):
+        page, calls, held = self._qt_page(hold_session=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        held[0].fulfill(status=200, content_type='application/json', body=TOKEN)
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+        assert page.evaluate(_tjs('c5')) == 'other'
+
+    @pytest.mark.parametrize('change', ['title', 'href'])
+    def test_post_request_change_aborts_dom_write(self, change):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        if change == 'title':
+            page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        else:
+            page.evaluate("document.querySelector('#row-c5 a').setAttribute('href', '/c/c9')")
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        self._alert(page, 'Title changed — try again')
+        assert page.evaluate(_tjs('c5')) == ('other' if change == 'title' else 'plain chat')
+        assert page.get_attribute('#row-c5', 'data-cth') is None
+        if change == 'title':
+            page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'plain chat'")
+            page.wait_for_timeout(300)
+            assert page.evaluate(_tjs('c5')) == 'plain chat', 'an aborted write leaves no override behind'
+
+    def test_overlapping_rename_same_chat_refused(self):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        page.mouse.click(640, 400)
+        self._pick(page, 'c5', '[TODO]')
+        self._alert(page, 'Still saving this chat — try again')
+        assert len(self._patches(calls)) == 1
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+
+    def test_toast_above_overlay_auto_hides_and_pauses(self):
+        page, _, _ = self._qt_page()
+        assert self._overlay_visible(page)
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast[role=status]')
+        gap = page.evaluate("""() => document.querySelector('#cth-overlay').getBoundingClientRect().top - 12
+            - document.querySelector('#cth-qt-toast').getBoundingClientRect().bottom""")
+        assert gap >= -0.5, gap
+        page.hover('#cth-qt-toast')
+        page.wait_for_timeout(7000)
+        assert page.is_visible('#cth-qt-toast'), 'hovering pauses the auto-hide'
+        page.mouse.move(640, 5)
+        page.wait_for_timeout(6500)
+        assert page.locator('#cth-qt-toast').count() == 0

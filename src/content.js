@@ -627,6 +627,27 @@ html.cth-light .cth-qt-danger { color: #cc241d; }
 #${QT_MENU_ID} [role=separator] { height: 1px; margin: 4px 0; background: rgba(255,255,255,0.12); }
 .cth-qt-empty { padding: 8px; opacity: 0.6; }
 #${QT_BTN_ID}:focus-visible, #${QT_MENU_ID} :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+#${QT_TOAST_ID} {
+  position: fixed;
+  bottom: var(--cth-qt-bottom);
+  left: var(--cth-qt-center);
+  transform: translateX(-50%);
+  z-index: 2147482000;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #212121;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.12);
+  font: 600 12px system-ui;
+}
+html.cth-light #${QT_TOAST_ID} { background: #fff; color: #000; border-color: rgba(0,0,0,0.10); }
+#${QT_TOAST_ID}.cth-qt-error { border-left: 3px solid #fb4934; }
+.cth-qt-close { width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+#${QT_TOAST_ID} button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 `;
 
 		const lazyCss = `
@@ -999,7 +1020,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		for (const a of getChatAnchors()) {
 			const {item} = getChatTargets(a);
-			const r = activeFilters.size ? matchRule(getChatTitleText(a), compiled.rules) : null;
+			const r = activeFilters.size ? matchRule(effectiveTitle(a), compiled.rules) : null;
 			const filtered = activeFilters.size > 0 && !(r && activeFilters.has(r.tag) && !r.hide);
 			setFlag(item, 'cthFiltered', filtered);
 		}
@@ -1548,7 +1569,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const claimed = new Set(entries.flatMap(({a, row, item}) => [a, row, item]));
 		const stale = new Set();
 		for (const {a, row, item} of entries) {
-			const title = getChatTitleText(a);
+			const title = effectiveTitle(a);
 			const href = a.getAttribute('href');
 			const last = itemCache.get(a);
 			setFlag(row, 'cthActive', isActiveChat(a, row));
@@ -1704,7 +1725,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return;
 		}
 
-		const title = getChatTitleText(active);
+		const title = effectiveTitle(active);
 		const r = matchRule(title, compiled.rules);
 
 		if (!r || r.overlay === false) {
@@ -2201,7 +2222,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return;
 		}
 
-		const title = getChatTitleText(a);
+		const title = effectiveTitle(a);
 		const cur = currentPrefixTag(title, compiled.rules);
 		qtBound = {id, title};
 		const items = compiled.rules.filter(r => r.match === 'startsWith').map(r => {
@@ -2220,6 +2241,18 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const list = el('div', {class: 'cth-qt-list'}, items.length > 0 ? items : [el('div', {class: 'cth-qt-empty', text: 'No prefix tags yet'})]);
 		qtMenu = el('div', {id: QT_MENU_ID, role: 'menu', 'aria-label': 'Tag chat', 'data-cth-chat': id}, [list, ...tail]);
 		qtMenu.addEventListener('keydown', onQtMenuKey);
+		qtMenu.addEventListener('click', e => {
+			const it = e.target.closest('.cth-qt-item');
+			if (!it || it.hasAttribute('aria-disabled') || qtBusy) {
+				return;
+			}
+
+			if (it.dataset.action === 'remove') {
+				applyTag(qtBound, null);
+			} else if (it.dataset.tag) {
+				applyTag(qtBound, it.dataset.tag);
+			}
+		});
 		document.body.append(qtMenu);
 		positionQtMenu();
 		qtBtn.setAttribute('aria-expanded', 'true');
@@ -2275,6 +2308,218 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const up = b.bottom + 4 + h > innerHeight;
 		qtMenu.style.setProperty('--cth-qt-top', `${up ? Math.max(8, b.top - 4 - h) : b.bottom + 4}px`);
 		qtMenu.style.setProperty('--cth-qt-left', `${Math.max(8, b.right - 220)}px`);
+	}
+
+	// ---- Quick tag: renaming ----
+	// PATCH /backend-api/conversation/{id} {title}, the request ChatGPT's own
+	// Rename sends. `stillValid` is re-checked after the token arrives, right
+	// before the PATCH, so a title that changed meanwhile is never overwritten.
+	async function renameChat(id, title, stillValid = () => true, staleText = 'Title changed — try again') {
+		if (!CHAT_ID_RE.test(id)) {
+			throw new Error(staleText);
+		}
+
+		let token;
+		try {
+			token = await getAccessToken();
+		} catch (error) {
+			throw new Error(error instanceof TypeError ? "Couldn't reach ChatGPT. Nothing changed." : 'Sign in to ChatGPT first. Nothing changed.');
+		}
+
+		if (!stillValid()) {
+			throw new Error(staleText);
+		}
+
+		let r;
+		try {
+			r = await pageFetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
+				method: 'PATCH',
+				headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+				body: JSON.stringify({title}),
+			});
+		} catch {
+			throw new Error("Couldn't reach ChatGPT. Nothing changed.");
+		}
+
+		const body = await readJson(r);
+		if (r.status === 401 || r.status === 403) {
+			throw new Error('Sign in to ChatGPT first. Nothing changed.');
+		}
+
+		if (r.status === 429) {
+			throw new Error('ChatGPT is rate-limiting requests (HTTP 429). Wait a minute and try again.');
+		}
+
+		if (!r.ok) {
+			throw new Error(`ChatGPT refused the rename (HTTP ${r.status}). Nothing changed.`);
+		}
+
+		if (body?.success === false) {
+			throw new Error("ChatGPT said the rename didn't go through. Nothing changed.");
+		}
+	}
+
+	// Confirmed renames: id -> {old, new}. ChatGPT may re-render a stale copy of
+	// the old title; show the new one until a third title appears.
+	const titleOverrides = new Map();
+	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
+
+	const titleNodeOf = a => {
+		const s = a.querySelector('[data-thread-title="true"] span[dir="auto"], .truncate span[dir="auto"]');
+		return s?.childNodes.length === 1 && s.firstChild.nodeType === Node.TEXT_NODE ? s.firstChild : null;
+	};
+
+	function effectiveTitle(a) {
+		const shown = getChatTitleText(a);
+		const id = chatIdOf(a);
+		const o = id && titleOverrides.get(id);
+		if (!o || shown === o.new) {
+			return shown;
+		}
+
+		if (shown !== o.old) {
+			titleOverrides.delete(id); // A third title: renamed elsewhere.
+			return shown;
+		}
+
+		const node = titleNodeOf(a);
+		if (node) {
+			node.nodeValue = o.new; // Stale remount; converges on the next scan.
+		}
+
+		return o.new;
+	}
+
+	// Re-find the anchor by id every time: ChatGPT recycles row elements.
+	const titleIs = (id, t) => {
+		const a = findChatAnchorById(id);
+		return Boolean(a) && effectiveTitle(a) === t;
+	};
+
+	// Never close or disable a menu opened since for another chat.
+	const closeIfBound = (bound, refocus = false) => {
+		if (qtBound === bound) {
+			closeQtMenu(refocus);
+		}
+	};
+
+	const busyIfBound = bound => {
+		if (qtBound === bound) {
+			setQtBusy(true);
+		}
+	};
+
+	function setQtBusy(on) {
+		qtBusy = on;
+		for (const n of qtMenu?.querySelectorAll('.cth-qt-item') || []) {
+			if (on) {
+				n.setAttribute('aria-disabled', 'true');
+			} else {
+				n.removeAttribute('aria-disabled');
+			}
+		}
+	}
+
+	// Write the confirmed title into the existing text node (never add or
+	// remove nodes) only if the row still shows `expected`.
+	function commitTitle(id, expected, next) {
+		if (!titleIs(id, expected)) {
+			return false;
+		}
+
+		const node = titleNodeOf(findChatAnchorById(id));
+		if (node) {
+			node.nodeValue = next;
+		}
+
+		titleOverrides.set(id, {old: expected, new: next});
+		scheduleSidebarScan();
+		return true;
+	}
+
+	// `bound` is captured by the caller before any await; this never reads menu state.
+	async function applyTag(bound, tag, rules = compiled.rules) {
+		if (!bound || !titleIs(bound.id, bound.title)) {
+			closeIfBound(bound);
+			qtToast('Title changed — try again', {error: true});
+			return;
+		}
+
+		if (tag !== null && currentPrefixTag(bound.title, rules) === tag) {
+			closeIfBound(bound, true); // Already the current tag: nothing to do.
+			return;
+		}
+
+		const next = computeTaggedTitle(bound.title, tag, rules);
+		if (!next) {
+			closeIfBound(bound);
+			qtToast("Can't leave the title empty.", {error: true});
+			return;
+		}
+
+		if (qtPending.has(bound.id)) {
+			closeIfBound(bound);
+			qtToast('Still saving this chat — try again', {error: true});
+			return;
+		}
+
+		busyIfBound(bound);
+		qtPending.add(bound.id);
+		try {
+			await renameChat(bound.id, next, () => titleIs(bound.id, bound.title));
+		} catch (error) {
+			closeIfBound(bound);
+			qtToast(error.message, {error: true});
+			return;
+		} finally {
+			qtPending.delete(bound.id);
+		}
+
+		closeIfBound(bound);
+		if (!commitTitle(bound.id, bound.title, next)) {
+			qtToast('Title changed — try again', {error: true});
+			return;
+		}
+
+		qtToast(tag === null ? 'Tag removed' : 'Tagged', {undo: {id: bound.id, tagged: next, old: bound.title}});
+	}
+
+	// One toast at a time, centered just above the overlay (or the composer).
+	// Errors stay until closed; others hide after 6 s unless hovered or focused.
+	function qtToast(message, {error = false, undo = null} = {}) {
+		document.getElementById(QT_TOAST_ID)?.remove();
+		clearTimeout(qtToastTimer);
+		const t = el('div', {id: QT_TOAST_ID, role: error ? 'alert' : 'status', class: error ? 'cth-qt-error' : ''}, [el('span', {text: message})]);
+		if (error) {
+			const x = el('button', {type: 'button', 'aria-label': 'Close', class: 'cth-qt-close', text: '×'});
+			x.addEventListener('click', () => t.remove());
+			t.append(x);
+		}
+
+		const ov = document.getElementById(OVERLAY_ID);
+		const box = (ov && getComputedStyle(ov).display !== 'none' && ov.getClientRects().length > 0) ? ov : findComposerBox();
+		const r = box?.getBoundingClientRect();
+		t.style.setProperty('--cth-qt-bottom', `${r ? innerHeight - r.top + 12 : 24}px`);
+		t.style.setProperty('--cth-qt-center', `${r ? r.left + (r.width / 2) : innerWidth / 2}px`);
+		document.body.append(t);
+		if (!error) {
+			const arm = () => {
+				clearTimeout(qtToastTimer);
+				qtToastTimer = setTimeout(() => t.remove(), 6000);
+			};
+
+			for (const type of ['pointerenter', 'focusin']) {
+				t.addEventListener(type, () => clearTimeout(qtToastTimer));
+			}
+
+			for (const type of ['pointerleave', 'focusout']) {
+				t.addEventListener(type, arm);
+			}
+
+			arm();
+		}
+
+		return t;
 	}
 
 	// ---- History observer ----
