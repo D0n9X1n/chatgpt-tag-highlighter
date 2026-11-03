@@ -8,9 +8,9 @@ The extension is plain JavaScript in IIFEs, with no dependencies or bundler.
 
 | Script | Role |
 |---|---|
-| `background.js` | Seeds and migrates the settings on install/startup; sets the icon badge from `badgeCount` messages (one global badge). |
-| `options.js` | Renders and edits rules and options; saves the whole config on every change. |
-| `content.js` | Runs on ChatGPT; compiles the config, styles the sidebar, shows the banner, handles filters, shortcuts, pruning and long-chat rendering. |
+| `background.js` | The only script that writes the settings. One promise chain runs every write: seeding and migration on install/startup, compare-and-set `writeConfig` from the options page, and `addRule` (append a tag) from the quick tag menu. Opens or focuses the floating settings window (`openSettings` messages and the toolbar icon), and sets the icon badge from `badgeCount` messages (one global badge). |
+| `options.js` | Renders and edits rules and options; sends the whole config to `background.js` as `{base, next}` with one save in flight. Re-renders outside changes only when it has no unsaved edits; otherwise shows a conflict banner with **Reload**. Never writes storage itself. |
+| `content.js` | Runs on ChatGPT; compiles the config, styles the sidebar, shows the banner, handles filters, the settings gear, quick tag (rename + Undo), shortcuts, pruning and long-chat rendering. |
 
 ## Storage
 
@@ -19,14 +19,18 @@ The extension is plain JavaScript in IIFEs, with no dependencies or bundler.
 
 ```mermaid
 flowchart LR
-  BG["background.js: seed and migrate"] --> CFG[("tagHighlighterConfigV1")]
-  OPT["options.js: edit and auto-save"] --> CFG
-  CFG -- "storage.onChanged" --> CS["content.js on chatgpt.com"]
+  OPT["options.js: edit and auto-save"] -- "writeConfig (compare-and-set)" --> BG["background.js: the only writer"]
+  CS["content.js on chatgpt.com"] -- "addRule / openSettings" --> BG
   CS -- "badgeCount message" --> BG
+  BG --> CFG[("tagHighlighterConfigV1")]
+  CFG -- "storage.onChanged" --> CS
+  CFG -- "storage.onChanged" --> OPT
   CS <--> UI[("tagHighlighterUiStateV1")]
 ```
 
-A new config field must default safely in all three scripts. Colors are always saved as `#rrggbb`.
+A write from the options page is applied only if the stored value still equals the `base` it was built from; otherwise nothing is written and the page shows its conflict banner. Concurrent edits in two windows are never merged: the second one must Reload. `addRule` always appends to the freshest stored value. A new config field must default safely in all three scripts. Colors are always saved as `#rrggbb`.
+
+Quick tag renames go straight from `content.js` to ChatGPT (`GET` then `PATCH /backend-api/conversation/{id}` with `{"title"}`), not through `background.js`. `background.js` only queues them: one rename per chat at a time across tabs, through a `cth-chat-lock:<id>` port. It is released when the rename ends, or at once if the tab closes before the PATCH is sent. If ChatGPT's answer to a sent PATCH is lost (the tab closed or the request failed), the chat stays blocked, with no expiry, until the user chooses **Tag anyway** (which still reads the current title first) or the browser session ends. The pending-rename record lives in `storage.session`; if it can't be read or written, no rename is sent. See [Privacy](Privacy).
 
 ## ChatGPT page hooks
 

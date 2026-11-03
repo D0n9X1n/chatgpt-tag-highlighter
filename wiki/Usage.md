@@ -40,10 +40,31 @@ When the open chat matches a rule with **Overlay** on, a banner above the messag
 
 The extension icon shows how many loaded sidebar chats are tagged and not hidden by a rule. Turn it off in [Configuration](Configuration).
 
+## Quick tag
+
+Hover or focus a chat in the sidebar and click the tag button that appears next to ChatGPT's own `⋯` menu, or press `Alt+T` (`Option+T` on macOS) to tag the focused chat, or the open chat when no chat is focused.
+
+- The menu lists your `startsWith` rules in rule order, with their colors. The chat's current tag is checked; picking it again changes nothing.
+- Picking another tag renames the chat on ChatGPT: the current prefix tag (the longest matching one) and the spaces after it are replaced, so `[TODO] Fix build` becomes `[BUG] Fix build`. `includes` rules are never stripped.
+- **Remove tag** (shown only for tagged chats) removes the prefix tag.
+- **New tag…** turns into a text box. Type a tag (1–40 characters) and press Enter: a `startsWith` rule is added with the next unused palette color and applied to the chat. If the tag already exists, that rule is reused. Escape goes back to the menu.
+- Right before every rename, including Undo, the extension checks the chat's current title on ChatGPT and changes nothing if it differs or can't be checked. Its own renames of the same chat run one at a time across tabs in this browser. ChatGPT's API has no conditional write, so a rename made in ChatGPT itself or on another device at the same moment can still race (best-effort).
+- After the extension is updated or reloaded, open ChatGPT tabs show **Reload this ChatGPT tab to tag chats.** and change nothing until you reload them. If ChatGPT doesn't answer a rename it was sent, you see **Not sure the rename finished. Reload to check.**
+- After a rename is interrupted that way, or by closing its tab while it was being saved, the extension can't tell whether ChatGPT applied it. Tagging that chat then shows **An earlier rename of this chat didn't confirm. Reload ChatGPT to check the title.** with a **Tag anyway** button. Reload to see the real title, or press **Tag anyway**: the extension still checks the chat's current title on ChatGPT first and changes nothing if it differs. The block lasts until you choose **Tag anyway** or close the browser.
+- After a rename, a toast shows **Undo** for 6 seconds (longer while you hover or focus it). Undo restores the old title, unless the chat was renamed again in the meantime: here, in another tab or on another device.
+- If the title changed while the menu was open, or ChatGPT refuses the rename, an error toast explains it and nothing changes.
+
+The menu works from the keyboard: arrow keys move, Home/End jump, Enter or Space picks, Escape closes and returns to the button, Tab closes. Renaming uses the same request ChatGPT's own **Rename** sends; see [Privacy](Privacy). Turn the button off with **Show quick tag button** in [Configuration](Configuration).
+
+## Settings window
+
+The gear at the end of the filter bar and the extension's toolbar icon open the settings in a small floating window. If it is already open, it is brought to the front instead of opening a second one. If the browser can't open a popup window, the usual options page opens. The filter bar shows whenever at least one rule exists, so the gear is always reachable; the toolbar icon works even with no rules.
+
 ## Keyboard shortcuts
 
 | Keys | Action |
 |---|---|
+| `Alt+T` (`Option+T` on macOS) | Open the quick tag menu for the focused chat, or the open chat |
 | `Alt+H` (`Option+H` on macOS) | Show or hide chats hidden by a Hide rule |
 | `Alt+F` | Move focus to the filter bar |
 | `Enter` or `Space` | Toggle the focused filter pill |

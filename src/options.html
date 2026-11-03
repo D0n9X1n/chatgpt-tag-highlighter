@@ -31,6 +31,8 @@
     </div>
   </div>
 
+  <div id="conflict" class="conflict" role="alert" hidden>Settings changed in another window. <button id="conflictReload" type="button">Reload</button></div>
+
   <main class="card">
     <section class="section">
       <h2 class="sectionTitle">General</h2>
@@ -90,6 +92,15 @@
           </span>
         </label>
       </div>
+
+      <div class="generalRow">
+        <label class="checkboxWrap" title="Add a button that adds, changes or removes a chat's prefix tag">
+          <input id="showQuickTag" type="checkbox" checked />
+          <span class="label">Show quick tag button
+            <span class="hintInline">Hover a chat or press Alt+T to add, change or remove its prefix tag. This renames the chat on ChatGPT.</span>
+          </span>
+        </label>
+      </div>
     </section>
 
     <section class="section">
@@ -142,47 +153,47 @@
 
   <template id="rowTemplate">
     <tr>
-      <td class="rowNum"></td>
-      <td class="dragCell"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
+      <td class="rowNum" data-label="#"></td>
+      <td class="dragCell" data-label="Move"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
 
-      <td>
-        <input class="input tag" placeholder="[TODO]" />
+      <td data-label="Tag">
+        <input class="input tag" placeholder="[TODO]" aria-label="Tag" />
       </td>
 
-      <td>
-        <select class="select match">
+      <td data-label="Match">
+        <select class="select match" aria-label="Match">
           <option value="startsWith">startsWith</option>
           <option value="includes">includes</option>
         </select>
       </td>
 
-      <td>
-        <select class="select color"></select>
+      <td data-label="Color">
+        <select class="select color" aria-label="Color preset"></select>
       </td>
 
-      <td>
-        <input class="input hex" placeholder="#fabd2f" />
+      <td data-label="Hex">
+        <input class="input hex" placeholder="#fabd2f" aria-label="Hex color" />
       </td>
 
-      <td class="hideCell">
+      <td class="hideCell" data-label="Hide">
         <label class="checkboxWrap" title="Hide matching chats in sidebar list">
           <input class="hide" type="checkbox" />
           <span>Hide</span>
         </label>
       </td>
 
-      <td class="overlayCell">
+      <td class="overlayCell" data-label="Overlay">
         <label class="checkboxWrap" title="Show in overlay banner when active">
           <input class="overlay" type="checkbox" checked />
-          <span>Show</span>
+          <span>Overlay</span>
         </label>
       </td>
 
-      <td class="previewCell">
+      <td class="previewCell" data-label="Preview">
         <span class="swatch" title="Preview"></span>
       </td>
 
-      <td class="delCell">
+      <td class="delCell" data-label="Delete">
         <button class="del" type="button" title="Delete">✕</button>
       </td>
     </tr>

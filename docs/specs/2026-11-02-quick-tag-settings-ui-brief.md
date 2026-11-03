@@ -1,0 +1,13 @@
+# Quick tag + settings — UI brief (designer, 2026-11-02)
+
+Companion to `2026-11-02-quick-tag-settings-design.md`. Reuse existing tokens: surfaces `#212121` dark / `#fff` light (delete dialog); lines `rgba(255,255,255,.12)` / `rgba(0,0,0,.10)`; hover `rgba(255,255,255,.08)` / `rgba(0,0,0,.06)`; danger `#fb4934` / `#cc241d`; system-ui 12/600 controls, 13/600 menu items; spacing 4/6/8/12. Every new control gets `outline: 2px solid currentColor; outline-offset: 2px` on `:focus-visible`. No new accents, no uppercase, only 150 ms opacity fades.
+
+**Tag button.** 24×24, radius 6, transparent; 14 px inline-SVG tag outline in `currentColor` (stroke 1.75); icon `rgba(255,255,255,.70)` / light `rgba(0,0,0,.60)`; hover/focus = hover fill. Vertically centred on the row, 4 px left of ChatGPT's trailing `⋯` (fallback `right: 8px`). `aria-label="Tag chat"`, `aria-haspopup="menu"`, `aria-expanded`. z-index 30. Hidden while the row's `⋯` has `aria-expanded="true"`, and while our menu or a dialog is open.
+
+**Menu.** 220 px, radius 12, padding 4, shadow `0 10px 30px rgba(0,0,0,.4)`; below the button, right-aligned, flips up if no room; z-index 2147482000. Tag items `menuitemradio`, 32 px: 10 px swatch, truncated tag, 14 px check on the current tag (`aria-checked`). 1 px `role=separator`. "Remove tag" (danger colour, only when tagged), then "New tag…", which turns in place into a 28 px input (placeholder `[TAG]`; Enter applies, Escape reverts). Only the tag list scrolls (`max-height: min(320px, 100vh - 16px)`). Empty: muted "No prefix tags yet" + "New tag…". Keys: arrows wrap, Home/End, Enter/Space pick, Escape closes and refocuses the button, Tab closes. Busy: items disabled at 45 % opacity while renaming.
+
+**Toast.** 12 px above the overlay, else above the composer, else 24 px from the bottom; centred on the composer; radius 12; menu surface. Success `role=status` "Tagged · Undo" (pill-styled Undo button), 6 s, paused on hover/focus. Error `role=alert`, 3 px danger left stripe, stays until closed (24 px close button).
+
+**Gear.** Icon-only 26×26 circle with pill border, 14 px SVG cog, `aria-label`/`title` "Tag Highlighter settings". Last in the bar; the first of "Delete untagged…"/gear gets `margin-inline-start: auto`.
+
+**Options ≤640 px.** Body padding 12; drop `.title` min-width; actions wrap under the title. Header row visually hidden (kept for screen readers). Each rule row becomes a grid card: (1) `#n`, drag handle, swatch, delete pushed right (34 px); (2) tag input full width; (3) match + colour preset; (4) hex; (5) Hide + Overlay inline. Cells show their column name via `td::before { content: attr(data-label) }`. Drop indicator on the card's top edge.

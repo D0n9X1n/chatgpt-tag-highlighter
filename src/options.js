@@ -34,6 +34,9 @@
 		showBadge: $('showBadge'),
 		lazyRenderTurns: $('lazyRenderTurns'),
 		showDeleteUntagged: $('showDeleteUntagged'),
+		showQuickTag: $('showQuickTag'),
+		conflict: $('conflict'),
+		conflictReload: $('conflictReload'),
 		toast: $('toast'),
 		exportCfg: $('exportCfg'),
 		importCfg: $('importCfg'),
@@ -109,6 +112,7 @@
 		showBadge: true,
 		lazyRenderTurns: true,
 		showDeleteUntagged: false,
+		showQuickTag: true,
 	});
 
 	// ---- Storage helpers (promise + callback compatible) ----
@@ -126,19 +130,29 @@
 			}
 		});
 
-	const set = object =>
-		new Promise(resolve => {
+	// Config writes go through background.js (compare-and-set); this page never writes storage.
+	function sendRuntimeMessage(msg) { // Keep in sync with content.js
+		return new Promise((resolve, reject) => {
 			try {
-				const r = store.set(object);
+				const callback = API === globalThis.chrome
+					? res => {
+						const e = API.runtime.lastError;
+						if (e) {
+							reject(new Error(e.message));
+						} else {
+							resolve(res);
+						}
+					}
+					: undefined;
+				const r = API.runtime.sendMessage(msg, callback);
 				if (r?.then) {
-					r.then(resolve);
-				} else {
-					store.set(object, resolve);
+					r.then(resolve, reject);
 				}
-			} catch {
-				store.set(object, resolve);
+			} catch (e) {
+				reject(e);
 			}
 		});
+	}
 
 	// ---- Color normalization (ALWAYS -> #rrggbb) ----
 	const isHex6 = s => /^#[\da-fA-F]{6}$/.test(String(s || '').trim());
@@ -185,12 +199,49 @@
 		return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fb;
 	};
 
+	// Same key order as collectConfig().
+	function normalizeCfg(raw) {
+		return {
+			rules: (raw.rules || []).map(r => ({
+				tag: String(r?.tag || '').trim(),
+				match: safeMatch(r?.match),
+				color: toHex(r?.color, '#999999'),
+				hide: r?.hide === true,
+				overlay: r?.overlay !== false,
+			})).filter(r => r.tag),
+			maxChatTurns: safeInt(raw.maxChatTurns, 0),
+			hideNavBar: raw.hideNavBar !== false,
+			dimUntagged: raw.dimUntagged === true,
+			showBadge: raw.showBadge !== false,
+			lazyRenderTurns: raw.lazyRenderTurns !== false,
+			showDeleteUntagged: raw.showDeleteUntagged === true,
+			showQuickTag: raw.showQuickTag !== false,
+		};
+	}
+
+	// Key order does not matter: chrome.storage returns objects with sorted keys. Keep in sync with background.js canon().
+	function canon(value) {
+		return JSON.stringify(value, (k, x) => {
+			if (x && typeof x === 'object' && !Array.isArray(x)) {
+				return Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]]));
+			}
+
+			return x;
+		});
+	}
+
+	const eq = (a, b) => canon(a ?? null) === canon(b ?? null);
+
 	// ---- Toast ----
 	let toastTimer = 0;
-	function toast(message) {
+	function toast(message, sticky = false) {
 		els.toast.textContent = message;
 		els.toast.classList.add('show');
 		clearTimeout(toastTimer);
+		if (sticky) {
+			return;
+		}
+
 		toastTimer = setTimeout(() => {
 			els.toast.classList.remove('show');
 			els.toast.textContent = '';
@@ -222,6 +273,7 @@
 
 	function setRowColor(tr, hex) {
 		const h = toHex(hex);
+		tr.dataset.color = h; // Last committed colour: a partially typed hex never replaces it.
 		tr.querySelector('.hex').value = h;
 		// Select preset if matches, else "Custom…"
 		const sel = tr.querySelector('.color');
@@ -264,6 +316,7 @@
 		els.showBadge.checked = cfg.showBadge !== false;
 		els.lazyRenderTurns.checked = cfg.lazyRenderTurns !== false;
 		els.showDeleteUntagged.checked = cfg.showDeleteUntagged === true;
+		els.showQuickTag.checked = cfg.showQuickTag !== false;
 
 		const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
 		for (const rule of rules) {
@@ -296,7 +349,7 @@
 			rules.push({
 				tag,
 				match: safeMatch(tr.querySelector('.match').value),
-				color: toHex(tr.querySelector('.hex').value, '#999999'), // ONLY hex persisted
+				color: toHex(tr.querySelector('.hex').value, tr.dataset.color || '#999999'), // ONLY hex persisted
 				hide: tr.querySelector('.hide').checked === true,
 				overlay: tr.querySelector('.overlay').checked !== false,
 			});
@@ -310,20 +363,243 @@
 			showBadge: els.showBadge.checked,
 			lazyRenderTurns: els.lazyRenderTurns.checked,
 			showDeleteUntagged: els.showDeleteUntagged.checked,
+			showQuickTag: els.showQuickTag.checked,
 		};
 	}
 
-	// ---- Auto-save ----
-	let ready = false;
-	async function autoSave() {
-		if (!ready) return; // An empty table during storage loading isn't an empty config.
-		const cfg = collectConfig();
-		for (let i = 0; i < cfg.rules.length; i++) {
-			cfg.rules[i].color = toHex(cfg.rules[i].color);
+	// ---- Auto-save (compare-and-set through background.js) ----
+	// base: the last stored value rendered or acknowledged; a save is written only if storage still equals it.
+	// gen changes on every render from storage (incl. Reload); a reply from an older gen is ignored.
+	// rendering blocks saves caused by our own render.
+	let ready = false; // An empty table during storage loading isn't an empty config.
+	let base = null;
+	let dirty = false;
+	let inFlight = false;
+	let pending = false;
+	let conflict = false;
+	let failed = null;
+	let sentNext = null;
+	let sentGen = -1;
+	let editSeq = 0;
+	let gen = 0;
+	let rendering = false;
+	let retryTimer = 0;
+	let retryStep = 0;
+	let okMessage = 'Auto-saved ✓';
+	let draggedRow = null;
+	const uncommitted = new Set(); // Row text fields typed into but not yet committed (change/blur).
+	const RETRY_MS = [1000, 3000];
+
+	// Every programmatic render goes through here.
+	function show(cfg) {
+		gen++;
+		uncommitted.clear();
+		draggedRow = null; // The rows are rebuilt: a drag in progress is over (its dragend never reaches #rows).
+		rendering = true;
+		try {
+			render(cfg);
+		} finally {
+			rendering = false;
 		}
-		await set({[STORAGE_KEY]: cfg});
-		toast('Auto-saved ✓');
 	}
+
+	function buildWrite() {
+		return {base, next: collectConfig(), seq: editSeq};
+	}
+
+	function autoSave(message) {
+		if (!ready || rendering) {
+			return;
+		}
+
+		dirty = true;
+		if (message) {
+			okMessage = message;
+		}
+
+		if (conflict) {
+			return; // The banner is up: edits stay on screen, nothing is sent.
+		}
+
+		if (inFlight) {
+			pending = true; // One save at a time.
+			return;
+		}
+
+		if (failed) {
+			pending = true;
+			sendWrite(failed); // Retry the same write first.
+			return;
+		}
+
+		sendWrite(buildWrite());
+	}
+
+	async function sendWrite(write) {
+		clearTimeout(retryTimer);
+		if (conflict) {
+			return; // The banner suspends saving, including automatic retries.
+		}
+
+		inFlight = true;
+		sentNext = write.next;
+		sentGen = gen;
+		const myGen = gen;
+		const {seq, ...payload} = write; // seq stays local
+		let res;
+		try {
+			res = await sendRuntimeMessage({type: 'writeConfig', ...payload});
+			if (!res) {
+				throw new Error('failed');
+			}
+		} catch {
+			// Never write storage here: keep the draft and retry the same {base, next}.
+			inFlight = false;
+			if (myGen !== gen) {
+				flushPending(); // Reloaded since: drop this write.
+				return;
+			}
+
+			failed = write;
+			toast('Not saved — retrying', true);
+			if (retryStep < RETRY_MS.length) {
+				retryTimer = setTimeout(() => sendWrite(write), RETRY_MS[retryStep++]);
+			}
+
+			return;
+		}
+
+		inFlight = false;
+		if (myGen !== gen) {
+			flushPending(); // Stale reply (Reload or re-render since): ignore it.
+			return;
+		}
+
+		failed = null;
+		retryStep = 0;
+		if (!res.ok && !res.conflict) {
+			// The background refused this write (e.g. storage quota): resending the
+			// same payload can't help. Keep the draft; the next edit sends a fresh write.
+			toast(`Couldn't save: ${res.error || 'unknown error'}`, true);
+			if (pending) {
+				pending = false;
+				sendWrite(buildWrite());
+			}
+
+			return;
+		}
+
+		if (res.conflict) {
+			pending = false;
+			if (dirty) {
+				showConflict();
+			} else {
+				// A lost init/migration race: just adopt the stored value.
+				base = res.value;
+				hideConflict();
+				show(normalizeCfg(res.value || DEFAULT_CFG()));
+			}
+
+			return;
+		}
+
+		base = res.value;
+		if (conflict) {
+			pending = false; // The banner suspends saving: keep the draft, send nothing more.
+			return;
+		}
+
+		if (pending) {
+			pending = false;
+			sendWrite(buildWrite()); // Carries its own seq.
+			return;
+		}
+
+		if (editSeq === seq && uncommitted.size === 0) {
+			dirty = false; // No edit since this write was built and nothing half-typed on screen.
+		}
+
+		toast(okMessage);
+		okMessage = 'Auto-saved ✓';
+	}
+
+	// Edits made after a Reload.
+	function flushPending() {
+		if (pending && !conflict) {
+			pending = false;
+			sendWrite(buildWrite());
+		}
+	}
+
+	function showConflict() {
+		conflict = true;
+		clearTimeout(retryTimer); // No automatic retry while the banner is up; Reload discards the draft.
+		failed = null;
+		retryStep = 0;
+		els.conflict.hidden = false;
+	}
+
+	function hideConflict() {
+		conflict = false;
+		els.conflict.hidden = true;
+	}
+
+	// Discards the draft; any reply still in flight is now stale.
+	async function reload() {
+		const v = (await get(STORAGE_KEY))?.[STORAGE_KEY];
+		clearTimeout(retryTimer);
+		base = v ?? null;
+		dirty = false;
+		pending = false;
+		failed = null;
+		retryStep = 0;
+		hideConflict();
+		show(normalizeCfg(v || DEFAULT_CFG()));
+	}
+
+	els.conflictReload.addEventListener('click', reload);
+
+	// Capture phase: counts the edit before autoSave records seq.
+	for (const box of [els.rows, ...document.querySelectorAll('.generalRow')]) {
+		for (const type of ['input', 'change']) {
+			box.addEventListener(type, () => {
+				if (ready && !rendering) {
+					editSeq++;
+					dirty = true;
+				}
+			}, true);
+		}
+	}
+
+	const isRowText = el => el.classList?.contains('tag') || el.classList?.contains('hex');
+	els.rows.addEventListener('input', e => {
+		if (ready && !rendering && isRowText(e.target)) {
+			uncommitted.add(e.target);
+		}
+	}, true);
+	for (const type of ['change', 'focusout']) {
+		els.rows.addEventListener(type, e => uncommitted.delete(e.target), true);
+	}
+
+	API.storage?.onChanged?.addListener((changes, area) => {
+		const v = changes[STORAGE_KEY]?.newValue;
+		if (!v || !ready || API.storage[area] !== store) {
+			return;
+		}
+
+		const live = inFlight && sentGen === gen; // A write from before a Reload is not ours any more.
+		if (eq(v, base) || (live && eq(v, sentNext))) {
+			return; // Our own echo (only while that write is in flight).
+		}
+
+		if (!dirty && !live && !conflict && !draggedRow) { // A drag in progress is an unsaved edit.
+			base = v;
+			show(normalizeCfg(v));
+			return;
+		}
+
+		showConflict(); // Unsaved edits or a save in flight: keep the draft, write nothing.
+	});
 
 	function onRulesChanged() {
 		updateRowNumbers();
@@ -365,6 +641,10 @@
 
 	// Normalize hex on blur (covers paste + partial input)
 	els.rows.addEventListener('blur', e => {
+		if (rendering) {
+			return; // Removing a focused row during a render blurs it.
+		}
+
 		const tr = e.target.closest('tr');
 		if (!tr) {
 			return;
@@ -396,6 +676,7 @@
 	els.showBadge.addEventListener('change', () => autoSave());
 	els.lazyRenderTurns.addEventListener('change', () => autoSave());
 	els.showDeleteUntagged.addEventListener('change', () => autoSave());
+	els.showQuickTag.addEventListener('change', () => autoSave());
 
 	// ---- Import / Export ----
 	els.exportCfg.addEventListener('click', async () => {
@@ -425,43 +706,22 @@
 		els.importText.value = '';
 	});
 
-	els.importApply.addEventListener('click', async () => {
+	els.importApply.addEventListener('click', () => {
 		const raw = els.importText.value.trim();
 		let parsed;
 		try { parsed = JSON.parse(raw); } catch { toast('Invalid config'); return; }
 		if (!parsed || !Array.isArray(parsed.rules)) { toast('Invalid config'); return; }
 
-		const cfg = {
-			rules: [],
-			maxChatTurns: safeInt(parsed.maxChatTurns, 0),
-			hideNavBar: parsed.hideNavBar !== false,
-			dimUntagged: parsed.dimUntagged === true,
-			showBadge: parsed.showBadge !== false,
-			lazyRenderTurns: parsed.lazyRenderTurns !== false,
-			showDeleteUntagged: parsed.showDeleteUntagged === true,
-		};
-		for (const r of parsed.rules) {
-			const tag = String(r?.tag || '').trim();
-			if (!tag) continue;
-			cfg.rules.push({
-				tag,
-				match: safeMatch(r?.match),
-				color: toHex(r?.color, '#999999'),
-				hide: r?.hide === true,
-				overlay: r?.overlay !== false,
-			});
-		}
+		const cfg = normalizeCfg(parsed);
 		if (parsed.rules.length > 0 && cfg.rules.length === 0) { toast('Invalid config'); return; }
 
-		await set({ [STORAGE_KEY]: cfg });
 		render(cfg);
 		els.importPanel.style.display = 'none';
 		els.importText.value = '';
-		toast('Imported ✓');
+		autoSave('Imported ✓'); // Written against the current base.
 	});
 
 	// ---- Drag-and-drop reorder ----
-	let draggedRow = null;
 
 	els.rows.addEventListener('dragstart', e => {
 		const handle = e.target.closest('.dragHandle');
@@ -491,6 +751,7 @@
 		e.preventDefault();
 		const targetRow = e.target.closest('tr');
 		if (!targetRow || !draggedRow || targetRow === draggedRow) return;
+		if (draggedRow.parentNode !== els.rows) return; // Re-rendered (e.g. Reload) mid-drag: the row is gone.
 		const rect = targetRow.getBoundingClientRect();
 		const midY = rect.top + rect.height / 2;
 		if (e.clientY < midY) {
@@ -588,45 +849,15 @@
 	// ---- Load + migrate ----
 	async function init() {
 		const data = await get(STORAGE_KEY);
-		let cfg = data?.[STORAGE_KEY];
-
-		if (!cfg || !Array.isArray(cfg.rules)) {
-			cfg = DEFAULT_CFG();
-			await set({[STORAGE_KEY]: cfg});
-			render(cfg);
-			return;
+		const raw = data?.[STORAGE_KEY] ?? null;
+		const cfg = raw && Array.isArray(raw.rules) ? normalizeCfg(raw) : DEFAULT_CFG();
+		base = raw;
+		show(cfg);
+		ready = true;
+		if (!eq(cfg, raw)) {
+			sendWrite({base: raw, next: cfg, seq: editSeq}); // Seed / migration, compare-and-set safe.
 		}
-
-		// Migrate: force all colors to hex and persist back
-		const migrated = {
-			rules: [],
-			maxChatTurns: safeInt(cfg.maxChatTurns, 0),
-			hideNavBar: cfg.hideNavBar !== false,
-			dimUntagged: cfg.dimUntagged === true,
-			showBadge: cfg.showBadge !== false,
-			lazyRenderTurns: cfg.lazyRenderTurns !== false,
-			showDeleteUntagged: cfg.showDeleteUntagged === true,
-		};
-
-		for (let i = 0; i < cfg.rules.length; i++) {
-			const r = cfg.rules[i] || {};
-			const tag = String(r.tag || '').trim();
-			if (!tag) {
-				continue;
-			}
-
-			migrated.rules.push({
-				tag,
-				match: safeMatch(r.match),
-				color: toHex(r.color, '#999999'),
-				hide: r.hide === true,
-				overlay: r.overlay !== false,
-			});
-		}
-
-		await set({[STORAGE_KEY]: migrated});
-		render(migrated);
 	}
 
-	init().then(() => { ready = true; });
+	init();
 })();
