@@ -2548,7 +2548,7 @@ class TestContentScript:
 
 # App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
 # fixture-only IDs let tests inspect rows without coupling to extension markers.
-def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6):
+def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None):
     rows = []
     for i, (cid, title) in enumerate(chats):
         selected = ' aria-current="page"' if cid == active else ''
@@ -2566,7 +2566,7 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6):
     return f'''<!doctype html><html class="dark"><head><meta charset="utf-8">
     <title>App-shell fixture</title><style>
     body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
-    [data-app-action-sidebar-scroll] {{height:100%;overflow:auto}}
+    [data-app-action-sidebar-scroll] {{height:{f'{sidebar_height}px' if sidebar_height else '100%'};overflow:auto}}
     [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
     [data-thread-title-trigger] {{flex:1}} a {{display:block}}
     [role=listitem] {{padding-bottom:4px}} main {{flex:1;min-width:0}}
@@ -2853,9 +2853,9 @@ class TestAppShellContentScript:
         n.dataset.tag, n.getAttribute('aria-checked'), getComputedStyle(n.querySelector('.cth-qt-swatch')).backgroundColor])"""
     QT_FOCUS = "() => document.activeElement.dataset.tag || document.activeElement.dataset.action || document.activeElement.id"
 
-    def _qt_page(self, chats=None, rules=None, **mock):
+    def _qt_page(self, chats=None, rules=None, fixture=None, **mock):
         self._configure(rules=rules)
-        page = self._open_chat(**({'chats': chats} if chats is not None else {}))
+        page = self._open_chat(**({'chats': chats} if chats is not None else {}), **(fixture or {}))
         self._ready(page)
         calls, held = self._mock_chat_api(page, **mock)
         return page, calls, held
@@ -3229,3 +3229,95 @@ class TestAppShellContentScript:
         page.click('#cth-qt-toast .cth-qt-undo')
         self._alert(page, 'Title changed — not undone')
         assert len(self._patches(calls)) == 1
+
+    # ---- QA fixes: scrolling, undo history, Option+T ----
+
+    def test_quick_tag_follows_sidebar_scroll_and_resize(self):
+        chats = DEFAULT_CHATS + [(f'n{i}', f'note {i}') for i in range(20)]
+        page, calls, _ = self._qt_page(chats=chats, fixture={'sidebar_height': 300})
+        self._open_qt(page, 'c5')
+        box = page.locator('#cth-qt-btn').bounding_box()
+        x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        page.evaluate("document.querySelector('[data-app-action-sidebar-scroll]').scrollTop = 150")
+        assert self._poll(page, "() => !document.getElementById('cth-qt-menu')"), 'a sidebar scroll closes the menu'
+        assert self._qt_shown(page, False), 'and hides the button, which no longer sits on its row'
+        page.keyboard.press('Escape')
+        assert self._qt_shown(page, False)
+        # Whatever row sits under the old spot now must be the one that gets tagged.
+        page.mouse.move(x - 120, y)
+        cid = page.evaluate("([x, y]) => document.elementFromPoint(x, y).closest('[role=group]').id.slice(4)", [x - 120, y])
+        assert cid != 'c5'
+        page.click('#cth-qt-btn')
+        page.wait_for_selector(f'#cth-qt-menu[data-cth-chat="{cid}"]')
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        assert self._poll(page, '() => !!document.querySelector("#cth-qt-toast")', timeout=5000)
+        assert [c['url'].rsplit('/', 1)[1] for c in self._patches(calls)] == [cid]
+        page.hover(f'#row-{cid}')
+        page.click('#cth-qt-btn')
+        page.wait_for_selector('#cth-qt-menu')
+        page.set_viewport_size({'width': 1200, 'height': 860})
+        assert self._poll(page, "() => !document.getElementById('cth-qt-menu')"), 'a resize closes the menu'
+        assert self._qt_shown(page, False)
+
+    def test_closing_menu_without_refocus_clears_button(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.evaluate("document.getElementById('cth-qt-menu').dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', bubbles: true}))")
+        assert page.locator('#cth-qt-menu').count() == 0
+        assert self._qt_shown(page, False), 'closing the menu must not leave a button bound to an old row'
+
+    def test_consecutive_tags_keep_undo_history(self):
+        page, calls, _ = self._qt_page()
+        span = "document.querySelector('#row-c5 [data-thread-title] span[dir=auto]')"
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        page.mouse.move(640, 5)
+        self._pick(page, 'c5', '[TODO]')
+        assert self._title_is(page, 'c5', '[TODO] plain chat')
+        page.evaluate(f"{span}.textContent = 'plain chat'")  # remount of the ORIGINAL title
+        assert self._title_is(page, 'c5', '[TODO] plain chat'), 'any title we replaced is a stale remount'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == [
+            '[BUG] plain chat', '[TODO] plain chat', '[BUG] plain chat']
+
+    def test_hidden_tag_survives_original_title_remount(self):
+        page, calls, _ = self._qt_page()
+        span = "document.querySelector('#row-c5 [data-thread-title] span[dir=auto]')"
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        page.mouse.move(640, 5)
+        self._pick(page, 'c5', '[ARCHIVE]')
+        assert self._title_is(page, 'c5', '[ARCHIVE] plain chat')
+        assert self._poll(page, "() => !document.querySelector('#row-c5').getClientRects().length")
+        page.evaluate(f"{span}.textContent = 'plain chat'")
+        page.wait_for_timeout(300)
+        assert page.evaluate(_tjs('c5')) == '[ARCHIVE] plain chat'
+        assert not page.is_visible('#row-c5'), 'a stale remount must not unhide the chat'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert json.loads(self._patches(calls)[-1]['body'])['title'] == '[BUG] plain chat'
+        page.evaluate(f"{span}.textContent = 'plain chat'")
+        assert self._title_is(page, 'c5', '[BUG] plain chat'), 'the undone title still wins over the original'
+
+    OPTION_T = """() => {
+        const ed = document.getElementById('editor');
+        ed.focus();
+        const e = new KeyboardEvent('keydown', {key: '†', code: 'KeyT', altKey: true, bubbles: true, cancelable: true});
+        ed.dispatchEvent(e);
+        return e.defaultPrevented;
+    }"""
+
+    def test_option_t_types_in_composer(self):
+        self._configure(showQuickTag=False)
+        page = self._open_chat()
+        self._ready(page)
+        assert page.evaluate(self.OPTION_T) is False, 'feature off: Option+T is left alone'
+        self._configure()
+        assert self._poll(page, "() => document.getElementById('cth-settings') && true")
+        page.wait_for_timeout(300)
+        assert page.evaluate(self.OPTION_T) is False, 'editable fields keep Option+T'
+        assert page.locator('#cth-qt-menu').count() == 0
+        page.focus('#row-c3 a')
+        page.keyboard.press('Alt+t')
+        page.wait_for_selector('#cth-qt-menu[data-cth-chat="c3"]')

@@ -2269,15 +2269,34 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return;
 		}
 
+		const anchor = qtAnchor;
+		const id = qtBound?.id;
 		qtMenu.remove();
 		qtMenu = null;
 		qtBound = null;
 		qtBusy = false;
 		qtBtn?.setAttribute('aria-expanded', 'false');
-		if (refocus) {
-			qtBtn?.focus();
+		// The button is shared: never leave it bound to a row it may no longer sit on.
+		hideQtButton();
+		if (refocus && anchor?.isConnected && chatIdOf(anchor) === id) {
+			showQtFor(anchor); // Re-measure the row before handing focus back.
+			(qtBtn && !qtBtn.hidden ? qtBtn : anchor).focus();
 		}
 	}
+
+	// Rows move under the fixed button on scroll or resize: close and hide.
+	function dropQuickTag() {
+		closeQtMenu(false);
+		hideQtButton();
+	}
+
+	document.addEventListener('scroll', e => {
+		const t = e.target;
+		if (historyRoot && (t.contains?.(historyRoot) || historyRoot.contains(t))) {
+			dropQuickTag();
+		}
+	}, {capture: true, passive: true});
+	window.addEventListener('resize', dropQuickTag, {passive: true});
 
 	function onQtMenuKey(e) {
 		const items = qtItems();
@@ -2364,8 +2383,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 	}
 
-	// Confirmed renames: id -> {old, new}. ChatGPT may re-render a stale copy of
-	// the old title; show the new one until a third title appears.
+	// Confirmed renames: id -> {new, olds}. ChatGPT may re-render a stale copy of
+	// any title we replaced; show the new one until an unknown title appears.
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
@@ -2382,8 +2401,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return shown;
 		}
 
-		if (shown !== o.old) {
-			titleOverrides.delete(id); // A third title: renamed elsewhere.
+		if (!o.olds.has(shown)) {
+			titleOverrides.delete(id); // An unknown title: renamed elsewhere.
 			return shown;
 		}
 
@@ -2437,7 +2456,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			node.nodeValue = next;
 		}
 
-		titleOverrides.set(id, {old: expected, new: next});
+		const olds = new Set(titleOverrides.get(id)?.olds);
+		olds.add(expected);
+		olds.delete(next);
+		titleOverrides.set(id, {new: next, olds});
 		scheduleSidebarScan();
 		return true;
 	}
@@ -2648,7 +2670,6 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			|| document.querySelector('#history');
 		if (hr && hr !== historyRoot) {
 			historyRoot = hr;
-			hr.addEventListener('scroll', hideQtButton, {passive: true});
 			attachHistoryObserver();
 			scheduleSidebarScan();
 			scheduleOverlayUpdate();
@@ -2812,6 +2833,12 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	document.addEventListener('keydown', e => {
 		// Alt+T: tag the focused chat row, else the active chat.
 		if (isAltKey(e, 't')) {
+			const t = e.target;
+			const editable = (t?.isContentEditable || t?.closest?.('input, textarea, select')) && !historyRoot?.contains(t);
+			if (!compiled?.showQuickTag || editable) {
+				return; // Leave it to the page: macOS Option+T types "†".
+			}
+
 			e.preventDefault();
 			const a = anchorFrom(document.activeElement) || (historyRoot && getActiveChatAnchor(historyRoot));
 			if (a) {
