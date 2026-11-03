@@ -6,6 +6,11 @@
   "icons": {
     "128": "icon-128.png"
   },
+  "action": {
+    "default_icon": {
+      "128": "icon-128.png"
+    }
+  },
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"

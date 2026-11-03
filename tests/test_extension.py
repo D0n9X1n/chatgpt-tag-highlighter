@@ -1045,6 +1045,64 @@ class TestConfigWriter(_BgPages):
         assert list(page.evaluate('cfg()'))[-1] == 'showQuickTag'
 
 
+class TestOpenSettings(_BgPages):
+    """The toolbar button and content.js open settings in one floating popup window."""
+
+    OPEN = "() => send({type: 'openSettings'})"
+
+    def _args(self, page, name):
+        return page.evaluate('n => __calls.filter(c => c[0] === n).map(c => c[1])', name)
+
+    def test_popup_args_and_refocus(self):
+        page = self.bg()
+        page.evaluate(self.OPEN)
+        assert self._args(page, 'create') == [[{'url': 'ext://options.html', 'type': 'popup', 'width': 560, 'height': 720, 'focused': True}]]
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('create')") == 1
+        assert self._args(page, 'update') == [[7, {'focused': True}]]
+        page.evaluate("fire('removed', 7)")
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('create')") == 2
+
+    def test_refocus_after_worker_restart(self):
+        page = self.bg(setup='window.__session = {cthSettingsWindowId: 7};')
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('create')") == 0
+        assert self._args(page, 'update') == [[7, {'focused': True}]]
+        page = self.bg(setup="window.__session = {cthSettingsWindowId: 7}; browser.windows.get = () => Promise.reject(new Error('No window with id: 7'));")
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('create')") == 1
+
+    def test_concurrent_opens_create_one_window(self):
+        page = self.bg()
+        page.evaluate(f'() => Promise.all([({self.OPEN})(), ({self.OPEN})()])')
+        assert page.evaluate("count('create')") == 1
+
+    def test_fallback_when_windows_missing(self):
+        page = self.bg(setup='delete browser.windows;')
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('openOptionsPage')") == 1
+
+    def test_fallback_when_create_rejects(self):
+        page = self.bg(setup="browser.windows.create = () => Promise.reject(new Error('blocked'));")
+        page.evaluate(self.OPEN)
+        assert page.evaluate("count('openOptionsPage')") == 1
+
+    def test_toolbar_click_with_zero_rules(self):
+        page = self.bg(rules=[])
+        page.evaluate("fire('clicked', {id: 1})")
+        page.wait_for_function("() => count('create') === 1", timeout=3000)
+
+
+class TestStatic:
+    """Source-level invariants that need no browser."""
+
+    def test_manifests_have_action_without_popup(self):
+        for name in ('manifest.chrome.json', 'manifest.firefox.json'):
+            m = json.loads((ROOT / 'src' / name).read_text())
+            assert 'action' in m and 'default_popup' not in m['action'], name
+
+
 
 # ============================================================
 # Content Script Tests — the packaged content.js against synthetic

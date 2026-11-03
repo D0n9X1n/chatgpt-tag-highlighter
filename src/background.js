@@ -252,6 +252,68 @@
 
 	const seedOrMigrate = () => enqueue(seedOrMigrateNow); // Migration shares the write chain.
 
+	// ---- Settings popup ----
+	// storage.session survives worker restarts (Chrome 102+, Firefox 115+); memory otherwise.
+	const SETTINGS_WIN_KEY = 'cthSettingsWindowId';
+	const winMem = {};
+	const sessionArea = API.storage?.session ?? {
+		async get(k) {
+			return {[k]: winMem[k]};
+		},
+		async set(o) {
+			Object.assign(winMem, o);
+		},
+	};
+
+	// Rapid clicks open one window.
+	let settingsChain = Promise.resolve();
+	function settingsQueue(job) {
+		const run = settingsChain.then(job);
+		settingsChain = run.catch(() => {});
+		return run;
+	}
+
+	async function storedSettingsWindowId() {
+		return (await sessionArea.get(SETTINGS_WIN_KEY))?.[SETTINGS_WIN_KEY];
+	}
+
+	function openSettings() {
+		return settingsQueue(async () => {
+			try {
+				if (!API.windows?.create) {
+					throw new Error('no windows API');
+				}
+
+				const id = await storedSettingsWindowId();
+				if (typeof id === 'number') {
+					try {
+						await API.windows.get(id);
+						await API.windows.update(id, {focused: true});
+						return {};
+					} catch {} // Closed while we were not watching: open a new one.
+				}
+
+				const w = await API.windows.create({
+					url: API.runtime.getURL('options.html'), type: 'popup', width: 560, height: 720, focused: true,
+				});
+				await sessionArea.set({[SETTINGS_WIN_KEY]: w?.id ?? null});
+			} catch {
+				await API.runtime.openOptionsPage?.();
+			}
+
+			return {};
+		});
+	}
+
+	API.windows?.onRemoved?.addListener?.(id => settingsQueue(async () => {
+		if (await storedSettingsWindowId() === id) {
+			await sessionArea.set({[SETTINGS_WIN_KEY]: null});
+		}
+	}));
+	(API.action ?? API.browserAction)?.onClicked?.addListener?.(() => {
+		openSettings();
+	});
+
 	API.runtime?.onInstalled?.addListener(() => seedOrMigrate());
 	API.runtime?.onStartup?.addListener?.(() => seedOrMigrate());
 
@@ -280,6 +342,8 @@
 			job = writeConfig(msg.base ?? null, msg.next);
 		} else if (msg?.type === 'addRule') {
 			job = addRule(msg.tag);
+		} else if (msg?.type === 'openSettings') {
+			job = openSettings();
 		}
 
 		if (!job) {
