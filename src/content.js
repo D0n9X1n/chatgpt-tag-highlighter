@@ -656,8 +656,8 @@ html.cth-light #${QT_TOAST_ID} { background: #fff; color: #000; border-color: rg
 html.cth-light #${QT_TOAST_ID}.cth-qt-error { border-left-color: #cc241d; }
 .cth-qt-close { flex: 0 0 24px; width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
 #${QT_TOAST_ID} button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-.cth-qt-undo { padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; cursor: pointer; }
-html.cth-light .cth-qt-undo { border-color: rgba(0,0,0,0.10); }
+.cth-qt-undo, .cth-qt-action { padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+html.cth-light .cth-qt-undo, html.cth-light .cth-qt-action { border-color: rgba(0,0,0,0.10); }
 `;
 
 		const lazyCss = `
@@ -2412,7 +2412,12 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	const RELOAD_TAB = 'Reload this ChatGPT tab to tag chats.';
 	const UNKNOWN_OUTCOME = 'Not sure the rename finished. Reload to check.';
 
-	function withChatLock(id, fn) {
+	const BLOCKED_UNKNOWN = "An earlier rename of this chat didn't confirm. Reload ChatGPT to check the title.";
+	const BLOCKED_STORAGE = "Couldn't check this chat's pending renames. Try again.";
+	const WRITE_DENIED = "Couldn't record the rename. Nothing changed.";
+
+	// `override`: the user chose "Tag anyway" for a chat whose earlier rename never confirmed.
+	function withChatLock(id, fn, override = false) {
 		let port;
 		try {
 			port = API.runtime.connect({name: `cth-chat-lock:${id}`});
@@ -2429,6 +2434,13 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 					return;
 				}
 
+				if (state === 'acking') {
+					// The write may have been recorded: say it was never sent.
+					try {
+						port.postMessage({type: 'done', outcome: 'not-sent'});
+					} catch {}
+				}
+
 				state = 'done';
 				clearTimeout(timer);
 				ackWaiter?.(false);
@@ -2441,8 +2453,8 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			};
 
 			const lock = {
-				// Right before the PATCH: background.js records the write and
-				// acknowledges it. From then on the port is held until the PATCH settles.
+				// Right before the PATCH: background.js records the write, then acks.
+				// From then on the port is held until the PATCH settles.
 				write() {
 					if (state !== 'held') {
 						return Promise.resolve(false);
@@ -2458,7 +2470,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 						}
 					});
 				},
-				// After the PATCH settled: 'ok' | 'refused' | 'unknown' ('unknown' quarantines the chat).
+				// 'ok' | 'refused' | 'not-sent' release the chat; 'unknown' blocks it.
 				done(outcome) {
 					if (state !== 'writing') {
 						return;
@@ -2474,7 +2486,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			port.onDisconnect.addListener(() => {
 				void API.runtime.lastError; // Read it so Chrome doesn't log it.
 				if (state === 'waiting') {
-					finish(false, new Error(RELOAD_TAB)); // Never granted: the extension went away.
+					finish(false, new Error(RELOAD_TAB)); // Never answered: the extension went away.
 				} else if (state === 'held' || state === 'acking') {
 					finish(false, new Error(LOCK_LOST)); // Nothing was sent.
 				}
@@ -2492,21 +2504,32 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 					Promise.resolve()
 						.then(() => fn(lock))
 						.then(value => finish(true, value), error => finish(false, error));
+				} else if (msg?.type === 'blocked' && state === 'waiting') {
+					const unknown = msg.reason === 'unknown';
+					finish(false, Object.assign(new Error(unknown ? BLOCKED_UNKNOWN : BLOCKED_STORAGE), {blockedUnknown: unknown}));
 				} else if (msg?.type === 'write-ack' && state === 'acking') {
 					state = 'writing';
 					clearTimeout(timer);
 					const ack = ackWaiter;
 					ackWaiter = null;
 					ack?.(true);
+				} else if (msg?.type === 'write-denied' && state === 'acking') {
+					state = 'held'; // Not recorded, so nothing to release.
+					finish(false, new Error(WRITE_DENIED));
 				}
 			});
+			try {
+				port.postMessage({type: override ? 'override' : 'acquire'});
+			} catch {
+				finish(false, new Error(RELOAD_TAB));
+			}
 		});
 	}
 
 	// Token -> GET the server's current title -> compare -> PATCH, inside the
 	// chat's lock. The server must still have `expected` (the title this rename
 	// replaces), so a rename from another tab or device is never overwritten.
-	async function renameChat(id, title, {expected, stillValid = () => true, staleText = 'Title changed — try again'}) {
+	async function renameChat(id, title, {expected, stillValid = () => true, staleText = 'Title changed — try again', override = false}) {
 		if (!CHAT_ID_RE.test(id)) {
 			throw new Error(staleText);
 		}
@@ -2545,6 +2568,11 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 				throw new Error(LOCK_LOST);
 			}
 
+			if (!stillValid()) {
+				lock.done('not-sent'); // The title changed while the write was recorded.
+				throw new Error(staleText);
+			}
+
 			let outcome = 'unknown';
 			try {
 				await patchTitle(id, title, token);
@@ -2555,7 +2583,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			} finally {
 				lock.done(outcome);
 			}
-		});
+		}, override);
 	}
 
 	async function patchTitle(id, title, token) {
@@ -2671,7 +2699,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	// `bound` is captured by the caller before any await; this never reads menu state.
-	async function applyTag(bound, tag, rules = compiled.rules) {
+	async function applyTag(bound, tag, rules = compiled.rules, override = false) {
 		if (!bound || !titleIs(bound.id, bound.title)) {
 			closeIfBound(bound);
 			qtToast('Title changed — try again', {error: true});
@@ -2699,10 +2727,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		busyIfBound(bound);
 		qtPending.add(bound.id);
 		try {
-			await renameChat(bound.id, next, {expected: bound.title, stillValid: () => titleIs(bound.id, bound.title)});
+			await renameChat(bound.id, next, {expected: bound.title, stillValid: () => titleIs(bound.id, bound.title), override});
 		} catch (error) {
 			closeIfBound(bound);
-			qtToast(error.message, {error: true});
+			qtToast(error.message, {error: true, action: error.blockedUnknown ? {label: 'Tag anyway', run: () => applyTag(bound, tag, rules, true)} : null});
 			return;
 		} finally {
 			qtPending.delete(bound.id);
@@ -2718,7 +2746,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	// Undo renames back only if the row still shows the title we wrote.
-	async function undoTag(id, tagged, old) {
+	async function undoTag(id, tagged, old, override = false) {
 		if (!titleIs(id, tagged)) {
 			qtToast('Title changed — not undone', {error: true});
 			return;
@@ -2731,9 +2759,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		qtPending.add(id);
 		try {
-			await renameChat(id, old, {expected: tagged, stillValid: () => titleIs(id, tagged), staleText: 'Title changed — not undone'});
+			await renameChat(id, old, {expected: tagged, stillValid: () => titleIs(id, tagged), staleText: 'Title changed — not undone', override});
 		} catch (error) {
-			qtToast(error.message, {error: true});
+			qtToast(error.message, {error: true, action: error.blockedUnknown ? {label: 'Tag anyway', run: () => undoTag(id, tagged, old, true)} : null});
 			return;
 		} finally {
 			qtPending.delete(id);
@@ -2803,10 +2831,19 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 	// One toast at a time, centered just above the overlay (or the composer).
 	// Errors stay until closed; others hide after 6 s unless hovered or focused.
-	function qtToast(message, {error = false, undo = null} = {}) {
+	function qtToast(message, {error = false, undo = null, action = null} = {}) {
 		document.getElementById(QT_TOAST_ID)?.remove();
 		clearTimeout(qtToastTimer);
 		const t = el('div', {id: QT_TOAST_ID, role: error ? 'alert' : 'status', class: error ? 'cth-qt-error' : ''}, [el('span', {text: message})]);
+		if (action) {
+			const b = el('button', {type: 'button', class: 'cth-qt-action', text: action.label});
+			b.addEventListener('click', () => {
+				t.remove();
+				action.run();
+			});
+			t.append(b);
+		}
+
 		if (error) {
 			const x = el('button', {type: 'button', 'aria-label': 'Close', class: 'cth-qt-close', text: '×'});
 			x.addEventListener('click', () => t.remove());

@@ -1523,21 +1523,23 @@ class TestConfigWriter(_BgPages):
 
 
 class TestChatLock(_BgPages):
-    """background.js grants one quick tag rename per chat at a time, across tabs."""
+    """background.js grants one quick tag rename per chat at a time, across tabs, and fails closed."""
 
     # Fake runtime ports: content.js's side of the lock protocol.
     PORTS = """
-        window.mkPort = name => {
+        window.mkPort = (name, first = {type: 'acquire'}) => {
             const p = {name, got: [], ml: [], dl: [],
-                postMessage: m => p.got.push(m && m.granted ? 'granted' : m.type),
+                postMessage: m => p.got.push(m && m.granted ? 'granted' : (m.reason ? `${m.type}:${m.reason}` : m.type)),
                 onMessage: {addListener: f => p.ml.push(f)},
                 onDisconnect: {addListener: f => p.dl.push(f)}};
             p.send = m => p.ml.forEach(f => f(m, p));
             p.leave = () => p.dl.forEach(f => f(p));  // released, or the tab closed
             fire('connect', p);
+            if (first) p.send(first);
             return p;
         };
         window.settle = (ms = 50) => new Promise(r => setTimeout(r, ms));
+        window.rec = () => (((window.__session || {}).cthWritingChats) || {}).c5 ?? null;
     """
 
     def test_queue_grants_in_order_and_skips_departed_waiters(self):
@@ -1556,57 +1558,77 @@ class TestChatLock(_BgPages):
         }""")
         assert res == [[1, 0, 0, 1, 0], [1, 0, 0, 1, 0], [1, 0, 1, 1, 0], [1, 0, 1, 1, 0, 1]]
 
-    def test_write_phase_quarantine_and_restart(self):
-        page = self.bg(setup=self.PORTS + 'window.__session = {cthTestQuarantineMs: 700};')
+    def test_write_phases_unknown_state_and_override(self):
+        page = self.bg(setup=self.PORTS)
         res = page.evaluate("""async () => {
-            const rec = () => (__session.cthWritingChats || {}).c5 ?? null;
             const out = {};
             const a = mkPort('cth-chat-lock:c5'), b = mkPort('cth-chat-lock:c5');
             await settle();
             a.send({type: 'write'}); await settle();
-            out.ack = [[...a.got], typeof rec()];
-            a.send({type: 'done', outcome: 'refused'}); a.leave(); await settle();
+            out.ack = [[...a.got], rec() && rec().unknown];
+            a.send({type: 'done', outcome: 'ok'}); a.leave(); await settle();
             out.answered = [[...b.got], rec()];
-            const c = mkPort('cth-chat-lock:c5'); await settle();
-            b.leave(); await settle();
-            out.preLeave = [...c.got];
-            const d = mkPort('cth-chat-lock:c5');
-            c.send({type: 'write'}); await settle(); c.leave(); await settle(300);
-            out.closedWhileWriting = [[...d.got], typeof rec()];
-            await settle(700);
-            out.afterQuarantine = [[...d.got], rec()];
-            const e = mkPort('cth-chat-lock:c5');
-            d.send({type: 'write'}); await settle(); d.send({type: 'done', outcome: 'unknown'}); d.leave(); await settle(300);
-            out.unknown = [...e.got];
-            await settle(700);
-            out.afterUnknown = [...e.got];
-            e.send({type: 'write'}); await settle(); e.leave();  // a tab closes mid-PATCH ...
-            await settle();
-            out.session = __session;                            // ... and the worker restarts
+            b.send({type: 'write'}); await settle(); b.send({type: 'done', outcome: 'not-sent'}); b.leave(); await settle();
+            out.notSent = rec();
+            const c = mkPort('cth-chat-lock:c5'), d = mkPort('cth-chat-lock:c5'); await settle();
+            c.leave(); await settle();
+            out.preLeave = [...d.got];
+            const e = mkPort('cth-chat-lock:c5'); await settle();
+            d.send({type: 'write'}); await settle(); d.leave(); await settle();  // its tab closed mid-PATCH
+            out.closedWhileWriting = [[...e.got], rec() && rec().unknown];
+            const f = mkPort('cth-chat-lock:c5'); await settle(300);
+            out.stillBlocked = [...f.got];
+            const g = mkPort('cth-chat-lock:c5', {type: 'override'}); await settle();
+            out.override = [[...g.got], rec()];
+            g.send({type: 'write'}); await settle(); g.send({type: 'done', outcome: 'unknown'}); g.leave(); await settle();
+            out.unknown = rec() && rec().unknown;
+            const h = mkPort('cth-chat-lock:c5'); await settle();
+            out.blockedAgain = [...h.got];
             return out;
         }""")
-        assert res['ack'] == [['granted', 'write-ack'], 'number'], 'the write start is recorded before the ack'
-        assert res['answered'] == [['granted'], None], 'an answered PATCH releases at once and clears the record'
+        assert res['ack'] == [['granted', 'write-ack'], False], 'the write is recorded before the ack'
+        assert res['answered'] == [['granted'], None], 'an answered PATCH releases at once'
+        assert res['notSent'] is None, 'a write that was never sent releases at once'
         assert res['preLeave'] == ['granted'], 'leaving before writing releases at once'
-        assert res['closedWhileWriting'] == [[], 'number'], 'leaving mid-PATCH quarantines the chat'
-        assert res['afterQuarantine'] == [['granted'], None]
-        assert res['unknown'] == [], 'an unknown outcome quarantines the chat'
-        assert res['afterUnknown'] == ['granted']
-        session = dict(res['session'], cthTestQuarantineMs=2000)
-        restarted = self.bg(setup=self.PORTS + f'window.__session = {json.dumps(session)};')
-        early, late = restarted.evaluate("""async () => {
-            const f = mkPort('cth-chat-lock:c5');
-            await settle(200); const early = [...f.got];
-            await settle(2500); return [early, f.got];
+        assert res['closedWhileWriting'] == [['blocked:unknown'], True], 'waiters behind a lost PATCH are blocked'
+        assert res['stillBlocked'] == ['blocked:unknown'], 'an unknown rename never expires'
+        assert res['override'] == [['granted'], None], 'an override clears that chat and grants'
+        assert res['unknown'] is True
+        assert res['blockedAgain'] == ['blocked:unknown']
+        stored = {'cthWritingChats': {'c5': {'since': 1, 'unknown': True}, 'c9': {'since': 1, 'unknown': False}}}
+        restarted = self.bg(setup=self.PORTS + f'window.__session = {json.dumps(stored)};')
+        res = restarted.evaluate("""async () => {
+            const a = mkPort('cth-chat-lock:c5'), x = mkPort('cth-chat-lock:c9'), y = mkPort('cth-chat-lock:c7');
+            await settle();
+            const out = [[...a.got], [...x.got], [...y.got]];
+            const o = mkPort('cth-chat-lock:c5', {type: 'override'}); await settle();
+            out.push([...o.got]);
+            return out;
         }""")
-        assert (early, late) == ([], ['granted']), 'a restarted worker honours the stored write'
-        default = self.bg(setup=self.PORTS + 'window.__session = {cthWritingChats: {c5: Date.now() - 58500}};')
-        early, late = default.evaluate("""async () => {
-            const f = mkPort('cth-chat-lock:c5');
-            await settle(150); const early = [...f.got];
-            await settle(2500); return [early, f.got];
+        assert res == [['blocked:unknown'], ['blocked:unknown'], ['granted'], ['granted']], \
+            'after a worker restart a stored write stays blocked until an override'
+
+    def test_fails_closed_when_session_storage_fails(self):
+        read_fails = ("const s = browser.storage.session, get = s.get;"
+                      " s.get = async k => { if (k === 'cthWritingChats') throw new Error('read failed'); return get(k); };")
+        page = self.bg(setup=self.PORTS + read_fails)
+        res = page.evaluate("""async () => {
+            const a = mkPort('cth-chat-lock:c5'), b = mkPort('cth-chat-lock:c5'); await settle();
+            return [[...a.got], [...b.got]];
         }""")
-        assert (early, late) == ([], ['granted']), 'the quarantine is 60 s by default'
+        assert res == [['blocked:storage'], ['blocked:storage']], 'no grant without reading the pending-rename record'
+        write_fails = ("const s = browser.storage.session, set = s.set;"
+                       " s.set = async o => { if ('cthWritingChats' in o) throw new Error('QUOTA_BYTES quota exceeded'); return set(o); };")
+        page = self.bg(setup=self.PORTS + write_fails)
+        res = page.evaluate("""async () => {
+            const a = mkPort('cth-chat-lock:c5'), b = mkPort('cth-chat-lock:c5'); await settle();
+            a.send({type: 'write'}); await settle();
+            const out = [[...a.got], rec()];
+            a.leave(); await settle();
+            out.push([...b.got]);
+            return out;
+        }""")
+        assert res == [['granted', 'write-denied'], None, ['granted']], 'no write-ack unless the record was stored'
 
 
 class TestOpenSettings(_BgPages):
@@ -1854,8 +1876,8 @@ class TestContentScript:
             """([key, cfg, uiKey, filters]) => Promise.all([
                 new Promise(r => chrome.storage.sync.set({[key]: cfg}, r)),
                 new Promise(r => chrome.storage.local.set({[uiKey]: {activeFilters: filters}}, r)),
-                // A rename quarantined by an earlier test must not block this one.
-                new Promise(r => chrome.storage.session.remove(['cthWritingChats', 'cthTestQuarantineMs'], r)),
+                // A rename left unconfirmed by an earlier test must not block this one.
+                new Promise(r => chrome.storage.session.remove('cthWritingChats', r)),
             ])""",
             [STORAGE_KEY, cfg, 'tagHighlighterUiStateV1', active_filters or []],
         )
@@ -3945,69 +3967,107 @@ class TestAppShellContentScript:
             self.context, self.ext_id = shared
             private.close()
 
-    # ---- Lock survives a closed tab and an unknown outcome ----
+    # ---- A rename that never confirmed blocks that chat until an explicit override ----
 
-    def _session(self, values=None, remove=()):
-        """storage.session from an extension page: web pages and content scripts can't reach it."""
-        page = self.context.new_page()
-        try:
-            page.goto(f'chrome-extension://{self.ext_id}/options.html')
-            page.evaluate("""([v, rm]) => Promise.all([
-                new Promise(r => chrome.storage.session.set(v, r)),
-                new Promise(r => chrome.storage.session.remove(rm, r))])""", [values or {}, list(remove)])
-        finally:
-            page.close()
+    BLOCKED = "An earlier rename of this chat didn't confirm. Reload ChatGPT to check the title."
 
-    def test_tab_closed_mid_patch_quarantines_chat(self):
+    def _blocked_alert(self, page):
+        self._alert(page, self.BLOCKED)
+        assert page.text_content('#cth-qt-toast .cth-qt-action') == 'Tag anyway'
+
+    def test_tab_closed_mid_patch_blocks_chat_until_override(self):
         titles = dict(DEFAULT_CHATS)
         tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_patch_at': 1})
-        self._session({'cthTestQuarantineMs': 6000})
-        try:
-            tab_a.bring_to_front()
-            self._pick(tab_a, 'c5', '[BUG]')
-            self._wait_held(tab_a, held_a)  # A's PATCH is on its way to ChatGPT
-            dispatched = time.monotonic()
-            tab_b.bring_to_front()
-            self._pick(tab_b, 'c5', '[TODO]')
-            tab_b.wait_for_timeout(500)
-            assert self._chat_calls(calls_b) == []
-            held_a.clear()  # its route dies with the tab
-            tab_a.close()
-            tab_b.wait_for_timeout(2500)
-            assert self._chat_calls(calls_b) == [], 'closing the tab mid-PATCH must not release the chat'
-            titles['c5'] = '[BUG] plain chat'  # A's late PATCH lands on the server
-            self._alert(tab_b, 'Title changed — try again')
-            assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET'], 'B saw A\'s title and sent nothing'
-            assert min(c['t'] for c in self._chat_calls(calls_b)) - dispatched >= 5.5, 'B waited out the quarantine'
-            assert titles['c5'] == '[BUG] plain chat'
-        finally:
-            self._session(remove=['cthTestQuarantineMs'])
+        tab_a.bring_to_front()
+        self._pick(tab_a, 'c5', '[BUG]')
+        self._wait_held(tab_a, held_a)  # A's PATCH is on its way to ChatGPT
+        tab_b.bring_to_front()
+        self._pick(tab_b, 'c5', '[TODO]')
+        tab_b.wait_for_timeout(500)
+        assert self._chat_calls(calls_b) == []
+        held_a.clear()  # its route dies with the tab
+        tab_a.close()
+        self._blocked_alert(tab_b)
+        tab_b.wait_for_timeout(1500)
+        assert self._chat_calls(calls_b) == [], 'a lost PATCH blocks the chat: no requests, no expiry'
+        titles['c5'] = '[BUG] plain chat'  # A's late PATCH lands on the server
+        tab_b.click('#cth-qt-toast .cth-qt-action')
+        self._alert(tab_b, 'Title changed — try again')
+        assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET'], 'the override still checks the server first'
+        assert titles['c5'] == '[BUG] plain chat'
 
-    def test_unknown_outcome_quarantines_queued_waiter(self):
+    def test_unknown_outcome_blocks_then_override_renames(self):
         titles = dict(DEFAULT_CHATS)
         tab_a, calls_a, held_a, tab_b, calls_b, _ = self._two_tabs(titles, a_mock={'hold_get_at': 1, 'patch_abort': True})
-        self._session({'cthTestQuarantineMs': 6000})
         try:
             tab_a.bring_to_front()
             self._pick(tab_a, 'c5', '[BUG]')
             self._wait_held(tab_a, held_a)
             tab_b.bring_to_front()
-            self._pick(tab_b, 'c5', '[TODO]')
+            self._pick(tab_b, 'c5', '[TODO]')  # queued behind A
             tab_b.wait_for_timeout(300)
-            assert self._chat_calls(calls_b) == []
             held_a.pop().fulfill(status=200, content_type='application/json',
                                  body=json.dumps({'id': 'c5', 'title': 'plain chat'}))
             self._alert(tab_a, 'Not sure the rename finished. Reload to check.')
-            settled = time.monotonic()
-            tab_b.wait_for_timeout(2000)
-            assert self._chat_calls(calls_b) == [], 'an unknown outcome keeps the chat blocked'
-            assert self._title_is(tab_b, 'c5', '[TODO] plain chat', timeout=8000)
+            self._blocked_alert(tab_b)
+            assert self._chat_calls(calls_b) == [], 'an unknown outcome blocks the waiting tab'
+            # The aborted PATCH never reached the server: after "Tag anyway" the GET matches.
+            tab_b.click('#cth-qt-toast .cth-qt-action')
+            assert self._title_is(tab_b, 'c5', '[TODO] plain chat')
             assert [c['method'] for c in self._chat_calls(calls_b)] == ['GET', 'PATCH']
-            assert min(c['t'] for c in self._chat_calls(calls_b)) - settled >= 5.0
+            assert titles['c5'] == '[TODO] plain chat'
         finally:
-            self._session(remove=['cthTestQuarantineMs'])
             for r in held_a:
                 try:
                     r.fulfill(status=200, body='{}')
                 except Exception:
                     pass
+
+    # Holds the background's storage.session write of the rename record (service worker only).
+    HOLD_RECORD = """() => {
+        const area = chrome.storage.session, own = area.set, real = own.bind(area);
+        globalThis.__heldSets = [];
+        globalThis.__restoreSet = () => { area.set = own; };
+        area.set = o => (o && 'cthWritingChats' in o)
+            ? new Promise((ok, no) => __heldSets.push(() => real(o).then(ok, no)))
+            : real(o);
+    }"""
+
+    def _worker(self):
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            sw = next((w for w in self.context.service_workers if self.ext_id in w.url), None)
+            if sw:
+                return sw
+            time.sleep(0.1)
+        raise AssertionError('extension service worker not running')
+
+    @staticmethod
+    def _sw_poll(sw, expression, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if sw.evaluate(expression):
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_title_change_while_write_record_saves_sends_nothing(self):
+        page, calls, _ = self._qt_page()
+        sw = self._worker()
+        sw.evaluate(self.HOLD_RECORD)
+        try:
+            self._pick(page, 'c5', '[BUG]')
+            assert self._sw_poll(sw, '() => __heldSets.length === 1'), 'the write record never started saving'
+            page.evaluate(f"{self.SPAN5}.textContent = 'other'")
+            sw.evaluate('() => { __restoreSet(); __heldSets.splice(0).forEach(f => f()); }')
+            self._alert(page, 'Title changed — try again')
+            page.wait_for_timeout(300)
+            assert self._patches(calls) == [], 'the title is re-checked after the ack, right before the PATCH'
+            # Never sent, so the chat is released at once.
+            page.evaluate(f"{self.SPAN5}.textContent = 'plain chat'")
+            page.evaluate("document.getElementById('cth-qt-toast')?.remove()")
+            page.mouse.move(640, 5)
+            self._pick(page, 'c5', '[TODO]')
+            assert self._title_is(page, 'c5', '[TODO] plain chat')
+        finally:
+            sw.evaluate('() => { globalThis.__restoreSet?.(); (globalThis.__heldSets || []).splice(0).forEach(f => f()); }')

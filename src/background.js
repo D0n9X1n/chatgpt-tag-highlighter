@@ -321,21 +321,19 @@
 	seedOrMigrate();
 
 	// ---- Per-chat rename lock (quick tag), across tabs in this browser ----
-	// content.js connects a port named `cth-chat-lock:<id>`; ports queue per
-	// chat and the head is granted. Holder phases: 'pre' (granted) -> 'writing'
-	// (asked to send its PATCH; acknowledged only after the start is recorded in
-	// storage.session, so a restarted worker honours it) -> settled ('done').
-	// Leaving before writing releases at once. A PATCH whose outcome is unknown
-	// (its tab closed mid-PATCH, or the request failed after it was sent) keeps
-	// the chat blocked for QUARANTINE_MS from the write start; the next holder
-	// then reads the server's fresh title before renaming.
+	// content.js connects a port named `cth-chat-lock:<id>` and first posts
+	// {type: 'acquire'}, or {type: 'override'} after the user chose "Tag anyway".
+	// Ports queue per chat; the head is granted (phase 'pre'). Before its PATCH
+	// the holder posts {type: 'write'}: the write is recorded in storage.session
+	// first (so a restarted worker honours it), then acknowledged ('writing').
+	// After the PATCH it posts {type: 'done', outcome}: 'ok', 'refused' and
+	// 'not-sent' clear the record and release at once. 'unknown', or leaving
+	// mid-PATCH (its tab closed), marks the record unknown: that chat is then
+	// blocked, with no expiry, until an override or the browser session ends.
+	// Fail closed: an unreadable record refuses; an unwritable one is never acked.
 	const CHAT_LOCK_PREFIX = 'cth-chat-lock:';
 	const WRITING_KEY = 'cthWritingChats';
-	// Tests only: storage.session can't be reached from web pages or content scripts.
-	const TEST_QUARANTINE_KEY = 'cthTestQuarantineMs';
-	const QUARANTINE_MS = 60_000;
-	const chatLocks = new Map(); // id -> [{port, phase}], head holds the lock
-	const quarantineTimers = new Map();
+	const chatLocks = new Map(); // id -> [{port, phase, ready, override}], head holds the lock
 	let lockChain = Promise.resolve();
 
 	// Every lock change runs on one chain, so storage reads never race.
@@ -344,34 +342,34 @@
 		return lockChain;
 	}
 
-	async function writingStarts() {
-		try {
-			return (await sessionArea.get(WRITING_KEY))?.[WRITING_KEY] || {};
-		} catch {
-			return {};
-		}
+	// Throws when storage.session can't be read: callers fail closed.
+	async function writingRecords() {
+		const all = (await sessionArea.get(WRITING_KEY))?.[WRITING_KEY];
+		return all && typeof all === 'object' ? all : {};
 	}
 
-	async function setWritingStart(id, at) {
-		const all = {...await writingStarts()};
-		if (at === null) {
+	async function setWritingRecord(id, record) {
+		const all = {...await writingRecords()};
+		if (record === null) {
 			delete all[id];
 		} else {
-			all[id] = at;
+			all[id] = record;
 		}
 
-		try {
-			await sessionArea.set({[WRITING_KEY]: all});
-		} catch {}
+		await sessionArea.set({[WRITING_KEY]: all});
 	}
 
-	async function quarantineMs() {
+	async function markUnknown(id) {
 		try {
-			const v = Number((await sessionArea.get(TEST_QUARANTINE_KEY))?.[TEST_QUARANTINE_KEY]);
-			return v > 0 ? Math.min(v, QUARANTINE_MS) : QUARANTINE_MS;
-		} catch {
-			return QUARANTINE_MS;
-		}
+			const since = (await writingRecords())[id]?.since ?? Date.now();
+			await setWritingRecord(id, {since, unknown: true});
+		} catch {} // The 'writing' record still blocks the chat.
+	}
+
+	function postTo(port, msg) {
+		try {
+			port.postMessage(msg);
+		} catch {} // Already gone: its onDisconnect moves the queue on.
 	}
 
 	function removeLockEntry(id, entry) {
@@ -389,50 +387,75 @@
 		return true;
 	}
 
-	async function grantNext(id) {
-		const head = chatLocks.get(id)?.[0];
-		if (!head || head.phase !== 'waiting') {
-			return;
-		}
+	function refuseHead(id, head, reason) {
+		removeLockEntry(id, head);
+		head.phase = 'refused';
+		postTo(head.port, {type: 'blocked', reason});
+	}
 
-		const started = (await writingStarts())[id];
-		if (typeof started === 'number') {
-			const left = started + await quarantineMs() - Date.now();
-			if (left > 0) {
-				clearTimeout(quarantineTimers.get(id));
-				quarantineTimers.set(id, setTimeout(() => {
-					quarantineTimers.delete(id);
-					lockJob(() => grantNext(id));
-				}, left));
+	async function grantNext(id) {
+		for (;;) {
+			const head = chatLocks.get(id)?.[0];
+			if (!head || head.phase !== 'waiting' || !head.ready) {
 				return;
 			}
 
-			await setWritingStart(id, null); // Quarantine over.
-		}
+			let record;
+			try {
+				record = (await writingRecords())[id];
+				if (record && head.override) {
+					await setWritingRecord(id, null); // "Tag anyway": this chat only.
+					record = undefined;
+				}
+			} catch {
+				refuseHead(id, head, 'storage');
+				continue;
+			}
 
-		if (chatLocks.get(id)?.[0] !== head || head.phase !== 'waiting') {
+			if (record) {
+				// No live holder owns it: an earlier rename never confirmed.
+				refuseHead(id, head, 'unknown');
+				continue;
+			}
+
+			head.phase = 'pre';
+			postTo(head.port, {granted: true});
 			return;
 		}
-
-		head.phase = 'pre';
-		try {
-			head.port.postMessage({granted: true});
-		} catch {} // Already gone: its onDisconnect grants the next one.
 	}
 
 	async function onLockMessage(id, entry, msg) {
-		const isHead = chatLocks.get(id)?.[0] === entry;
-		if (msg?.type === 'write' && isHead && entry.phase === 'pre') {
-			await setWritingStart(id, Date.now());
-			entry.phase = 'writing';
+		const type = msg?.type;
+		if ((type === 'acquire' || type === 'override') && !entry.ready && entry.phase === 'waiting') {
+			entry.ready = true;
+			entry.override = type === 'override';
+			await grantNext(id);
+			return;
+		}
+
+		if (chatLocks.get(id)?.[0] !== entry) {
+			return;
+		}
+
+		if (type === 'write' && entry.phase === 'pre') {
 			try {
-				entry.port.postMessage({type: 'write-ack'});
-			} catch {}
-		} else if (msg?.type === 'done' && isHead && entry.phase === 'writing') {
+				await setWritingRecord(id, {since: Date.now(), unknown: false});
+			} catch {
+				postTo(entry.port, {type: 'write-denied'}); // Not recorded: never let it PATCH.
+				return;
+			}
+
+			entry.phase = 'writing';
+			postTo(entry.port, {type: 'write-ack'});
+		} else if (type === 'done' && entry.phase === 'writing') {
 			entry.phase = 'settled';
 			removeLockEntry(id, entry);
-			if (msg.outcome === 'ok' || msg.outcome === 'refused') {
-				await setWritingStart(id, null); // ChatGPT answered: release now.
+			if (msg.outcome === 'ok' || msg.outcome === 'refused' || msg.outcome === 'not-sent') {
+				try {
+					await setWritingRecord(id, null);
+				} catch {} // Left in place, it blocks the chat: safe.
+			} else {
+				await markUnknown(id);
 			}
 
 			await grantNext(id);
@@ -441,8 +464,15 @@
 
 	async function leaveLock(id, entry) {
 		const wasHead = chatLocks.get(id)?.[0] === entry;
-		if (removeLockEntry(id, entry) && wasHead) {
-			// Mid-PATCH ('writing'), its stored record keeps the chat quarantined.
+		if (!removeLockEntry(id, entry)) {
+			return;
+		}
+
+		if (entry.phase === 'writing') {
+			await markUnknown(id); // Its tab closed mid-PATCH: the outcome is unknown.
+		}
+
+		if (wasHead) {
 			await grantNext(id);
 		}
 	}
@@ -453,15 +483,14 @@
 		}
 
 		const id = port.name.slice(CHAT_LOCK_PREFIX.length);
-		const entry = {port, phase: 'waiting'};
-		port.onMessage?.addListener?.(msg => lockJob(() => onLockMessage(id, entry, msg)));
-		port.onDisconnect.addListener(() => lockJob(() => leaveLock(id, entry)));
-		lockJob(async () => {
+		const entry = {port, phase: 'waiting', ready: false, override: false};
+		lockJob(() => {
 			const queue = chatLocks.get(id) || [];
 			chatLocks.set(id, queue);
 			queue.push(entry);
-			await grantNext(id);
 		});
+		port.onMessage?.addListener?.(msg => lockJob(() => onLockMessage(id, entry, msg)));
+		port.onDisconnect.addListener(() => lockJob(() => leaveLock(id, entry)));
 	});
 
 	// ---- Messages: badge counter + config writes ----
