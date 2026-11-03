@@ -273,6 +273,7 @@
 
 	function setRowColor(tr, hex) {
 		const h = toHex(hex);
+		tr.dataset.color = h; // Last committed colour: a partially typed hex never replaces it.
 		tr.querySelector('.hex').value = h;
 		// Select preset if matches, else "Custom…"
 		const sel = tr.querySelector('.color');
@@ -348,7 +349,7 @@
 			rules.push({
 				tag,
 				match: safeMatch(tr.querySelector('.match').value),
-				color: toHex(tr.querySelector('.hex').value, '#999999'), // ONLY hex persisted
+				color: toHex(tr.querySelector('.hex').value, tr.dataset.color || '#999999'), // ONLY hex persisted
 				hide: tr.querySelector('.hide').checked === true,
 				overlay: tr.querySelector('.overlay').checked !== false,
 			});
@@ -385,11 +386,14 @@
 	let retryTimer = 0;
 	let retryStep = 0;
 	let okMessage = 'Auto-saved ✓';
+	let draggedRow = null;
+	const uncommitted = new Set(); // Row text fields typed into but not yet committed (change/blur).
 	const RETRY_MS = [1000, 3000];
 
 	// Every programmatic render goes through here.
 	function show(cfg) {
 		gen++;
+		uncommitted.clear();
 		rendering = true;
 		try {
 			render(cfg);
@@ -475,6 +479,7 @@
 			} else {
 				// A lost init/migration race: just adopt the stored value.
 				base = res.value;
+				hideConflict();
 				show(normalizeCfg(res.value || DEFAULT_CFG()));
 			}
 
@@ -482,14 +487,19 @@
 		}
 
 		base = res.value;
-		if (pending) {
-			pending = false;
-			sendWrite(buildWrite());
+		if (conflict) {
+			pending = false; // The banner suspends saving: keep the draft, send nothing more.
 			return;
 		}
 
-		if (editSeq === seq) {
-			dirty = false; // No edit since this write was built (a typed partial value keeps the page dirty).
+		if (pending) {
+			pending = false;
+			sendWrite(buildWrite()); // Carries its own seq.
+			return;
+		}
+
+		if (editSeq === seq && uncommitted.size === 0) {
+			dirty = false; // No edit since this write was built and nothing half-typed on screen.
 		}
 
 		toast(okMessage);
@@ -509,6 +519,11 @@
 		els.conflict.hidden = false;
 	}
 
+	function hideConflict() {
+		conflict = false;
+		els.conflict.hidden = true;
+	}
+
 	// Discards the draft; any reply still in flight is now stale.
 	async function reload() {
 		const v = (await get(STORAGE_KEY))?.[STORAGE_KEY];
@@ -516,10 +531,9 @@
 		base = v ?? null;
 		dirty = false;
 		pending = false;
-		conflict = false;
 		failed = null;
 		retryStep = 0;
-		els.conflict.hidden = true;
+		hideConflict();
 		show(normalizeCfg(v || DEFAULT_CFG()));
 	}
 
@@ -537,6 +551,16 @@
 		}
 	}
 
+	const isRowText = el => el.classList?.contains('tag') || el.classList?.contains('hex');
+	els.rows.addEventListener('input', e => {
+		if (ready && !rendering && isRowText(e.target)) {
+			uncommitted.add(e.target);
+		}
+	}, true);
+	for (const type of ['change', 'focusout']) {
+		els.rows.addEventListener(type, e => uncommitted.delete(e.target), true);
+	}
+
 	API.storage?.onChanged?.addListener((changes, area) => {
 		const v = changes[STORAGE_KEY]?.newValue;
 		if (!v || !ready || API.storage[area] !== store) {
@@ -548,7 +572,7 @@
 			return; // Our own echo (only while that write is in flight).
 		}
 
-		if (!dirty && !live && !conflict) {
+		if (!dirty && !live && !conflict && !draggedRow) { // A drag in progress is an unsaved edit.
 			base = v;
 			show(normalizeCfg(v));
 			return;
@@ -678,7 +702,6 @@
 	});
 
 	// ---- Drag-and-drop reorder ----
-	let draggedRow = null;
 
 	els.rows.addEventListener('dragstart', e => {
 		const handle = e.target.closest('.dragHandle');
@@ -708,6 +731,7 @@
 		e.preventDefault();
 		const targetRow = e.target.closest('tr');
 		if (!targetRow || !draggedRow || targetRow === draggedRow) return;
+		if (draggedRow.parentNode !== els.rows) return; // Re-rendered (e.g. Reload) mid-drag: the row is gone.
 		const rect = targetRow.getBoundingClientRect();
 		const midY = rect.top + rect.height / 2;
 		if (e.clientY < midY) {

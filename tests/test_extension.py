@@ -871,6 +871,93 @@ class TestOptionsPage:
         page.wait_for_function('() => cfg().showBadge === false', timeout=3000)
         assert page.is_hidden('#conflict')
 
+    HOLD_REPLY = ('window.releases = []; const real = browser.runtime.sendMessage; let first = true;'
+                  ' browser.runtime.sendMessage = m => { if (!first) return real(m); first = false;'
+                  ' return real(m).then(r => new Promise(ok => releases.push(() => ok(r)))); };')
+
+    def test_pending_resend_keeps_uncommitted_hex_draft(self):
+        page = self._opts(_full([_rule('[A]', '#fabd2f')]), with_bg=True, setup=self.HOLD)
+        page.check('#dimUntagged')            # held before dispatch
+        page.uncheck('#showBadge')            # queued behind it
+        page.fill('#rows .hex', '#12')        # typed, not committed (no blur)
+        page.evaluate('releases[0]()')
+        page.wait_for_function("() => count('set') === 2", timeout=3000)
+        assert page.evaluate('cfg().showBadge') is False
+        assert page.evaluate('cfg().rules[0].color') == '#fabd2f', 'a partial hex must not persist the fallback colour'
+        self._add(page, '[NEW]')
+        self._banner(page)
+        assert page.input_value('#rows .hex') == '#12'
+
+    def _drag_first_row_below_second(self, page, mid_drag):
+        handle = page.locator('#rows tr').nth(0).locator('.dragHandle').bounding_box()
+        second = page.locator('#rows tr').nth(1).bounding_box()
+        page.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + handle['height'] / 2)
+        page.mouse.down()
+        page.mouse.move(second['x'] + 40, second['y'] + second['height'] * 0.75, steps=8)
+        mid_drag()
+        second = page.locator('#rows tr').nth(1).bounding_box()  # the banner may have shifted the rows
+        page.mouse.move(second['x'] + 42, second['y'] + second['height'] * 0.8, steps=2)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+
+    def test_external_change_during_drag_shows_banner(self):
+        page = self._opts(_full([_rule('[A]'), _rule('[B]', '#fb4934')]), with_bg=True)
+
+        def external_add():
+            self._add(page, '[NEW]')
+            page.wait_for_timeout(100)
+
+        self._drag_first_row_below_second(page, external_add)
+        self._banner(page)
+        assert self._row_tags(page) == ['[B]', '[A]']
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+        assert page.evaluate("count('set')") == 1
+
+    def test_reload_during_drag_drops_nothing(self):
+        page = self._opts(_full([_rule('[A]'), _rule('[B]', '#fb4934')]), with_bg=True)
+
+        def external_add_then_reload():
+            self._add(page, '[NEW]')
+            page.wait_for_timeout(100)
+            page.evaluate("document.getElementById('conflictReload').click()")
+            page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 3", timeout=3000)
+
+        self._drag_first_row_below_second(page, external_add_then_reload)
+        assert self._row_tags(page) == ['[A]', '[B]', '[NEW]']
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[B]', '[NEW]']
+
+    def test_ok_reply_with_pending_during_conflict_writes_nothing(self):
+        page = self._opts(_full([_rule('[A]')]), with_bg=True, setup=self.HOLD_REPLY)
+        page.check('#dimUntagged')            # lands; its ok reply is held
+        page.wait_for_function("() => releases.length === 1 && count('set') === 1", timeout=3000)
+        page.uncheck('#showBadge')            # pending behind the held reply
+        turns = "v => { const c = cfg(); return send({type: 'writeConfig', base: c, next: {...c, maxChatTurns: v}}); }"
+        assert page.evaluate(turns, 5)['ok'] is True    # external change
+        self._banner(page)
+        assert page.evaluate(turns, 0)['ok'] is True    # external restore of the first save's value
+        page.evaluate('releases[0]()')
+        page.wait_for_timeout(300)
+        assert page.evaluate("count('set')") == 3, 'the banner suspends saving'
+        assert page.text_content('#toast') != 'Auto-saved ✓'
+        self._banner(page)
+        assert not page.is_checked('#showBadge')
+        assert page.evaluate('cfg().showBadge') is True
+
+    def test_adopted_init_conflict_clears_banner(self):
+        raw = {k: v for k, v in _full([_rule('[A]')]).items() if k != 'showQuickTag'}
+        page = self._opts(raw, with_bg=True, delay=200, setup=self.HOLD)
+        page.wait_for_function('() => releases.length === 1', timeout=3000)   # options' init migration write, held
+        page.wait_for_function('() => cfg().showQuickTag === true', timeout=3000)  # background migration landed
+        self._add(page, '[NEW]')
+        self._banner(page)
+        page.evaluate('releases[0]()')
+        page.wait_for_function("() => document.querySelectorAll('#rows tr').length === 2", timeout=3000)
+        assert self._row_tags(page) == ['[A]', '[NEW]']
+        assert page.is_hidden('#conflict')
+        page.check('#dimUntagged')
+        page.wait_for_function('() => cfg().dimUntagged === true', timeout=3000)
+        assert _tags(page.evaluate('cfg()')) == ['[A]', '[NEW]']
+
     @pytest.mark.parametrize('width', [400, 640])
     def test_narrow_layout_no_horizontal_scroll(self, width):
         page = self._fresh(_full([_rule('[A]'), _rule('[B]', '#fb4934')]))
