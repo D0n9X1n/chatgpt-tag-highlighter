@@ -67,7 +67,7 @@
   <img src="./img/settings.png" alt="Settings page with general options, the tag rules table, and the rule tester" width="760">
 </p>
 
-**Tag rules** are checked top to bottom, and the first match wins. Drag ≡ to reorder. Each rule has:
+**Tag rules** are checked top to bottom, and the first match wins. Drag ≡ or use ↑/↓ to reorder. Each rule has:
 
 | Field | Meaning |
 |---|---|

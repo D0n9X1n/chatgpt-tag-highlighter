@@ -8,7 +8,7 @@ Open the settings with the gear in the sidebar filter bar or the extension's too
 
 ## Tag rules
 
-Rules are checked top to bottom and the **first match wins** for color, hiding, filtering and the banner. Drag ≡ to reorder.
+Rules are checked top to bottom and the **first match wins** for color, hiding, filtering and the banner. Drag ≡ or use ↑/↓ to reorder; the ↑/↓ buttons (**Move up** / **Move down**) also work from the keyboard.
 
 | Field | Meaning |
 |---|---|

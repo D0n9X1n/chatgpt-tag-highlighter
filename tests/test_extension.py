@@ -1043,7 +1043,7 @@ class TestOptionsPage:
         assert page.evaluate("[...document.querySelectorAll('#rows .input, #rows .select')].every(e => e.getBoundingClientRect().height < 40)"), 'no control wraps'
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
-    @pytest.mark.parametrize('width', [641, 700, 800])
+    @pytest.mark.parametrize('width', [641, 700, 800, 899, 900])
     def test_mid_width_table_no_horizontal_scroll(self, width):
         colors = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff', '#123456']
         page = self._fresh(_full([_rule(f'[T{i}]', c, 'includes' if i % 2 else 'startsWith') for i, c in enumerate(colors)]))
@@ -1064,6 +1064,68 @@ class TestOptionsPage:
         page.fill('#debugTitle', '[A] example')
         page.wait_for_selector('#debugResult .matchMiss')
         assert page.evaluate("[...document.querySelectorAll('#debugResult .matchMiss')].map(e => getComputedStyle(e).opacity)") == ['1']
+
+    # ---- Keyboard reorder (#77) ----
+
+    MOVE_STATE = """() => [...document.querySelectorAll('#rows tr')].map(tr => [
+        tr.querySelector('.tag').value, tr.querySelector('.moveUp').disabled, tr.querySelector('.moveDown').disabled])"""
+    FOCUSED_MOVE = """() => { const b = document.activeElement; const tr = b.closest('#rows tr');
+        return tr ? [b.className, tr.querySelector('.tag').value] : null; }"""
+
+    def _stored_order(self, page, want):
+        deadline = time.time() + 5
+        while time.time() < deadline and _tags(self._get_config(page)) != want:
+            page.wait_for_timeout(100)
+        return _tags(self._get_config(page))
+
+    def test_keyboard_reorder_with_move_buttons(self):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934'), _rule('[C]', '#83a598')]))
+        assert page.evaluate(self.MOVE_STATE) == [['[TODO]', True, False], ['[BUG]', False, False], ['[C]', False, True]]
+        assert page.get_attribute('#rows tr .moveUp', 'aria-label') == 'Move rule up'
+        assert page.get_attribute('#rows tr .moveDown', 'aria-label') == 'Move rule down'
+        page.focus('#rows tr:nth-child(1) .tag')
+        page.keyboard.press('Shift+Tab')  # Up is disabled on the first row, so this lands on Down.
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[TODO]']
+        assert page.evaluate("getComputedStyle(document.activeElement).outlineStyle") == 'solid', 'visible keyboard focus'
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[TODO]'], 'focus follows the moved row'
+        assert self._stored_order(page, ['[BUG]', '[TODO]', '[C]']) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate("[...document.querySelectorAll('#rows .rowNum')].map(c => c.textContent)") == ['1', '2', '3']
+        page.keyboard.press('Enter')  # Down again: [TODO] becomes last, so its Down is disabled.
+        assert page.evaluate(self.MOVE_STATE) == [['[BUG]', True, False], ['[C]', False, False], ['[TODO]', False, True]]
+        # A disabled button can't keep focus: it moves to the same row's Up.
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveUp', '[TODO]']
+        assert self._stored_order(page, ['[BUG]', '[C]', '[TODO]']) == ['[BUG]', '[C]', '[TODO]']
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]', '[C]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveUp', '[TODO]']
+        assert self._stored_order(page, ['[BUG]', '[TODO]', '[C]']) == ['[BUG]', '[TODO]', '[C]']
+
+    def test_move_buttons_update_after_add_and_delete(self):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934')]))
+        page.click('#addRow')
+        assert [s[1:] for s in page.evaluate(self.MOVE_STATE)] == [[True, False], [False, False], [False, True]]
+        page.click('#rows tr:nth-child(3) .del')
+        assert [s[1:] for s in page.evaluate(self.MOVE_STATE)] == [[True, False], [False, True]]
+
+    @pytest.mark.parametrize('width', [400, 1040])
+    def test_move_buttons_size_and_card_layout(self, width):
+        page = self._fresh(_full([_rule('[TODO]'), _rule('[BUG]', '#fb4934')]))
+        page.set_viewport_size({'width': width, 'height': 800})
+        page.wait_for_timeout(150)
+        sizes = page.evaluate("[...document.querySelectorAll('#rows .moveUp, #rows .moveDown')].map(b => { const r = b.getBoundingClientRect(); return [r.width, r.height]; })")
+        assert sizes and all(w >= 24 and h >= 24 for w, h in sizes), sizes
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.focus('#rows tr:nth-child(2) .moveUp')
+        page.keyboard.press('Enter')
+        assert self._row_tags(page) == ['[BUG]', '[TODO]']
+        assert page.evaluate(self.FOCUSED_MOVE) == ['moveDown', '[BUG]'], 'now first: its Up is disabled, focus moves to Down'
+        assert self._stored_order(page, ['[BUG]', '[TODO]']) == ['[BUG]', '[TODO]']
+
+    def test_reorder_help_mentions_buttons(self):
+        page = self._fresh(_full([_rule('[TODO]')]))
+        assert 'Drag ≡ or use ↑/↓ to reorder.' in page.inner_text('body')
 
     @pytest.mark.parametrize('width', [400, 640])
     def test_narrow_layout_no_horizontal_scroll(self, width):

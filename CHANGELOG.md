@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the browser tab title.
 - Rules that don't match in the settings' rule tester are no longer faded,
   so they are easier to read.
+- Rules can be reordered from the keyboard with **Move up** / **Move down**
+  ([#77](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/77)).
+  The ↑/↓ buttons sit next to the ≡ drag handle; the first rule's ↑ and
+  the last rule's ↓ are disabled, and focus stays on the moved rule.
 
 ## [1.3.0] — 2026-11-03
 

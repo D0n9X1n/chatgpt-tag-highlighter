@@ -109,7 +109,7 @@
       <div class="ruleExplainer">
         <p><b>startsWith</b> — matches chats whose title begins with the tag. Best for prefixes like <code>[TODO]</code>, <code>[BUG]</code>.</p>
         <p><b>includes</b> — matches chats whose title contains the tag anywhere. Good for keywords like <code>code</code>, <code>help</code>.</p>
-        <p>Rules are checked top-to-bottom — the first match wins. Drag ≡ to reorder.</p>
+        <p>Rules are checked top-to-bottom — the first match wins. Drag ≡ or use ↑/↓ to reorder.</p>
       </div>
 
       <table class="table" aria-label="Tag rules">
@@ -154,7 +154,7 @@
   <template id="rowTemplate">
     <tr>
       <td class="rowNum" data-label="#"></td>
-      <td class="dragCell" data-label="Move"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span></td>
+      <td class="dragCell" data-label="Move"><span class="dragHandle" draggable="true" title="Drag to reorder">≡</span><span class="moveBtns"><button type="button" class="moveUp" aria-label="Move rule up" title="Move up">↑</button><button type="button" class="moveDown" aria-label="Move rule down" title="Move down">↓</button></span></td>
 
       <td data-label="Tag">
         <input class="input tag" placeholder="[TODO]" aria-label="Tag" />
