@@ -2624,10 +2624,53 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
-	const titleNodeOf = a => {
-		const s = a.querySelector('[data-thread-title="true"] span[dir="auto"], .truncate span[dir="auto"]');
-		return s?.childNodes.length === 1 && s.firstChild.nodeType === Node.TEXT_NODE ? s.firstChild : null;
-	};
+	// ChatGPT may split a title across text nodes or duplicate it (marquee).
+	function titleTextNodes(a) {
+		const t = a?.querySelector('[data-thread-title="true"], .truncate');
+		const nodes = [];
+		if (t) {
+			const w = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+			while (w.nextNode()) {
+				nodes.push(w.currentNode);
+			}
+		}
+
+		return nodes;
+	}
+
+	// Rewrite the row's title text in place: never add or remove nodes.
+	function writeTitle(a, old, next) {
+		if (!old) {
+			return;
+		}
+
+		const nodes = titleTextNodes(a);
+		const whole = nodes.filter(n => n.nodeValue.trim() === old);
+		if (whole.length > 0) {
+			for (const n of whole) {
+				n.nodeValue = next;
+			}
+
+			return;
+		}
+
+		if (nodes.map(n => n.nodeValue).join('').trim() !== old) {
+			return;
+		}
+
+		const first = nodes.find(n => n.nodeValue.trim());
+		for (const n of nodes) {
+			n.nodeValue = n === first ? next : '';
+		}
+	}
+
+	// The open chat's name is usually in the tab title too.
+	function retitleDocument(id, a, old, next) {
+		const open = (a && isActiveChat(a)) || location.pathname === `/c/${id}`;
+		if (open && old && document.title.includes(old)) {
+			document.title = document.title.replace(old, () => next);
+		}
+	}
 
 	function effectiveTitle(a) {
 		const shown = getChatTitleText(a);
@@ -2642,11 +2685,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			return shown;
 		}
 
-		const node = titleNodeOf(a);
-		if (node) {
-			node.nodeValue = o.new; // Stale remount; converges on the next scan.
-		}
-
+		writeTitle(a, shown, o.new); // Stale remount; converges on the next scan.
 		return o.new;
 	}
 
@@ -2680,17 +2719,16 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		}
 	}
 
-	// Write the confirmed title into the existing text node (never add or
+	// Write the confirmed title into the existing text nodes (never add or
 	// remove nodes) only if the row still shows `expected`.
 	function commitTitle(id, expected, next) {
 		if (!titleIs(id, expected)) {
 			return false;
 		}
 
-		const node = titleNodeOf(findChatAnchorById(id));
-		if (node) {
-			node.nodeValue = next;
-		}
+		const a = findChatAnchorById(id);
+		writeTitle(a, expected, next);
+		retitleDocument(id, a, expected, next);
 
 		const olds = new Set(titleOverrides.get(id)?.olds);
 		olds.add(expected);

@@ -1379,6 +1379,18 @@ def _full(rules, **kw):
             'lazyRenderTurns': True, 'showDeleteUntagged': False, 'showQuickTag': True, **kw}
 
 
+# Watch a title element: count childList mutations and remember its text nodes.
+_WATCH_TITLE = """sel => {
+    const t = document.querySelector(sel);
+    const texts = () => { const w = document.createTreeWalker(t, NodeFilter.SHOW_TEXT); const a = []; while (w.nextNode()) a.push(w.currentNode); return a; };
+    window.__childList = 0;
+    new MutationObserver(rs => { window.__childList += rs.filter(r => r.type === 'childList').length; })
+        .observe(t, {childList: true, subtree: true});
+    window.__texts = texts();
+    window.__sameTexts = () => { const now = texts(); return now.length === __texts.length && now.every((n, i) => n === __texts[i]); };
+}"""
+
+
 def _tjs(cid):
     return f"document.querySelector('#row-{cid} [data-thread-title] span[dir=auto]').textContent"
 
@@ -1808,8 +1820,11 @@ API_CHATS = [
 
 
 def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
-                  turn_tag='section', turns=6):
+                  turn_tag='section', turns=6, title_html=None, doc_title='ChatGPT fixture'):
     """Build a minimal ChatGPT-shaped page.
+
+    title_html: {chat_id: raw inner HTML of the row's .truncate}, for
+                titles split across several text nodes.
 
     active: None, a chat id (empty-string data-active, as on live), or a
             dict {chat_id: data-active value}.
@@ -1820,13 +1835,15 @@ def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
         active = {active: ''}
     active = active or {}
 
+    title_html = title_html or {}
     links = []
     for cid, title in chats:
         attr = f' data-active="{_html.escape(active[cid])}"' if cid in active else ''
+        inner = title_html.get(cid, f'<span dir="auto">{_html.escape(title)}</span>')
         links.append(
             f'<a href="/c/{cid}" data-sidebar-item="true"{attr}>'
             f'<div class="flex min-w-0 grow items-center"><div class="truncate">'
-            f'<span dir="auto">{_html.escape(title)}</span></div></div></a>'
+            f'{inner}</div></div></a>'
         )
 
     turn_html = ''.join(
@@ -1851,7 +1868,7 @@ def _chat_fixture(chats=DEFAULT_CHATS, active=None, composer='current',
         composer_html = ''
 
     return f'''<!doctype html>
-<html class="dark"><head><meta charset="utf-8"><title>ChatGPT fixture</title>
+<html class="dark"><head><meta charset="utf-8"><title>{_html.escape(doc_title)}</title>
 <style>
   html, body {{ margin: 0; height: 100%; }}
   body {{ display: flex; }}
@@ -2330,6 +2347,26 @@ class TestContentScript:
         assert len(self._patches(calls)) == 2
         assert [c['method'] for c in calls if '/backend-api/conversation/' in c['url']] == ['GET', 'PATCH', 'GET', 'PATCH']
 
+    # The open chat is found by URL (/c/c1) or, on other paths, by data-active.
+    @pytest.mark.parametrize('path, active', [('/c/c1', None), ('/', 'c1')], ids=['by-url', 'by-data-active'])
+    def test_legacy_rename_split_title_and_document_title(self, path, active):
+        self._configure()
+        page = self._open_chat(path=path, active=active, doc_title='[TODO] ship release',
+                               title_html={'c1': '<span dir="auto">[TODO] <!-- -->ship release</span>'})
+        self._mock_chat_api(page)
+        link = '#history a[href="/c/c1"]'
+        span = f"document.querySelector('{link} .truncate span[dir=auto]')"
+        page.evaluate(_WATCH_TITLE, f'{link} .truncate')
+        page.hover(link)
+        page.click('#cth-qt-btn')
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        assert self._poll(page, f"() => {span}.textContent === '[BUG] ship release'")
+        assert page.title() == '[BUG] ship release'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._poll(page, f"() => {span}.textContent === '[TODO] ship release'")
+        assert page.title() == '[TODO] ship release'
+        assert page.evaluate('__childList') == 0 and page.evaluate('__sameTexts()')
+
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
@@ -2772,15 +2809,18 @@ class TestContentScript:
 
 # App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
 # fixture-only IDs let tests inspect rows without coupling to extension markers.
-def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None):
+# title_html: {chat_id: raw inner HTML of the row's [data-thread-title]}.
+def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None,
+                       title_html=None, doc_title='App-shell fixture'):
+    title_html = title_html or {}
     rows = []
     for i, (cid, title) in enumerate(chats):
         selected = ' aria-current="page"' if cid == active else ''
+        inner = title_html.get(cid, f'<span data-marquee-content><span dir="auto">{_html.escape(title)}</span></span>')
         row = (f'<div role="group" id="row-{cid}"{selected}>'
                f'<div data-thread-title-trigger><a data-interactive-row-link="true" '
                f'href="/c/{cid}"{selected}><span data-thread-title="true">'
-               f'<span data-marquee-content><span dir="auto">{_html.escape(title)}</span>'
-               f'</span></span></a></div><button class="menu">menu</button></div>')
+               f'{inner}</span></a></div><button class="menu">menu</button></div>')
         rows.append(f'<div role="listitem" id="item-{cid}">{row}</div>' if i < 2 else row)
     groups = ''.join(
         f'<div data-turn-key="t{i}" class="turn"><div data-content-search-turn-key="t{i}">'
@@ -2788,7 +2828,7 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height
         f'<div data-conversation-role="assistant">Reply {i}</div></div></div>'
         for i in range(turns))
     return f'''<!doctype html><html class="dark"><head><meta charset="utf-8">
-    <title>App-shell fixture</title><style>
+    <title>{_html.escape(doc_title)}</title><style>
     body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
     [data-app-action-sidebar-scroll] {{height:{f'{sidebar_height}px' if sidebar_height else '100%'};overflow:auto}}
     [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
@@ -3267,6 +3307,46 @@ class TestAppShellContentScript:
             const s = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]');
             return s.firstChild === window.__node && s.childNodes.length === 1;
         }""")
+
+    SPLIT_TITLES = {
+        # React-style adjacent text nodes in one span.
+        'split': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span></span>',
+        # A marquee wrapper with a duplicated, aria-hidden copy of the title.
+        'marquee': '<span data-marquee-content><span dir="auto">[BUG] plain chat</span>'
+                   '<span aria-hidden="true">[BUG] plain chat</span></span>',
+    }
+
+    @pytest.mark.parametrize('variant', ['split', 'marquee'])
+    def test_rename_rewrites_every_title_text_node(self, variant):
+        page, _, _ = self._qt_page(chats=[('c1', '[TODO] ship release'), ('c5', '[BUG] plain chat')],
+                                   fixture={'title_html': {'c5': self.SPLIT_TITLES[variant]}})
+        title = "document.querySelector('#row-c5 [data-thread-title]')"
+        page.evaluate(_WATCH_TITLE, '#row-c5 [data-thread-title]')
+        before = page.evaluate(f'{title}.textContent')
+        self._pick(page, 'c5', '[TODO]')
+        assert self._title_is(page, 'c5', '[TODO] plain chat')
+        assert page.evaluate(f'{title}.textContent') == before.replace('[BUG]', '[TODO]'), 'every copy is renamed'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.evaluate(f'{title}.textContent') == before
+        assert page.evaluate('__childList') == 0, 'no nodes added or removed'
+        assert page.evaluate('__sameTexts()'), 'the same text nodes are reused'
+
+    def test_rename_open_chat_updates_document_title(self):
+        page, _, _ = self._qt_page(fixture={'doc_title': '[TODO] ship release'})
+        self._pick(page, 'c1', '[BUG]')
+        assert self._title_is(page, 'c1', '[BUG] ship release')
+        assert page.title() == '[BUG] ship release'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c1', '[TODO] ship release')
+        assert page.title() == '[TODO] ship release'
+
+    def test_rename_other_chat_leaves_document_title(self):
+        # The tab title happens to contain c5's title, but c1 is the open chat.
+        page, _, _ = self._qt_page(fixture={'doc_title': 'plain chat'})
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.title() == 'plain chat'
 
     @pytest.mark.parametrize('mock, message', [
         ({'patch_abort': True}, 'Not sure the rename finished. Reload to check.'),
