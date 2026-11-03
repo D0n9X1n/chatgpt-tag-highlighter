@@ -1555,6 +1555,12 @@ class TestStatic:
         t = self._fn(src, 'startNewTag')
         assert t.index('const bound = qtBound') < t.index('await'), 'capture the chat before any await'
 
+    def test_unit_copies_match_source(self):
+        src = (ROOT / 'src' / 'content.js').read_text()
+        unit = Path(UNIT_TEST_PATH).read_text()
+        for name in ('currentPrefixTag', 'computeTaggedTitle'):
+            assert self._fn(unit, name) == self._fn(src, name), f'{name}: tests/unit_test.html copy differs from content.js'
+
     def test_only_background_writes_config(self):
         options = (ROOT / 'src' / 'options.js').read_text()
         content = (ROOT / 'src' / 'content.js').read_text()

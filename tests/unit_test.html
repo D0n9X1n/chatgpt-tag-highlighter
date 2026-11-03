@@ -101,6 +101,30 @@
     return new Set((inputTags || []).filter(t => visSet.has(t)));
   }
 
+  // Mirrors of currentPrefixTag() and computeTaggedTitle() from content.js
+  // (TestStatic.test_unit_copies_match_source keeps them identical).
+  function currentPrefixTag(title, rules) {
+    let best = null;
+    for (const r of rules) {
+      if (r.match === 'startsWith' && title.startsWith(r.tag) && (!best || r.tag.length > best.length)) {
+        best = r.tag;
+      }
+    }
+
+    return best;
+  }
+
+  // Swap the current prefix tag for `tag` (null removes it).
+  function computeTaggedTitle(title, tag, rules) {
+    const cur = currentPrefixTag(title, rules);
+    const rest = (cur ? title.slice(cur.length) : title).replace(/^\s+/, '');
+    if (tag === null) {
+      return rest;
+    }
+
+    return rest ? `${tag} ${rest}` : tag;
+  }
+
   // ========================================================
   // Test runner
   // ========================================================
@@ -332,6 +356,12 @@
   // Overlay, native scroll-button, pruning and Alt+H behavior are covered
   // against the real packaged content.js in TestContentScript
   // (tests/test_extension.py), not with copied logic here.
+
+  // ---- computeTaggedTitle ----
+  group('computeTaggedTitle'); const qtRules = [{tag: '[A]', match: 'startsWith'}, {tag: '[A][B]', match: 'startsWith'}, {tag: '[C]', match: 'startsWith'}, {tag: 'code', match: 'includes'}];
+  assert('adds tag', computeTaggedTitle('plain', '[C]', qtRules), '[C] plain'); assert('replaces longest prefix and all spaces', computeTaggedTitle('[A][B]   x', '[C]', qtRules), '[C] x');
+  assert('removes tag', computeTaggedTitle('[C]  x', null, qtRules), 'x'); assert('tag-only title', computeTaggedTitle('[A]', '[C]', qtRules), '[C]');
+  assert('includes rule never stripped', computeTaggedTitle('code x', '[C]', qtRules), '[C] code x'); assert('current = longest match', currentPrefixTag('[A][B] x', qtRules), '[A][B]');
 
   // ---- Summary ----
   const summary = document.getElementById('summary');
