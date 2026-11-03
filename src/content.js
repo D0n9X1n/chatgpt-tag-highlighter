@@ -2624,22 +2624,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	const titleOverrides = new Map();
 	const qtPending = new Set(); // Ids with a rename in flight (survives menu close).
 
-	// A title may be duplicated (marquee) and each copy split into text nodes.
-	// Each outermost span[dir="auto"] is one copy; else the title element is.
-	function titleCopies(a) {
-		const t = a?.querySelector('[data-thread-title="true"], .truncate');
-		if (!t) {
-			return [];
-		}
-
-		const spans = [...t.querySelectorAll('span[dir="auto"]')];
-		const outer = spans.filter(s => !spans.some(o => o !== s && o.contains(s)));
-		return outer.length > 0 ? outer : [t];
-	}
-
-	function textNodesOf(copy) {
+	function textNodesOf(root) {
 		const nodes = [];
-		const w = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+		const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 		while (w.nextNode()) {
 			nodes.push(w.currentNode);
 		}
@@ -2647,12 +2634,38 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		return nodes;
 	}
 
+	const joinedText = nodes => nodes.map(n => n.nodeValue).join('').trim();
+
+	// A title may be duplicated (marquee) and each copy split into text nodes,
+	// whatever the markup. L is the lowest element holding all non-empty text:
+	// if L's text is one title (`isTitle`), or fewer than two of its children
+	// hold text, L is the only copy; otherwise each such child is a copy.
+	function titleCopies(a, isTitle) {
+		const t = a?.querySelector('[data-thread-title="true"], .truncate');
+		if (!t) {
+			return [];
+		}
+
+		const texts = textNodesOf(t).filter(n => n.nodeValue.trim());
+		if (texts.length === 0) {
+			return [t];
+		}
+
+		let l = texts[0].parentElement;
+		while (l !== t && !texts.every(n => l.contains(n))) {
+			l = l.parentElement;
+		}
+
+		const parts = [...l.children].filter(c => c.textContent.trim());
+		return parts.length < 2 || isTitle(joinedText(textNodesOf(l))) ? [l] : parts;
+	}
+
 	// Rewrite every copy showing one of `olds` to `next`, in place: never add
 	// or remove nodes, and never write a copy that already shows `next`.
 	function writeTitle(a, olds, next) {
-		for (const copy of titleCopies(a)) {
+		for (const copy of titleCopies(a, text => text === next || olds.has(text))) {
 			const nodes = textNodesOf(copy);
-			const text = nodes.map(n => n.nodeValue).join('').trim();
+			const text = joinedText(nodes);
 			if (!text || text === next || !olds.has(text)) {
 				continue;
 			}

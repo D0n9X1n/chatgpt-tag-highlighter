@@ -1724,6 +1724,17 @@ class TestOpenSettings(_BgPages):
         page.evaluate(self.OPEN)
         assert self._size(page) == (1040, 600)
 
+    @pytest.mark.parametrize('setup, size', [
+        ('window.__focused = {id: 1, width: 800};', (800, 760)),
+        ('window.__focused = {id: 1, height: 650};', (1040, 650)),
+        ('window.__focused = {id: 1, width: 800}; browser.windows.getCurrent = async () => ({id: 1, width: 900, height: 650});', (800, 650)),
+        ('window.__focused = {id: 1, width: 0, height: 650}; browser.windows.getCurrent = async () => ({id: 1, width: 700, height: 600});', (700, 650)),
+    ], ids=['width-only', 'height-only', 'width-then-current-height', 'zero-width'])
+    def test_popup_size_per_side(self, setup, size):
+        page = self.bg(setup=setup)
+        page.evaluate(self.OPEN)
+        assert self._size(page) == size
+
     @pytest.mark.parametrize('last', [
         'delete browser.windows.getLastFocused;',
         "browser.windows.getLastFocused = () => Promise.reject(new Error('no window'));",
@@ -3362,17 +3373,26 @@ class TestAppShellContentScript:
         'split': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span></span>',
         # A marquee wrapper with a duplicated, aria-hidden copy of the title.
         'marquee': '<span data-marquee-content><span dir="auto">[BUG] plain chat</span>'
-                   '<span dir="auto" aria-hidden="true">[BUG] plain chat</span></span>',
+                   '<span aria-hidden="true">[BUG] plain chat</span></span>',
+        'marquee-dir': '<span data-marquee-content><span dir="auto">[BUG] plain chat</span>'
+                       '<span dir="auto" aria-hidden="true">[BUG] plain chat</span></span>',
         # The visible copy split into text nodes, the marquee copy whole.
         'split-marquee': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
                          '<span dir="auto" aria-hidden="true">[BUG] plain chat</span></span>',
+        'split-without-dir': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
+                             '<span aria-hidden="true">[BUG] <!-- -->plain chat</span></span>',
         # Both copies split.
         'split-both': '<span data-marquee-content><span dir="auto">[BUG] <!-- -->plain chat</span>'
                       '<span dir="auto" aria-hidden="true">[BUG] <!-- -->plain chat</span></span>',
+        # One copy whose text is split across child elements.
+        'split-elements': '<span data-marquee-content><span dir="auto"><span>[BUG] </span>'
+                          '<span>plain chat</span></span></span>',
     }
-    COPIES = "() => [...document.querySelectorAll('#row-c5 [data-thread-title] span[dir=auto]')].map(s => s.textContent)"
+    # The text of each copy: the children of the marquee wrapper.
+    COPIES = "() => [...document.querySelector('#row-c5 [data-thread-title] [data-marquee-content]').children].map(s => s.textContent)"
 
-    @pytest.mark.parametrize('variant', ['split', 'marquee', 'split-marquee', 'split-both'])
+    @pytest.mark.parametrize('variant', ['split', 'marquee', 'marquee-dir', 'split-marquee', 'split-without-dir',
+                                         'split-both', 'split-elements'])
     def test_rename_rewrites_every_title_text_node(self, variant):
         page, _, _ = self._qt_page(chats=[('c1', '[TODO] ship release'), ('c5', '[BUG] plain chat')],
                                    fixture={'title_html': {'c5': self.SPLIT_TITLES[variant]}})
