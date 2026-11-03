@@ -1930,6 +1930,30 @@ class TestContentScript:
             document.querySelector('#history a[href="/c/c5"]').dataset.cth === '1'"""), \
             'saved rule changes must apply live'
 
+    def test_legacy_quick_tag_pick_and_undo(self):
+        self._configure()
+        page = self._open_chat()
+        calls, _ = self._mock_chat_api(page)
+        link = '#history a[href="/c/c5"]'
+        span = f"document.querySelector('{link} .truncate span[dir=auto]')"
+        page.hover(link)
+        page.wait_for_selector('#cth-qt-btn', state='visible')
+        # Legacy rows have no native menu button: align to the anchor's own right edge.
+        gap = page.evaluate(f"""() => document.querySelector('{link}').getBoundingClientRect().right - 8
+            - document.getElementById('cth-qt-btn').getBoundingClientRect().right""")
+        assert abs(gap) <= 4, gap
+        page.evaluate(f"window.__node = {span}.firstChild")
+        page.click('#cth-qt-btn')
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        assert self._poll(page, f"() => {span}.textContent === '[BUG] plain chat'")
+        assert page.evaluate(f"{span}.firstChild === window.__node && {span}.childNodes.length === 1")
+        patches = self._patches(calls)
+        assert len(patches) == 1 and patches[0]['url'].endswith('/c5')
+        assert patches[0]['auth'] == 'Bearer test-token'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._poll(page, f"() => {span}.textContent === 'plain chat'")
+        assert len(self._patches(calls)) == 2
+
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
@@ -2993,3 +3017,30 @@ class TestAppShellContentScript:
         assert len(patches) == 1 and patches[0]['url'].endswith('/c1')
         assert page.locator('#cth-qt-menu[data-cth-chat="c2"]').count() == 1, 'a later menu stays open'
         assert page.evaluate(_tjs('c2')) == '[BUG] code crash'
+
+    # ---- Undo (#73) ----
+
+    def test_undo_restores_title(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast[role=status]')
+        assert page.evaluate("[...document.getElementById('cth-qt-toast').children].map(c => c.textContent)") == ['Tagged', '·', 'Undo']
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', 'plain chat')
+        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == ['[BUG] plain chat', 'plain chat']
+
+    def test_undo_failure_keeps_tag(self):
+        page, _, _ = self._qt_page(patch_statuses=[200, 500])
+        self._pick(page, 'c5', '[BUG]')
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, 'ChatGPT refused the rename (HTTP 500). Nothing changed.')
+        assert page.evaluate(_tjs('c5')) == '[BUG] plain chat'
+
+    def test_undo_refused_after_intervening_rename(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'renamed elsewhere'")
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, 'Title changed — not undone')
+        assert len(self._patches(calls)) == 1

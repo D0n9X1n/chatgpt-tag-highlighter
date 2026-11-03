@@ -649,6 +649,8 @@ html.cth-light #${QT_TOAST_ID} { background: #fff; color: #000; border-color: rg
 #${QT_TOAST_ID}.cth-qt-error { border-left: 3px solid #fb4934; }
 .cth-qt-close { width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; }
 #${QT_TOAST_ID} button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.cth-qt-undo { padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+html.cth-light .cth-qt-undo { border-color: rgba(0,0,0,0.10); }
 `;
 
 		const lazyCss = `
@@ -2487,6 +2489,32 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		qtToast(tag === null ? 'Tag removed' : 'Tagged', {undo: {id: bound.id, tagged: next, old: bound.title}});
 	}
 
+	// Undo renames back only if the row still shows the title we wrote.
+	async function undoTag(id, tagged, old) {
+		if (!titleIs(id, tagged)) {
+			qtToast('Title changed — not undone', {error: true});
+			return;
+		}
+
+		if (qtPending.has(id)) {
+			qtToast('Still saving this chat — try again', {error: true});
+			return;
+		}
+
+		qtPending.add(id);
+		try {
+			await renameChat(id, old, () => titleIs(id, tagged), 'Title changed — not undone');
+		} catch (error) {
+			qtToast(error.message, {error: true});
+			return;
+		} finally {
+			qtPending.delete(id);
+		}
+
+		const ok = commitTitle(id, tagged, old);
+		qtToast(ok ? 'Undone' : 'Title changed — not undone', {error: !ok});
+	}
+
 	// "New tag…": background.js validates and persists the rule first, then the
 	// chat captured when the input opened is renamed.
 	function startNewTag(item) {
@@ -2548,6 +2576,15 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			const x = el('button', {type: 'button', 'aria-label': 'Close', class: 'cth-qt-close', text: '×'});
 			x.addEventListener('click', () => t.remove());
 			t.append(x);
+		}
+
+		if (undo) {
+			const b = el('button', {type: 'button', class: 'cth-qt-undo', text: 'Undo'});
+			b.addEventListener('click', () => {
+				t.remove();
+				undoTag(undo.id, undo.tagged, undo.old);
+			});
+			t.append(el('span', {text: '·', 'aria-hidden': 'true'}), b);
 		}
 
 		const ov = document.getElementById(OVERLAY_ID);
