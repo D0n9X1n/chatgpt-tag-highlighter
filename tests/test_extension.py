@@ -3024,6 +3024,8 @@ class TestAppShellContentScript:
         page = self._open_chat()
         self._ready(page)
         assert not page.locator('#history, #prompt-textarea, [data-sidebar-item]').count()
+        # The bar can appear a frame before the rows are painted; wait for the paint.
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c2')).backgroundColor === 'rgba(251, 73, 52, 0.12)'")
         assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e).backgroundColor") == 'rgba(250, 189, 47, 0.2)'
         assert page.eval_on_selector('#row-c2', "e => getComputedStyle(e).backgroundColor") == 'rgba(251, 73, 52, 0.12)'
         assert page.eval_on_selector('#row-c1', "e => getComputedStyle(e, '::before').width") == '6px'
