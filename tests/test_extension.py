@@ -2609,3 +2609,125 @@ class TestAppShellContentScript:
         page.wait_for_timeout(800)
         options = [p for p in self.context.pages if p.url.endswith('/options.html')]
         assert len(options) == 1, [p.url for p in self.context.pages]
+
+    # ---- Quick tag (#73) ----
+
+    QT_ITEMS = """() => [...document.querySelectorAll('#cth-qt-menu .cth-qt-list [role=menuitemradio]')].map(n => [
+        n.dataset.tag, n.getAttribute('aria-checked'), getComputedStyle(n.querySelector('.cth-qt-swatch')).backgroundColor])"""
+    QT_FOCUS = "() => document.activeElement.dataset.tag || document.activeElement.dataset.action || document.activeElement.id"
+
+    def _qt_page(self, chats=None, rules=None, **mock):
+        self._configure(rules=rules)
+        page = self._open_chat(**({'chats': chats} if chats is not None else {}))
+        self._ready(page)
+        calls, held = self._mock_chat_api(page, **mock)
+        return page, calls, held
+
+    def _open_qt(self, page, cid):
+        page.hover(f'#row-{cid}')
+        page.click('#cth-qt-btn')
+        page.wait_for_selector(f'#cth-qt-menu[data-cth-chat="{cid}"]')
+
+    def _qt_shown(self, page, shown=True):
+        """Poll briefly until the tag button's visibility equals `shown`."""
+        want = 'true' if shown else 'false'
+        return self._poll(page, f"() => {{ const b = document.getElementById('cth-qt-btn'); return (!!b && !b.hidden && b.getClientRects().length > 0) === {want}; }}",
+                          timeout=1500)
+
+    def test_quick_tag_button_only_on_valid_chat_rows(self):
+        page, _, _ = self._qt_page(chats=DEFAULT_CHATS + [('bad id!', '[TODO] x')])
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        assert page.get_attribute('#cth-qt-btn', 'aria-label') == 'Tag chat'
+        page.hover('[id="row-bad id!"]')
+        assert self._qt_shown(page, False), 'chat ids outside [\\w-] never get a button'
+        page.hover('#other-nav')
+        assert self._qt_shown(page, False), 'non-row links never get a button'
+        page.focus('#row-c2 a')
+        assert self._qt_shown(page), 'keyboard focus on a row shows the button too'
+
+    def test_quick_tag_menu_lists_prefix_rules_in_order(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c2')
+        assert page.evaluate(self.QT_ITEMS) == [
+            ['[TODO]', 'false', 'rgb(250, 189, 47)'],
+            ['[BUG]', 'true', 'rgb(251, 73, 52)'],
+            ['[ARCHIVE]', 'false', 'rgb(146, 131, 116)'],
+        ]
+        assert page.is_visible('#cth-qt-menu [data-action=remove]')
+        assert page.is_visible('#cth-qt-menu [data-action=new]')
+        page.keyboard.press('Escape')
+        self._open_qt(page, 'c5')
+        assert page.locator('#cth-qt-menu [data-action=remove]').count() == 0, 'untagged chats have nothing to remove'
+        page.keyboard.press('Escape')
+        self._configure(rules=[CONTENT_RULES[3]])
+        assert self._poll(page, "() => !document.querySelector('#row-c1[data-cth]')")
+        self._open_qt(page, 'c5')
+        assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+
+    def test_quick_tag_menu_keyboard(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c1')
+        assert page.is_visible('#cth-qt-btn')
+        assert page.get_attribute('#cth-qt-btn', 'aria-expanded') == 'true'
+        assert page.evaluate(self.QT_FOCUS) == '[TODO]'
+        seen = []
+        for key in ('ArrowUp', 'ArrowDown', 'End', 'Home'):
+            page.keyboard.press(key)
+            seen.append(page.evaluate(self.QT_FOCUS))
+        assert seen == ['new', '[TODO]', 'new', '[TODO]']
+        page.keyboard.press('Escape')
+        assert page.locator('#cth-qt-menu').count() == 0
+        assert page.evaluate('document.activeElement.id') == 'cth-qt-btn'
+        assert page.get_attribute('#cth-qt-btn', 'aria-expanded') == 'false'
+        self._open_qt(page, 'c1')
+        page.keyboard.press('Tab')
+        assert page.locator('#cth-qt-menu').count() == 0
+
+    def test_quick_tag_hides_for_native_row_menu(self):
+        page, _, _ = self._qt_page()
+        page.evaluate("""() => {
+            const b = document.querySelector('#row-c3 .menu');
+            b.addEventListener('click', () => setTimeout(() => b.setAttribute('aria-expanded', 'true'), 0));
+        }""")
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        page.click('#row-c3 .menu')
+        page.wait_for_timeout(700)
+        page.hover('#row-c3')
+        assert self._qt_shown(page, False), 'stay out of the way while the native row menu is open'
+        page.evaluate("document.querySelector('#row-c3 .menu').setAttribute('aria-expanded', 'false')")
+        page.hover('#row-c2')
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        page.focus('#row-c2 .menu')
+        page.keyboard.press('Enter')
+        assert self._qt_shown(page, False), 'opening a native menu from the keyboard hides the button'
+
+    def test_alt_t_focused_row_vs_active_chat(self):
+        page, _, _ = self._qt_page()
+        page.focus('#row-c3 a')
+        page.keyboard.press('Alt+t')
+        page.wait_for_selector('#cth-qt-menu')
+        assert page.get_attribute('#cth-qt-menu', 'data-cth-chat') == 'c3'
+        page.keyboard.press('Escape')
+        page.evaluate('document.activeElement.blur()')
+        page.keyboard.press('Alt+t')
+        page.wait_for_selector('#cth-qt-menu')
+        assert page.get_attribute('#cth-qt-menu', 'data-cth-chat') == 'c1'
+
+    def test_quick_tag_default_on_and_option_off(self):
+        page, _, _ = self._qt_page()
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        self._configure(showQuickTag=False)
+        assert self._qt_shown(page, False)
+        page.wait_for_timeout(300)
+        page.hover('#row-c2')
+        page.hover('#row-c3')
+        page.wait_for_timeout(200)
+        assert page.locator('#cth-qt-btn:not([hidden])').count() == 0
+        page.focus('#row-c3 a')
+        page.keyboard.press('Alt+t')
+        page.wait_for_timeout(300)
+        assert page.locator('#cth-qt-menu').count() == 0

@@ -20,6 +20,9 @@
 	const DELETE_BTN_ID = 'cth-delete-untagged';
 	const DELETE_DIALOG_ID = 'cth-delete-dialog';
 	const SETTINGS_BTN_ID = 'cth-settings';
+	const QT_BTN_ID = 'cth-qt-btn';
+	const QT_MENU_ID = 'cth-qt-menu';
+	const QT_TOAST_ID = 'cth-qt-toast';
 	// Per-row custom properties set by applyRuleToAnchor.
 	const CTH_COLOR_VARS = ['color', 'bg', 'bg-strong', 'bg-light', 'bg-strong-light', 'ring'];
 	const DEBUG = false;
@@ -574,6 +577,58 @@ html.cth-dim-untagged [data-cth-row]:not([data-cth="1"]):not([data-cth-active="1
 
 		// Long chats: let the browser skip rendering off-screen older turns.
 		// The measured height is the placeholder, so the scrollbar stays put.
+		const quickTagCss = `
+#${QT_BTN_ID} {
+  position: fixed;
+  top: var(--cth-qt-top);
+  left: var(--cth-qt-left);
+  z-index: 30;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: rgba(255,255,255,0.70);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+#${QT_BTN_ID}[hidden] { display: none; }
+#${QT_BTN_ID}:hover, #${QT_BTN_ID}:focus-visible { background: rgba(255,255,255,0.08); }
+html.cth-light #${QT_BTN_ID} { color: rgba(0,0,0,0.60); }
+html.cth-light #${QT_BTN_ID}:hover { background: rgba(0,0,0,0.06); }
+
+#${QT_MENU_ID} {
+  position: fixed;
+  top: var(--cth-qt-top);
+  left: var(--cth-qt-left);
+  z-index: 2147482000;
+  width: 220px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #212121;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  font: 600 13px system-ui;
+  color: #fff;
+}
+html.cth-light #${QT_MENU_ID} { background: #fff; border-color: rgba(0,0,0,0.10); color: #000; }
+.cth-qt-list { max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
+.cth-qt-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 8px; cursor: pointer; }
+.cth-qt-item:hover { background: rgba(255,255,255,0.08); }
+html.cth-light .cth-qt-item:hover { background: rgba(0,0,0,0.06); }
+.cth-qt-item[aria-disabled] { opacity: 0.45; pointer-events: none; }
+.cth-qt-swatch { width: 10px; height: 10px; border-radius: 999px; flex: none; }
+.cth-qt-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cth-qt-check { width: 14px; }
+.cth-qt-danger { color: #fb4934; }
+html.cth-light .cth-qt-danger { color: #cc241d; }
+#${QT_MENU_ID} [role=separator] { height: 1px; margin: 4px 0; background: rgba(255,255,255,0.12); }
+.cth-qt-empty { padding: 8px; opacity: 0.6; }
+#${QT_BTN_ID}:focus-visible, #${QT_MENU_ID} :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+`;
+
 		const lazyCss = `
 html.cth-lazy-turns [data-cth-lazy="1"] {
   content-visibility: auto;
@@ -581,7 +636,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 }
 `;
 
-		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}\n${lazyCss}\n${deleteCss}`;
+		style.textContent = `${hideScrollBtnCss}\n${hideNavBarCss}\n${sidebarCss}\n${overlayCss}\n${themeCss}\n${filterBarCss}\n${dimCss}\n${lazyCss}\n${deleteCss}\n${quickTagCss}`;
 		document.documentElement.append(style);
 		log('Style injected');
 	}
@@ -1988,6 +2043,240 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// Observe DOM for new turns (fast: one observer + rAF batch)
 	const turnObserver = new MutationObserver(() => scheduleTurnWork());
 
+	// ---- Quick tag: one body-level button, menu and toast ----
+	// They live on <body>, outside the history observer's root, so showing or
+	// moving them never triggers a sidebar rescan.
+	const TAG_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">'
+		+ '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>';
+
+	const chatIdOf = a => {
+		const m = /^\/c\/([^/?#]+)$/.exec(a?.getAttribute('href') || '');
+		return m && CHAT_ID_RE.test(m[1]) ? m[1] : null;
+	};
+
+	const findChatAnchorById = id => getChatAnchors().find(a => chatIdOf(a) === id) || null;
+
+	// The longest startsWith tag the title begins with, so "[A][B]" beats "[A]".
+	function currentPrefixTag(title, rules) {
+		let best = null;
+		for (const r of rules) {
+			if (r.match === 'startsWith' && title.startsWith(r.tag) && (!best || r.tag.length > best.length)) {
+				best = r.tag;
+			}
+		}
+
+		return best;
+	}
+
+	// Swap the current prefix tag for `tag` (null removes it).
+	function computeTaggedTitle(title, tag, rules) {
+		const cur = currentPrefixTag(title, rules);
+		const rest = (cur ? title.slice(cur.length) : title).replace(/^\s+/, '');
+		if (tag === null) {
+			return rest;
+		}
+
+		return rest ? `${tag} ${rest}` : tag;
+	}
+
+	let qtBtn = null;
+	let qtAnchor = null;
+	let qtMenu = null;
+	let qtBound = null; // {id, title} of the chat the open menu acts on
+	let qtBusy = false;
+	let qtToastTimer = 0;
+	// ChatGPT's own row menu is opening: stay out of its way.
+	let qtSuppressRow = null;
+	let qtSuppressUntil = 0;
+
+	function ensureQtButton() {
+		if (qtBtn?.isConnected) {
+			return qtBtn;
+		}
+
+		qtBtn = el('button', {
+			type: 'button', id: QT_BTN_ID, 'aria-label': 'Tag chat', 'aria-haspopup': 'menu', 'aria-expanded': 'false', hidden: true,
+		});
+		qtBtn.innerHTML = TAG_SVG; // Static markup, no user data.
+		qtBtn.addEventListener('click', () => {
+			if (qtMenu) {
+				closeQtMenu(true);
+			} else if (qtAnchor) {
+				openQtMenu(qtAnchor);
+			}
+		});
+		document.body.append(qtBtn);
+		return qtBtn;
+	}
+
+	function hideQtButton() {
+		if (qtBtn && !qtMenu) {
+			qtBtn.hidden = true;
+			qtAnchor = null;
+		}
+	}
+
+	function showQtFor(a) {
+		if (qtMenu) {
+			return; // Stays visible (aria-expanded) while its own menu is open.
+		}
+
+		// Legacy rows are the anchor itself: no native menu button to align to.
+		const row = a && getChatTargets(a).row;
+		if (row && row === qtSuppressRow
+			&& (performance.now() < qtSuppressUntil || row.querySelector('button[aria-expanded="true"]'))) {
+			hideQtButton();
+			return;
+		}
+
+		if (row && row !== qtSuppressRow) {
+			qtSuppressRow = null; // The pointer moved to another row.
+		}
+
+		const more = row && row !== a ? [...row.querySelectorAll('button')].filter(b => !a.contains(b)).at(-1) : null;
+		if (!a || !compiled?.showQuickTag || !chatIdOf(a) || deleteDialog || more?.getAttribute('aria-expanded') === 'true') {
+			hideQtButton();
+			return;
+		}
+
+		const btn = ensureQtButton();
+		const r = row.getBoundingClientRect();
+		const m = more?.getBoundingClientRect();
+		btn.style.setProperty('--cth-qt-top', `${r.top + (r.height / 2) - 12}px`);
+		btn.style.setProperty('--cth-qt-left', `${m ? m.left - 28 : r.right - 32}px`);
+		qtAnchor = a;
+		btn.hidden = false;
+	}
+
+	function anchorFrom(node) {
+		if (!node || !historyRoot?.contains(node)) {
+			return null;
+		}
+
+		const a = node.closest('a') || node.closest('[role="group"]')?.querySelector('a');
+		return a?.matches(CHAT_LINK_SELECTOR) ? a : null;
+	}
+
+	for (const type of ['pointerover', 'focusin']) {
+		document.addEventListener(type, e => {
+			if (!e.target.closest?.(`#${QT_BTN_ID}, #${QT_MENU_ID}`)) {
+				showQtFor(anchorFrom(e.target));
+			}
+		}, true);
+	}
+
+	function suppressForNative(target) {
+		const b = target.closest?.('button');
+		if (!b || b.id === QT_BTN_ID || !historyRoot?.contains(b)) {
+			return;
+		}
+
+		const a = anchorFrom(b);
+		qtSuppressRow = a ? getChatTargets(a).row : null;
+		qtSuppressUntil = performance.now() + 600;
+		hideQtButton();
+	}
+
+	document.addEventListener('keydown', e => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			suppressForNative(e.target);
+		}
+	}, true);
+
+	document.addEventListener('pointerdown', e => {
+		if (qtMenu && !e.target.closest?.(`#${QT_MENU_ID}, #${QT_BTN_ID}`)) {
+			closeQtMenu(false);
+		}
+
+		suppressForNative(e.target);
+	}, true);
+
+	const qtItems = () => (qtMenu ? [...qtMenu.querySelectorAll('[role^="menuitem"]:not([aria-disabled])')] : []);
+
+	function openQtMenu(a) {
+		closeQtMenu(false);
+		showQtFor(a);
+		const id = chatIdOf(a);
+		if (!id || qtAnchor !== a) {
+			return;
+		}
+
+		const title = getChatTitleText(a);
+		const cur = currentPrefixTag(title, compiled.rules);
+		qtBound = {id, title};
+		const items = compiled.rules.filter(r => r.match === 'startsWith').map(r => {
+			const swatch = el('span', {class: 'cth-qt-swatch'});
+			swatch.style.background = r.color;
+			return el('div', {
+				role: 'menuitemradio', tabindex: '-1', 'aria-checked': String(r.tag === cur), 'data-tag': r.tag, class: 'cth-qt-item',
+			}, [swatch, el('span', {class: 'cth-qt-label', text: r.tag}), el('span', {class: 'cth-qt-check', text: r.tag === cur ? '✓' : ''})]);
+		});
+		const tail = [el('div', {role: 'separator'})];
+		if (cur) {
+			tail.push(el('div', {role: 'menuitem', tabindex: '-1', 'data-action': 'remove', class: 'cth-qt-item cth-qt-danger', text: 'Remove tag'}));
+		}
+
+		tail.push(el('div', {role: 'menuitem', tabindex: '-1', 'data-action': 'new', class: 'cth-qt-item', text: 'New tag…'}));
+		const list = el('div', {class: 'cth-qt-list'}, items.length > 0 ? items : [el('div', {class: 'cth-qt-empty', text: 'No prefix tags yet'})]);
+		qtMenu = el('div', {id: QT_MENU_ID, role: 'menu', 'aria-label': 'Tag chat', 'data-cth-chat': id}, [list, ...tail]);
+		qtMenu.addEventListener('keydown', onQtMenuKey);
+		document.body.append(qtMenu);
+		positionQtMenu();
+		qtBtn.setAttribute('aria-expanded', 'true');
+		qtItems()[0]?.focus();
+	}
+
+	function closeQtMenu(refocus) {
+		if (!qtMenu) {
+			return;
+		}
+
+		qtMenu.remove();
+		qtMenu = null;
+		qtBound = null;
+		qtBusy = false;
+		qtBtn?.setAttribute('aria-expanded', 'false');
+		if (refocus) {
+			qtBtn?.focus();
+		}
+	}
+
+	function onQtMenuKey(e) {
+		const items = qtItems();
+		const i = items.indexOf(document.activeElement);
+		const go = n => {
+			e.preventDefault();
+			items[(n + items.length) % items.length]?.focus();
+		};
+
+		if (e.key === 'ArrowDown') {
+			go(i + 1);
+		} else if (e.key === 'ArrowUp') {
+			go(i - 1);
+		} else if (e.key === 'Home') {
+			go(0);
+		} else if (e.key === 'End') {
+			go(items.length - 1);
+		} else if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			document.activeElement?.click();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			closeQtMenu(true);
+		} else if (e.key === 'Tab') {
+			closeQtMenu(false);
+		}
+	}
+
+	// Below the button, or above it when there is no room below.
+	function positionQtMenu() {
+		const b = qtBtn.getBoundingClientRect();
+		const h = qtMenu.offsetHeight;
+		const up = b.bottom + 4 + h > innerHeight;
+		qtMenu.style.setProperty('--cth-qt-top', `${up ? Math.max(8, b.top - 4 - h) : b.bottom + 4}px`);
+		qtMenu.style.setProperty('--cth-qt-left', `${Math.max(8, b.right - 220)}px`);
+	}
+
 	// ---- History observer ----
 	let historyObserver = null;
 
@@ -2023,6 +2312,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			|| document.querySelector('#history');
 		if (hr && hr !== historyRoot) {
 			historyRoot = hr;
+			hr.addEventListener('scroll', hideQtButton, {passive: true});
 			attachHistoryObserver();
 			scheduleSidebarScan();
 			scheduleOverlayUpdate();
@@ -2137,6 +2427,11 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 					log('storage.onChanged fired — reloading config', {areaName});
 					compiled = compileConfig(newCfg);
 					itemCache = new WeakMap();
+					if (!compiled.showQuickTag) {
+						closeQtMenu(false);
+						hideQtButton();
+					}
+
 					// Preserve the user's filter selection across rule edits.
 					// Prune stale tags and clamp to empty if fewer than 2 visible rules remain.
 					pruneActiveFiltersAndPersistIfChanged();
@@ -2179,6 +2474,17 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		&& (e.code === `Key${letter.toUpperCase()}` || String(e.key || '').toLowerCase() === letter);
 
 	document.addEventListener('keydown', e => {
+		// Alt+T: tag the focused chat row, else the active chat.
+		if (isAltKey(e, 't')) {
+			e.preventDefault();
+			const a = anchorFrom(document.activeElement) || (historyRoot && getActiveChatAnchor(historyRoot));
+			if (a) {
+				openQtMenu(a);
+			}
+
+			return;
+		}
+
 		// Alt+H: Toggle visibility of chats hidden by hide=true rules.
 		// Active tag filters still apply on top of this.
 		if (isAltKey(e, 'h')) {
