@@ -378,3 +378,51 @@ tr.drag-over td{
 .conflict[hidden]{
   display: none;
 }
+
+/* Narrow windows (the settings popup): each rule becomes a stacked card.
+   Card rows: # / drag / swatch / delete · tag · match + colour · hex · hide + overlay. */
+@media (max-width: 640px){
+  body{ padding: 12px; }
+  .header, .actions{ flex-wrap: wrap; }
+  .title{ min-width: 0; }
+
+  .table, .table tbody{
+    display: block;
+    width: 100%;
+  }
+  .table thead{
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  #rows tr{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px 8px;
+    padding: 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  #rows td{
+    display: block;
+    min-width: 0;
+    padding: 0;
+  }
+  #rows td:nth-child(3), #rows td:nth-child(6){ grid-column: 1 / -1; }
+  #rows td:nth-child(4), #rows td:nth-child(5), #rows td.hideCell, #rows td.overlayCell{ grid-column: span 2; }
+  #rows td.previewCell{ grid-column: 3; grid-row: 1; }
+  #rows td.delCell{ grid-column: 4; grid-row: 1; justify-self: end; }
+  #rows .del{ width: 34px; }
+  #rows td:nth-child(n+3):nth-child(-n+6)::before{
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #rows tr.drag-over{ box-shadow: 0 -2px 0 var(--accent); }
+  #rows .input, #rows .select{ width: 100%; }
+}

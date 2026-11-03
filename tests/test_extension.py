@@ -871,6 +871,24 @@ class TestOptionsPage:
         page.wait_for_function('() => cfg().showBadge === false', timeout=3000)
         assert page.is_hidden('#conflict')
 
+    @pytest.mark.parametrize('width', [400, 640])
+    def test_narrow_layout_no_horizontal_scroll(self, width):
+        page = self._fresh(_full([_rule('[A]'), _rule('[B]', '#fb4934')]))
+        page.set_viewport_size({'width': width, 'height': 900})
+        page.wait_for_timeout(100)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'grid'
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr td:nth-child(3)'), '::before').content") == '"Tag"'
+        if width == 400:
+            match, color = page.evaluate("""() => ['td:nth-child(4)', 'td:nth-child(5)'].map(s => {
+                const r = document.querySelector('#rows tr ' + s).getBoundingClientRect();
+                return {top: r.top, left: r.left};
+            })""")
+            assert match['top'] == color['top'] and match['left'] != color['left']
+        page.set_viewport_size({'width': 900, 'height': 900})
+        page.wait_for_timeout(100)
+        assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
+
     def test_show_quick_tag_option_persists(self):
         page = self._fresh(_full([_rule('[A]')], showQuickTag=None))
         assert page.is_checked('#showQuickTag')
