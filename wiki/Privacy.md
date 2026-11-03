@@ -9,7 +9,7 @@
 - **Message sizes** on the page, for "Speed up long chats".
 - If you set **Max chat turns**, the extension removes older message elements from the page. It never reads message text, prompts, replies, or files.
 - Only if you use **Delete untagged chats**: your chat list from ChatGPT (ids, titles, and whether each is pinned, starred or archived) and your session's access token. The token stays in memory for that run and is never stored. Delete requests go only to ChatGPT, and only for the chats you selected and confirmed.
-- Only if you use **Quick tag**: the extension renames a chat on ChatGPT only when you pick a tag, remove one, or press **Undo**. It sends `PATCH /backend-api/conversation/{id}` with the new title (the same request ChatGPT's own Rename sends), authorized with your session's access token. The token is fetched for that request and never stored. **New tag…** also adds the tag as a rule in your settings.
+- Only if you use **Quick tag**: the extension renames a chat on ChatGPT only when you pick a tag, remove one, or press **Undo**. It sends `PATCH /backend-api/conversation/{id}` with the new title (the same request ChatGPT's own Rename sends), authorized with your session's access token. Before **Undo** renames a chat back, it also reads that chat's current title with `GET /backend-api/conversation/{id}`, so it never undoes a newer rename. The token is fetched for these requests and never stored. **New tag…** also adds the tag as a rule in your settings.
 
 ## What it stores
 

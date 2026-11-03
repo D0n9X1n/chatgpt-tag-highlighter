@@ -1646,6 +1646,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		// Update overlay content whenever sidebar is scanned (cheap)
 		scheduleOverlayUpdate();
 		updateBadgeCount();
+		refreshQtButton();
 	}
 
 	function updateBadgeCount() {
@@ -2159,12 +2160,40 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		qtBtn.addEventListener('click', () => {
 			if (qtMenu) {
 				closeQtMenu(true);
-			} else if (qtAnchor) {
+			} else if (qtButtonOnItsRow()) {
 				openQtMenu(qtAnchor);
+			} else {
+				hideQtButton(); // Rows moved under it: re-hover or re-focus a row.
 			}
 		});
 		document.body.append(qtBtn);
 		return qtBtn;
+	}
+
+	// The fixed button must still sit on the row it was shown for.
+	function qtButtonOnItsRow() {
+		if (!qtBtn || qtBtn.hidden || !qtAnchor?.isConnected || !historyRoot?.contains(qtAnchor)) {
+			return false;
+		}
+
+		const r = getChatTargets(qtAnchor).row.getBoundingClientRect();
+		const b = qtBtn.getBoundingClientRect();
+		const y = b.top + (b.height / 2);
+		return r.height > 0 && y >= r.top && y <= r.bottom;
+	}
+
+	// After a sidebar scan: follow the row if it is still shown, else hide.
+	function refreshQtButton() {
+		if (!qtBtn || qtBtn.hidden || qtMenu) {
+			return;
+		}
+
+		const a = qtAnchor;
+		if (a?.isConnected && historyRoot?.contains(a) && getChatTargets(a).row.getClientRects().length > 0) {
+			showQtFor(a);
+		} else {
+			hideQtButton();
+		}
 	}
 
 	function hideQtButton() {
@@ -2372,7 +2401,9 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	// PATCH /backend-api/conversation/{id} {title}, the request ChatGPT's own
 	// Rename sends. `stillValid` is re-checked after the token arrives, right
 	// before the PATCH, so a title that changed meanwhile is never overwritten.
-	async function renameChat(id, title, stillValid = () => true, staleText = 'Title changed — try again') {
+	// `serverTitle` (Undo): the server must still have this title, read right
+	// before the PATCH, so a rename from another tab or device is never undone.
+	async function renameChat(id, title, stillValid = () => true, staleText = 'Title changed — try again', serverTitle = null) {
 		if (!CHAT_ID_RE.test(id)) {
 			throw new Error(staleText);
 		}
@@ -2386,6 +2417,26 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		if (!stillValid()) {
 			throw new Error(staleText);
+		}
+
+		if (serverTitle !== null) {
+			let g;
+			try {
+				g = await pageFetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
+					headers: {Authorization: `Bearer ${token}`},
+				});
+			} catch {
+				throw new Error("Couldn't reach ChatGPT. Nothing changed.");
+			}
+
+			const current = g.ok ? (await readJson(g))?.title : undefined;
+			if (typeof current !== 'string') {
+				throw new Error("Couldn't check the chat. Nothing changed.");
+			}
+
+			if (current !== serverTitle || !stillValid()) {
+				throw new Error(staleText);
+			}
 		}
 
 		let r;
@@ -2559,7 +2610,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		qtPending.add(id);
 		try {
-			await renameChat(id, old, () => titleIs(id, tagged), 'Title changed — not undone');
+			await renameChat(id, old, () => titleIs(id, tagged), 'Title changed — not undone', tagged);
 		} catch (error) {
 			qtToast(error.message, {error: true});
 			return;

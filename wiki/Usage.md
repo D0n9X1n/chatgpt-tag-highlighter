@@ -48,7 +48,7 @@ Hover or focus a chat in the sidebar and click the tag button that appears next 
 - Picking another tag renames the chat on ChatGPT: the current prefix tag (the longest matching one) and the spaces after it are replaced, so `[TODO] Fix build` becomes `[BUG] Fix build`. `includes` rules are never stripped.
 - **Remove tag** (shown only for tagged chats) removes the prefix tag.
 - **New tag…** turns into a text box. Type a tag (1–40 characters) and press Enter: a `startsWith` rule is added with the next unused palette color and applied to the chat. If the tag already exists, that rule is reused. Escape goes back to the menu.
-- After a rename, a toast shows **Undo** for 6 seconds (longer while you hover or focus it). Undo restores the old title, unless the chat was renamed again in the meantime.
+- After a rename, a toast shows **Undo** for 6 seconds (longer while you hover or focus it). Undo restores the old title, unless the chat was renamed again in the meantime: here, in another tab or on another device. Before renaming it back, Undo checks the chat's current title on ChatGPT; if it can't check, nothing changes.
 - If the title changed while the menu was open, or ChatGPT refuses the rename, an error toast explains it and nothing changes.
 
 The menu works from the keyboard: arrow keys move, Home/End jump, Enter or Space picks, Escape closes and returns to the button, Tab closes. Renaming uses the same request ChatGPT's own **Rename** sends; see [Privacy](Privacy). Turn the button off with **Show quick tag button** in [Configuration](Configuration).

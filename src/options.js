@@ -449,8 +449,8 @@
 		let res;
 		try {
 			res = await sendRuntimeMessage({type: 'writeConfig', ...payload});
-			if (!res || (!res.ok && !res.conflict)) {
-				throw new Error(res?.error || 'failed');
+			if (!res) {
+				throw new Error('failed');
 			}
 		} catch {
 			// Never write storage here: keep the draft and retry the same {base, next}.
@@ -477,6 +477,18 @@
 
 		failed = null;
 		retryStep = 0;
+		if (!res.ok && !res.conflict) {
+			// The background refused this write (e.g. storage quota): resending the
+			// same payload can't help. Keep the draft; the next edit sends a fresh write.
+			toast(`Couldn't save: ${res.error || 'unknown error'}`, true);
+			if (pending) {
+				pending = false;
+				sendWrite(buildWrite());
+			}
+
+			return;
+		}
+
 		if (res.conflict) {
 			pending = false;
 			if (dirty) {

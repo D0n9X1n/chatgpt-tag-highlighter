@@ -1033,6 +1033,35 @@ class TestOptionsPage:
         page.wait_for_timeout(100)
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
 
+    def test_rejected_save_is_not_retried_and_next_edit_saves(self):
+        page = self._open_options()
+        self._pages.append(page)
+        self._set_config(page, _full([_rule('[A]')]))
+        page.reload()
+        page.wait_for_selector('#rows tr')
+        # Too big for one storage.sync item: background.js replies {ok: false, error}.
+        page.click('#importCfg')
+        page.fill('#importText', json.dumps(_full([_rule('[A]'), _rule('z' * 9000, '#ffffff', 'includes')])))
+        page.click('#importApply')
+        assert self._poll_toast(page, "Couldn't save:"), page.text_content('#toast')
+        assert len(self._get_config(page)['rules']) == 1
+        page.click('#rows tr:nth-child(2) .del')
+        page.check('#dimUntagged')
+        deadline = time.time() + 5
+        while time.time() < deadline and not self._get_config(page)['dimUntagged']:
+            page.wait_for_timeout(100)
+        cfg = self._get_config(page)
+        assert cfg['dimUntagged'] is True, 'a corrected draft must save; the rejected payload is not retried'
+        assert [r['tag'] for r in cfg['rules']] == ['[A]']
+
+    @staticmethod
+    def _poll_toast(page, text, timeout=5000):
+        try:
+            page.wait_for_function("t => document.getElementById('toast').textContent.includes(t)", arg=text, timeout=timeout)
+            return True
+        except PlaywrightTimeoutError:
+            return False
+
     def test_show_quick_tag_option_persists(self):
         page = self._fresh(_full([_rule('[A]')], showQuickTag=None))
         assert page.is_checked('#showQuickTag')
@@ -2146,6 +2175,7 @@ class TestContentScript:
         page.click('#cth-qt-toast .cth-qt-undo')
         assert self._poll(page, f"() => {span}.textContent === 'plain chat'")
         assert len(self._patches(calls)) == 2
+        assert [c['method'] for c in calls if '/backend-api/conversation/' in c['url']] == ['PATCH', 'GET', 'PATCH']
 
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
@@ -2153,7 +2183,7 @@ class TestContentScript:
                        server_limit=None, patch_status=None, hold_first_patch=False,
                        hold_list_pass=None, patch_body=None, patch_abort=False,
                        patch_statuses=None, hold_session=False, hold_session_at=None,
-                       hold_patch_at=None, session_abort=False):
+                       hold_patch_at=None, session_abort=False, titles=None, get_status=None):
         """Mock /api/auth/session, the conversation list, and per-chat PATCH.
 
         Records every API request in the returned list. `server_limit` caps
@@ -2164,6 +2194,9 @@ class TestContentScript:
         answers the Nth PATCH with the Nth status; `hold_session_at` /
         `hold_patch_at` hold the Nth session / PATCH request (1-based);
         `session_abort` fails session requests at the network level;
+        `titles` is a chat id -> title store (pass one dict to several pages to
+        share server state): a successful PATCH {title} updates it and
+        GET /backend-api/conversation/{id} returns it (`get_status` overrides);
         `patch_abort` fails PATCHes
         at the network level.
         """
@@ -2173,6 +2206,7 @@ class TestContentScript:
         passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
         pn = {'n': 0}  # PATCHes answered so far
         arrived = {'session': 0, 'patch': 0}
+        titles = {} if titles is None else titles
 
         def record(route):
             req = route.request
@@ -2207,6 +2241,15 @@ class TestContentScript:
                 return
             route.fulfill(status=200, content_type='application/json', body=body)
 
+        def conversation(route):
+            if route.request.method == 'GET':
+                record(route)
+                cid = route.request.url.rsplit('/', 1)[1]
+                status = get_status or (200 if cid in titles else 404)
+                body = {'id': cid, 'title': titles[cid]} if status == 200 else {'detail': 'conversation_not_found'}
+                return route.fulfill(status=status, content_type='application/json', body=json.dumps(body))
+            return patch(route)
+
         def patch(route):
             record(route)
             arrived['patch'] += 1
@@ -2217,12 +2260,15 @@ class TestContentScript:
             if patch_abort:
                 return route.abort()
             status = patch_statuses[pn['n'] - 1] if patch_statuses else (patch_status or 200)
-            route.fulfill(status=status, content_type='application/json',
-                          body=json.dumps(patch_body if patch_body is not None else {'success': status == 200}))
+            body = patch_body if patch_body is not None else {'success': status == 200}
+            sent = json.loads(route.request.post_data or '{}')
+            if status == 200 and body.get('success') is not False and 'title' in sent:
+                titles[route.request.url.rsplit('/', 1)[1]] = sent['title']
+            route.fulfill(status=status, content_type='application/json', body=json.dumps(body))
 
         page.route('https://chatgpt.com/api/auth/session', session)
         page.route('https://chatgpt.com/backend-api/conversations?*', listing)
-        page.route('https://chatgpt.com/backend-api/conversation/*', patch)
+        page.route('https://chatgpt.com/backend-api/conversation/*', conversation)
         return calls, held
 
     def _open_delete_page(self, **mock_kwargs):
@@ -3235,6 +3281,10 @@ class TestAppShellContentScript:
         assert [json.loads(c['body'])['title'] for c in patches] == ['[BUG] plain chat', 'plain chat']
         assert patches[1]['url'].endswith('/backend-api/conversation/c5'), 'Undo renames the same chat'
         assert patches[1]['auth'] == 'Bearer test-token'
+        chat_calls = [c for c in calls if '/backend-api/conversation/' in c['url']]
+        assert [(c['method'], c['url'].rsplit('/', 1)[1], c['auth']) for c in chat_calls] == [
+            ('PATCH', 'c5', 'Bearer test-token'), ('GET', 'c5', 'Bearer test-token'), ('PATCH', 'c5', 'Bearer test-token')], \
+            'Undo reads the server title right before its PATCH'
 
     def test_undo_failure_keeps_tag(self):
         page, _, _ = self._qt_page(patch_statuses=[200, 500])
@@ -3555,3 +3605,70 @@ class TestAppShellContentScript:
             opts.set_viewport_size({'width': width, 'height': 900})
             opts.wait_for_timeout(150)
             opts.screenshot(path=str(out / f'options-{width}.png'), full_page=True)
+
+    # ---- Tech lead review: rows moving under the button, cross-tab Undo ----
+
+    def test_quick_tag_click_checks_its_row_is_still_under_it(self):
+        page, calls, _ = self._qt_page()
+        page.mouse.move(640, 5)  # keep the pointer out of the sidebar: no synthetic re-hover
+        page.focus('#row-c5 a')
+        assert self._qt_shown(page)
+        # Layout moves the rows without touching the sidebar's DOM, scrolling or resizing.
+        page.evaluate("document.querySelector('#app-shell-sidebar nav').style.paddingTop = '120px'")
+        page.focus('#cth-qt-btn')
+        page.keyboard.press('Enter')
+        page.wait_for_timeout(200)
+        assert page.locator('#cth-qt-menu').count() == 0, 'the button no longer sits on its row'
+        assert self._qt_shown(page, False)
+        assert self._patches(calls) == []
+
+    def test_quick_tag_button_follows_rows_reordered_in_the_dom(self):
+        page, calls, _ = self._qt_page()
+        page.hover('#row-c5')
+        assert self._qt_shown(page)
+        box = page.locator('#cth-qt-btn').bounding_box()
+        x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        page.mouse.move(x, y)  # the pointer rests on the button itself
+        page.evaluate("() => { const c3 = document.getElementById('row-c3'); c3.before(document.getElementById('row-c5')); }")
+        assert page.evaluate("([x, y]) => document.elementsFromPoint(x, y).some(e => e.id === 'row-c3')", [x, y]), 'c3 now sits there'
+        page.wait_for_timeout(100)
+        page.mouse.click(x, y)
+        page.wait_for_timeout(200)
+        assert page.locator('#cth-qt-menu[data-cth-chat="c5"]').count() == 0, 'never bind the row that moved away'
+        if page.locator('#cth-qt-menu').count():
+            assert page.get_attribute('#cth-qt-menu', 'data-cth-chat') == 'c3'
+            page.click('#cth-qt-menu [data-tag="[BUG]"]')
+            assert self._title_is(page, 'c3', '[BUG] refactor code path')
+        assert all(not c['url'].endswith('/c5') for c in self._patches(calls))
+
+    def test_undo_refuses_when_server_title_is_unknown(self):
+        page, calls, _ = self._qt_page(get_status=500)
+        self._pick(page, 'c5', '[BUG]')
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, "Couldn't check the chat. Nothing changed.")
+        assert len(self._patches(calls)) == 1
+        assert page.evaluate(_tjs('c5')) == '[BUG] plain chat'
+
+    def test_cross_tab_undo_refuses_newer_rename(self):
+        titles = {}  # one server, two tabs
+        self._configure()
+        tab_a = self._open_chat()
+        self._ready(tab_a)
+        calls_a, _ = self._mock_chat_api(tab_a, titles=titles)
+        tab_b = self._open_chat()
+        self._ready(tab_b)
+        calls_b, _ = self._mock_chat_api(tab_b, titles=titles)
+        tab_a.bring_to_front()
+        self._pick(tab_a, 'c5', '[BUG]')
+        tab_a.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+        tab_a.hover('#cth-qt-toast')  # keep tab A's Undo toast open meanwhile
+        tab_b.bring_to_front()
+        self._pick(tab_b, 'c5', '[TODO]')
+        assert self._title_is(tab_b, 'c5', '[TODO] plain chat')
+        assert titles['c5'] == '[TODO] plain chat'
+        tab_a.bring_to_front()
+        tab_a.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(tab_a, 'Title changed — not undone')
+        sent = [json.loads(c['body'])['title'] for c in self._patches(calls_a) + self._patches(calls_b)]
+        assert sent == ['[BUG] plain chat', '[TODO] plain chat'], 'Undo must not overwrite the newer rename'
+        assert titles['c5'] == '[TODO] plain chat'

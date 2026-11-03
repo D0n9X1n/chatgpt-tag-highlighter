@@ -36,7 +36,7 @@ Both long-chat options count **turn containers**: a whole user/assistant exchang
 
 ## Saving with more than one window open
 
-Settings can change in more than one place: another settings window or tab, **New tag…** in the quick tag menu, or browser sync. A save never overwrites a change made elsewhere. A settings page with no unsaved edits shows the new settings right away. One with unsaved edits keeps them on screen and shows **Settings changed in another window** with **Reload**; nothing more is saved from that page until you click **Reload**, which loads the current settings and discards its unsaved edits. If a save can't reach the extension, the page shows **Not saved — retrying** and tries again.
+Settings can change in more than one place: another settings window or tab, **New tag…** in the quick tag menu, or browser sync. Within this browser, a save never overwrites a change made in another settings page or by **New tag…** in a ChatGPT tab. A change synced from another device at the same moment can still win, because browser sync is outside the extension's control. A settings page with no unsaved edits shows the new settings right away. One with unsaved edits keeps them on screen and shows **Settings changed in another window** with **Reload**; nothing more is saved from that page until you click **Reload**, which loads the current settings and discards its unsaved edits. If a save can't reach the extension, the page shows **Not saved — retrying** and tries again. If the browser refuses a save (for example, the settings are too large for sync storage), the page shows **Couldn't save:** with the reason and keeps your edits; the next change you make is saved fresh.
 
 ## Rule tester
 
