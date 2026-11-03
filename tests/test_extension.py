@@ -1541,6 +1541,20 @@ class TestStatic:
             m = json.loads((ROOT / 'src' / name).read_text())
             assert 'action' in m and 'default_popup' not in m['action'], name
 
+    @staticmethod
+    def _fn(text, name):  # function source with indentation stripped, by brace matching
+        start, depth = text.index(f'function {name}('), 0
+        for i in range(text.index('{', start), len(text)):
+            depth += {'{': 1, '}': -1}.get(text[i], 0)
+            if depth == 0:
+                return '\n'.join(line.strip() for line in text[start:i + 1].splitlines())
+
+    def test_apply_tag_never_reads_menu_state(self):
+        src = (ROOT / 'src' / 'content.js').read_text()
+        assert 'qtBound' not in self._fn(src, 'applyTag')
+        t = self._fn(src, 'startNewTag')
+        assert t.index('const bound = qtBound') < t.index('await'), 'capture the chat before any await'
+
     def test_only_background_writes_config(self):
         options = (ROOT / 'src' / 'options.js').read_text()
         content = (ROOT / 'src' / 'content.js').read_text()
@@ -1568,6 +1582,9 @@ CONTENT_RULES = [
     {'tag': '[ARCHIVE]', 'match': 'startsWith', 'color': '#928374', 'hide': True, 'overlay': True},
     {'tag': 'code', 'match': 'includes', 'color': '#83a598', 'hide': False, 'overlay': True},
 ]
+
+OK = '{"success": true}'
+TOKEN = '{"accessToken": "test-token"}'
 
 DEFAULT_CHATS = [
     ('c1', '[TODO] ship release'),
@@ -2098,22 +2115,51 @@ class TestContentScript:
             document.querySelector('#history a[href="/c/c5"]').dataset.cth === '1'"""), \
             'saved rule changes must apply live'
 
+    def test_legacy_quick_tag_pick_and_undo(self):
+        self._configure()
+        page = self._open_chat()
+        calls, _ = self._mock_chat_api(page)
+        link = '#history a[href="/c/c5"]'
+        span = f"document.querySelector('{link} .truncate span[dir=auto]')"
+        page.hover(link)
+        page.wait_for_selector('#cth-qt-btn', state='visible')
+        # Legacy rows have no native menu button: align to the anchor's own right edge.
+        gap = page.evaluate(f"""() => document.querySelector('{link}').getBoundingClientRect().right - 8
+            - document.getElementById('cth-qt-btn').getBoundingClientRect().right""")
+        assert abs(gap) <= 4, gap
+        page.evaluate(f"window.__node = {span}.firstChild")
+        page.click('#cth-qt-btn')
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        assert self._poll(page, f"() => {span}.textContent === '[BUG] plain chat'")
+        assert page.evaluate(f"{span}.firstChild === window.__node && {span}.childNodes.length === 1")
+        patches = self._patches(calls)
+        assert len(patches) == 1 and patches[0]['url'].endswith('/c5')
+        assert patches[0]['auth'] == 'Bearer test-token'
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._poll(page, f"() => {span}.textContent === 'plain chat'")
+        assert len(self._patches(calls)) == 2
+
     # ---- Delete untagged chats (ChatGPT's private API is mocked; never live) ----
 
     def _mock_chat_api(self, page, chats=None, session_token='test-token',
                        server_limit=None, patch_status=None, hold_first_patch=False,
-                       hold_list_pass=None, patch_body=None):
+                       hold_list_pass=None, patch_body=None, patch_abort=False,
+                       patch_statuses=None, hold_session=False):
         """Mock /api/auth/session, the conversation list, and per-chat PATCH.
 
         Records every API request in the returned list. `server_limit` caps
         the page size the mock server returns, like a real server might.
         `hold_list_pass` holds the first page of that listing pass (0 = preview,
         1 = the re-check at confirm time) until the test fulfills it.
+        `hold_session` holds the first session request; `patch_statuses`
+        answers the Nth PATCH with the Nth status; `patch_abort` fails PATCHes
+        at the network level.
         """
         chats = API_CHATS if chats is None else chats
         calls = []
         held = []
         passes = {'n': -1}  # listing passes started (a pass begins at offset=0)
+        pn = {'n': 0}  # PATCHes answered so far
 
         def record(route):
             req = route.request
@@ -2123,6 +2169,9 @@ class TestContentScript:
 
         def session(route):
             record(route)
+            if hold_session and not held:
+                held.append(route)  # fulfilled later by the test
+                return
             body = {'accessToken': session_token} if session_token else {}
             route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
 
@@ -2147,7 +2196,10 @@ class TestContentScript:
             if hold_first_patch and not held:
                 held.append(route)  # fulfilled later by the test
                 return
-            status = patch_status or 200
+            pn['n'] += 1
+            if patch_abort:
+                return route.abort()
+            status = patch_statuses[pn['n'] - 1] if patch_statuses else (patch_status or 200)
             route.fulfill(status=status, content_type='application/json',
                           body=json.dumps(patch_body if patch_body is not None else {'success': status == 200}))
 
@@ -2758,3 +2810,422 @@ class TestAppShellContentScript:
         }""")
         assert self._poll(page, "() => document.querySelector('#item-a2').getClientRects().length > 0"), \
             'a recycled link must not inherit another chat\'s deleted marker after a config change'
+
+    # ---- Settings gear (#76) ----
+
+    BAR_IDS = "() => [...(document.querySelector('#cth-filter-bar.cth-visible')?.children || [])].map(e => e.id || e.className)"
+
+    def test_settings_gear_thresholds_and_label(self):
+        self._configure(rules=[CONTENT_RULES[0]])
+        page = self._open_chat()
+        self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible')")
+        assert page.evaluate(self.BAR_IDS) == ['cth-settings']
+        gear = page.locator('#cth-settings')
+        assert gear.get_attribute('aria-label') == 'Tag Highlighter settings'
+        assert gear.get_attribute('title') == 'Tag Highlighter settings'
+        assert gear.text_content() == ''
+        page.keyboard.press('Alt+f')
+        assert page.evaluate('document.activeElement.id') == 'cth-settings'
+        self._configure(showDeleteUntagged=True)
+        assert self._poll(page, "() => !!document.querySelector('#cth-filter-bar.cth-visible .cth-pill')")
+        ids = page.evaluate(self.BAR_IDS)
+        assert ids[0].startswith('cth-pill'), ids
+        assert ids[-2:] == ['cth-delete-untagged', 'cth-settings'], ids
+
+    def test_settings_gear_opens_one_settings_page(self):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        with self.context.expect_page() as info:
+            page.click('#cth-settings')
+        opened = info.value
+        self._pages.append(opened)
+        opened.wait_for_load_state()
+        assert opened.url.endswith('/options.html'), opened.url
+        page.click('#cth-settings')
+        page.wait_for_timeout(800)
+        options = [p for p in self.context.pages if p.url.endswith('/options.html')]
+        assert len(options) == 1, [p.url for p in self.context.pages]
+
+    # ---- Quick tag (#73) ----
+
+    QT_ITEMS = """() => [...document.querySelectorAll('#cth-qt-menu .cth-qt-list [role=menuitemradio]')].map(n => [
+        n.dataset.tag, n.getAttribute('aria-checked'), getComputedStyle(n.querySelector('.cth-qt-swatch')).backgroundColor])"""
+    QT_FOCUS = "() => document.activeElement.dataset.tag || document.activeElement.dataset.action || document.activeElement.id"
+
+    def _qt_page(self, chats=None, rules=None, **mock):
+        self._configure(rules=rules)
+        page = self._open_chat(**({'chats': chats} if chats is not None else {}))
+        self._ready(page)
+        calls, held = self._mock_chat_api(page, **mock)
+        return page, calls, held
+
+    def _open_qt(self, page, cid):
+        page.hover(f'#row-{cid}')
+        page.click('#cth-qt-btn')
+        page.wait_for_selector(f'#cth-qt-menu[data-cth-chat="{cid}"]')
+
+    def _qt_shown(self, page, shown=True):
+        """Poll briefly until the tag button's visibility equals `shown`."""
+        want = 'true' if shown else 'false'
+        return self._poll(page, f"() => {{ const b = document.getElementById('cth-qt-btn'); return (!!b && !b.hidden && b.getClientRects().length > 0) === {want}; }}",
+                          timeout=1500)
+
+    def test_quick_tag_button_only_on_valid_chat_rows(self):
+        page, _, _ = self._qt_page(chats=DEFAULT_CHATS + [('bad id!', '[TODO] x')])
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        assert page.get_attribute('#cth-qt-btn', 'aria-label') == 'Tag chat'
+        page.hover('[id="row-bad id!"]')
+        assert self._qt_shown(page, False), 'chat ids outside [\\w-] never get a button'
+        page.hover('#other-nav')
+        assert self._qt_shown(page, False), 'non-row links never get a button'
+        page.focus('#row-c2 a')
+        assert self._qt_shown(page), 'keyboard focus on a row shows the button too'
+
+    def test_quick_tag_menu_lists_prefix_rules_in_order(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c2')
+        assert page.evaluate(self.QT_ITEMS) == [
+            ['[TODO]', 'false', 'rgb(250, 189, 47)'],
+            ['[BUG]', 'true', 'rgb(251, 73, 52)'],
+            ['[ARCHIVE]', 'false', 'rgb(146, 131, 116)'],
+        ]
+        assert page.is_visible('#cth-qt-menu [data-action=remove]')
+        assert page.is_visible('#cth-qt-menu [data-action=new]')
+        page.keyboard.press('Escape')
+        self._open_qt(page, 'c5')
+        assert page.locator('#cth-qt-menu [data-action=remove]').count() == 0, 'untagged chats have nothing to remove'
+        page.keyboard.press('Escape')
+        self._configure(rules=[CONTENT_RULES[3]])
+        assert self._poll(page, "() => !document.querySelector('#row-c1[data-cth]')")
+        self._open_qt(page, 'c5')
+        assert page.text_content('#cth-qt-menu .cth-qt-empty') == 'No prefix tags yet'
+
+    def test_quick_tag_menu_keyboard(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c1')
+        assert page.is_visible('#cth-qt-btn')
+        assert page.get_attribute('#cth-qt-btn', 'aria-expanded') == 'true'
+        assert page.evaluate(self.QT_FOCUS) == '[TODO]'
+        seen = []
+        for key in ('ArrowUp', 'ArrowDown', 'End', 'Home'):
+            page.keyboard.press(key)
+            seen.append(page.evaluate(self.QT_FOCUS))
+        assert seen == ['new', '[TODO]', 'new', '[TODO]']
+        page.keyboard.press('Escape')
+        assert page.locator('#cth-qt-menu').count() == 0
+        assert page.evaluate('document.activeElement.id') == 'cth-qt-btn'
+        assert page.get_attribute('#cth-qt-btn', 'aria-expanded') == 'false'
+        self._open_qt(page, 'c1')
+        page.keyboard.press('Tab')
+        assert page.locator('#cth-qt-menu').count() == 0
+
+    def test_quick_tag_hides_for_native_row_menu(self):
+        page, _, _ = self._qt_page()
+        page.evaluate("""() => {
+            const b = document.querySelector('#row-c3 .menu');
+            b.addEventListener('click', () => setTimeout(() => b.setAttribute('aria-expanded', 'true'), 0));
+        }""")
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        page.click('#row-c3 .menu')
+        page.wait_for_timeout(700)
+        page.hover('#row-c3')
+        assert self._qt_shown(page, False), 'stay out of the way while the native row menu is open'
+        page.evaluate("document.querySelector('#row-c3 .menu').setAttribute('aria-expanded', 'false')")
+        page.hover('#row-c2')
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        page.focus('#row-c2 .menu')
+        page.keyboard.press('Enter')
+        assert self._qt_shown(page, False), 'opening a native menu from the keyboard hides the button'
+
+    def test_alt_t_focused_row_vs_active_chat(self):
+        page, _, _ = self._qt_page()
+        page.focus('#row-c3 a')
+        page.keyboard.press('Alt+t')
+        page.wait_for_selector('#cth-qt-menu')
+        assert page.get_attribute('#cth-qt-menu', 'data-cth-chat') == 'c3'
+        page.keyboard.press('Escape')
+        page.evaluate('document.activeElement.blur()')
+        page.keyboard.press('Alt+t')
+        page.wait_for_selector('#cth-qt-menu')
+        assert page.get_attribute('#cth-qt-menu', 'data-cth-chat') == 'c1'
+
+    def test_quick_tag_default_on_and_option_off(self):
+        page, _, _ = self._qt_page()
+        page.hover('#row-c3')
+        assert self._qt_shown(page)
+        self._configure(showQuickTag=False)
+        assert self._qt_shown(page, False)
+        page.wait_for_timeout(300)
+        page.hover('#row-c2')
+        page.hover('#row-c3')
+        page.wait_for_timeout(200)
+        assert page.locator('#cth-qt-btn:not([hidden])').count() == 0
+        page.focus('#row-c3 a')
+        page.keyboard.press('Alt+t')
+        page.wait_for_timeout(300)
+        assert page.locator('#cth-qt-menu').count() == 0
+
+    # ---- Renaming from the quick tag menu (#73) ----
+
+    def _pick(self, page, cid, tag):
+        self._open_qt(page, cid)
+        page.click(f'#cth-qt-menu [data-tag="{tag}"]')
+
+    def _title_is(self, page, cid, title, timeout=3000):
+        return self._poll(page, f'([t]) => {_tjs(cid)} === t', arg=[title], timeout=timeout)
+
+    def _alert(self, page, text):
+        assert self._poll(page, """([t]) => {
+            const n = document.querySelector('#cth-qt-toast[role=alert]');
+            return !!n && n.textContent.includes(t);
+        }""", arg=[text], timeout=5000), page.evaluate("document.getElementById('cth-qt-toast')?.textContent")
+
+    @staticmethod
+    def _wait_held(page, held):
+        deadline = time.time() + 5
+        while not held and time.time() < deadline:
+            page.wait_for_timeout(50)
+        assert held, 'held request never arrived'
+
+    def test_pick_tag_patches_exact_chat_with_bearer(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        patches = self._patches(calls)
+        assert len(patches) == 1
+        assert patches[0]['url'].endswith('/backend-api/conversation/c5')
+        assert patches[0]['auth'] == 'Bearer test-token'
+        assert json.loads(patches[0]['body']) == {'title': '[BUG] plain chat'}
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c5')).backgroundColor === 'rgba(251, 73, 52, 0.12)'")
+
+    def test_pick_replaces_longest_prefix_and_spaces(self):
+        rules = [_rule('[A]'), _rule('[A][B]', '#fb4934'), _rule('[C]', '#83a598')]
+        page, calls, _ = self._qt_page(chats=[('c2', '[A][B]   two'), ('c3', '[C] three')], rules=rules)
+        self._pick(page, 'c2', '[C]')
+        assert self._title_is(page, 'c2', '[C] two')
+        self._open_qt(page, 'c3')
+        page.click('#cth-qt-menu [data-action=remove]')
+        assert self._title_is(page, 'c3', 'three')
+        self._pick(page, 'c2', '[C]')
+        page.wait_for_timeout(300)
+        assert len(self._patches(calls)) == 2, 'picking the current tag changes nothing'
+
+    def test_rename_keeps_title_text_node(self):
+        page, _, _ = self._qt_page()
+        page.evaluate("window.__node = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').firstChild")
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        assert page.evaluate("""() => {
+            const s = document.querySelector('#row-c5 [data-thread-title] span[dir=auto]');
+            return s.firstChild === window.__node && s.childNodes.length === 1;
+        }""")
+
+    @pytest.mark.parametrize('mock, message', [
+        ({'patch_abort': True}, "Couldn't reach ChatGPT. Nothing changed."),
+        ({'patch_status': 401}, 'Sign in to ChatGPT first. Nothing changed.'),
+        ({'patch_status': 403}, 'Sign in to ChatGPT first. Nothing changed.'),
+        ({'patch_status': 429}, 'ChatGPT is rate-limiting requests (HTTP 429). Wait a minute and try again.'),
+        ({'patch_status': 500}, 'ChatGPT refused the rename (HTTP 500). Nothing changed.'),
+        ({'patch_body': {'success': False}}, "ChatGPT said the rename didn't go through. Nothing changed."),
+    ], ids=['abort', '401', '403', '429', '500', 'success-false'])
+    def test_rename_errors_change_nothing(self, mock, message):
+        page, _, _ = self._qt_page(**mock)
+        self._pick(page, 'c5', '[BUG]')
+        self._alert(page, message)
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+        assert page.get_attribute('#row-c5', 'data-cth') is None
+
+    def test_override_survives_remount_and_yields_to_third_title(self):
+        page, _, _ = self._qt_page()
+        span = "document.querySelector('#row-c5 [data-thread-title] span[dir=auto]')"
+        self._pick(page, 'c5', '[BUG]')
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+        page.evaluate(f"{span}.textContent = 'plain chat'")  # a stale remount
+        assert self._title_is(page, 'c5', '[BUG] plain chat'), 'the confirmed title wins over a stale copy'
+        page.evaluate(f"""() => {{
+            window.__cd = 0;
+            new MutationObserver(ms => {{ window.__cd += ms.filter(m => m.type === 'characterData').length; }})
+                .observe({span}, {{characterData: true, subtree: true, childList: true}});
+            {span}.textContent = '[BUG] plain chat';
+        }}""")
+        page.wait_for_timeout(300)
+        assert page.evaluate('window.__cd') == 0, 'the new title needs no rewrite'
+        page.evaluate(f"{span}.textContent = 'renamed elsewhere'")
+        assert self._poll(page, "() => !document.querySelector('#row-c5').hasAttribute('data-cth')")
+        page.evaluate(f"{span}.textContent = 'plain chat'")
+        page.wait_for_timeout(300)
+        assert page.evaluate(_tjs('c5')) == 'plain chat', 'a third title ends the override'
+
+    def test_title_changed_before_pick_aborts(self):
+        page, calls, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+
+    def test_recycled_anchor_other_id_aborts(self):
+        page, calls, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.evaluate("document.querySelector('#row-c5 a').setAttribute('href', '/c/c9')")
+        page.click('#cth-qt-menu [data-tag="[BUG]"]')
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+
+    def test_title_change_while_token_pending_aborts(self):
+        page, calls, held = self._qt_page(hold_session=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        held[0].fulfill(status=200, content_type='application/json', body=TOKEN)
+        self._alert(page, 'Title changed — try again')
+        assert self._patches(calls) == []
+        assert page.evaluate(_tjs('c5')) == 'other'
+
+    @pytest.mark.parametrize('change', ['title', 'href'])
+    def test_post_request_change_aborts_dom_write(self, change):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        if change == 'title':
+            page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'other'")
+        else:
+            page.evaluate("document.querySelector('#row-c5 a').setAttribute('href', '/c/c9')")
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        self._alert(page, 'Title changed — try again')
+        assert page.evaluate(_tjs('c5')) == ('other' if change == 'title' else 'plain chat')
+        assert page.get_attribute('#row-c5', 'data-cth') is None
+        if change == 'title':
+            page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'plain chat'")
+            page.wait_for_timeout(300)
+            assert page.evaluate(_tjs('c5')) == 'plain chat', 'an aborted write leaves no override behind'
+
+    def test_overlapping_rename_same_chat_refused(self):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._pick(page, 'c5', '[BUG]')
+        self._wait_held(page, held)
+        page.mouse.click(640, 400)
+        self._pick(page, 'c5', '[TODO]')
+        self._alert(page, 'Still saving this chat — try again')
+        assert len(self._patches(calls)) == 1
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c5', '[BUG] plain chat')
+
+    def test_toast_above_overlay_auto_hides_and_pauses(self):
+        page, _, _ = self._qt_page()
+        assert self._overlay_visible(page)
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast[role=status]')
+        gap = page.evaluate("""() => document.querySelector('#cth-overlay').getBoundingClientRect().top - 12
+            - document.querySelector('#cth-qt-toast').getBoundingClientRect().bottom""")
+        assert gap >= -0.5, gap
+        page.hover('#cth-qt-toast')
+        page.wait_for_timeout(7000)
+        assert page.is_visible('#cth-qt-toast'), 'hovering pauses the auto-hide'
+        page.mouse.move(640, 5)
+        page.wait_for_timeout(6500)
+        assert page.locator('#cth-qt-toast').count() == 0
+
+    # ---- New tag from the quick tag menu (#73) ----
+
+    def _stored_rules(self):
+        page = self.context.new_page()
+        try:
+            page.goto(f'chrome-extension://{self.ext_id}/options.html')
+            return page.evaluate("k => new Promise(r => chrome.storage.sync.get(k, d => r(d[k].rules)))", STORAGE_KEY)
+        finally:
+            page.close()
+
+    def _new_tag(self, page, cid, text):
+        self._open_qt(page, cid)
+        page.click('#cth-qt-menu [data-action=new]')
+        page.fill('#cth-qt-menu input', text)
+        page.keyboard.press('Enter')
+
+    def test_new_tag_trims_creates_rule_and_renames(self):
+        page, _, _ = self._qt_page()
+        self._open_qt(page, 'c5')
+        page.click('#cth-qt-menu [data-action=new]')
+        page.wait_for_selector('#cth-qt-menu input')
+        assert page.get_attribute('#cth-qt-menu input', 'placeholder') == '[TAG]'
+        page.keyboard.press('Escape')
+        assert page.locator('#cth-qt-menu [data-action=new]').count() == 1
+        assert page.locator('#cth-qt-menu input').count() == 0
+        page.click('#cth-qt-menu [data-action=new]')
+        page.wait_for_selector('#cth-qt-menu input')
+        page.keyboard.press('Tab')
+        assert page.locator('#cth-qt-menu').count() == 0
+        self._new_tag(page, 'c5', '  [NEW]  ')
+        assert self._title_is(page, 'c5', '[NEW] plain chat')
+        assert self._stored_rules()[-1] == _rule('[NEW]', '#b8bb26')
+
+    @pytest.mark.parametrize('text', ['', 'x' * 41, 'x' * 40], ids=['empty', '41', '40'])
+    def test_new_tag_length_bounds(self, text):
+        page, calls, _ = self._qt_page()
+        self._new_tag(page, 'c5', text)
+        if len(text) == 40:
+            assert self._title_is(page, 'c5', 'x' * 40 + ' plain chat')
+            assert len(self._stored_rules()) == len(CONTENT_RULES) + 1
+        else:
+            self._alert(page, 'Tags are 1–40 characters.')
+            page.wait_for_timeout(300)
+            assert self._patches(calls) == []
+            assert len(self._stored_rules()) == len(CONTENT_RULES)
+
+    @pytest.mark.parametrize('tag, title', [('[BUG]', '[BUG] plain chat'), ('code', 'code plain chat')])
+    def test_new_tag_reuses_existing(self, tag, title):
+        page, _, _ = self._qt_page()
+        self._new_tag(page, 'c5', tag)
+        assert self._title_is(page, 'c5', title)
+        assert len(self._stored_rules()) == len(CONTENT_RULES)
+
+    def test_new_tag_rename_failure_keeps_rule(self):
+        page, _, _ = self._qt_page(patch_status=500)
+        self._new_tag(page, 'c5', '[NEW]')
+        self._alert(page, 'ChatGPT refused the rename (HTTP 500). Nothing changed.')
+        assert page.evaluate(_tjs('c5')) == 'plain chat'
+        assert self._stored_rules()[-1]['tag'] == '[NEW]'
+
+    def test_new_tag_keeps_original_chat_across_await(self):
+        page, calls, held = self._qt_page(hold_first_patch=True)
+        self._new_tag(page, 'c1', '[NEW]')
+        self._wait_held(page, held)
+        page.mouse.click(640, 400)
+        self._open_qt(page, 'c2')
+        held[0].fulfill(status=200, content_type='application/json', body=OK)
+        assert self._title_is(page, 'c1', '[NEW] ship release')
+        patches = self._patches(calls)
+        assert len(patches) == 1 and patches[0]['url'].endswith('/c1')
+        assert page.locator('#cth-qt-menu[data-cth-chat="c2"]').count() == 1, 'a later menu stays open'
+        assert page.evaluate(_tjs('c2')) == '[BUG] code crash'
+
+    # ---- Undo (#73) ----
+
+    def test_undo_restores_title(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast[role=status]')
+        assert page.evaluate("[...document.getElementById('cth-qt-toast').children].map(c => c.textContent)") == ['Tagged', '·', 'Undo']
+        page.click('#cth-qt-toast .cth-qt-undo')
+        assert self._title_is(page, 'c5', 'plain chat')
+        assert [json.loads(c['body'])['title'] for c in self._patches(calls)] == ['[BUG] plain chat', 'plain chat']
+
+    def test_undo_failure_keeps_tag(self):
+        page, _, _ = self._qt_page(patch_statuses=[200, 500])
+        self._pick(page, 'c5', '[BUG]')
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, 'ChatGPT refused the rename (HTTP 500). Nothing changed.')
+        assert page.evaluate(_tjs('c5')) == '[BUG] plain chat'
+
+    def test_undo_refused_after_intervening_rename(self):
+        page, calls, _ = self._qt_page()
+        self._pick(page, 'c5', '[BUG]')
+        page.wait_for_selector('#cth-qt-toast .cth-qt-undo')
+        page.evaluate("document.querySelector('#row-c5 [data-thread-title] span[dir=auto]').textContent = 'renamed elsewhere'")
+        page.click('#cth-qt-toast .cth-qt-undo')
+        self._alert(page, 'Title changed — not undone')
+        assert len(self._patches(calls)) == 1
