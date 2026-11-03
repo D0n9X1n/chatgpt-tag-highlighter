@@ -3235,3 +3235,54 @@ class TestAppShellContentScript:
         page.click('#cth-qt-toast .cth-qt-undo')
         self._alert(page, 'Title changed — not undone')
         assert len(self._patches(calls)) == 1
+
+    # ---- Designer screenshots (T12; skipped unless CTH_SCREENSHOTS names an output dir) ----
+
+    # The fixture page is unstyled (white body, blue links) and our row tints are translucent,
+    # so give each theme a ChatGPT-like page behind our UI.
+    THEME_FIXTURE_CSS = {
+        'dark': 'body{background:#181818;color:#ececec} a{color:inherit;text-decoration:none} [role=group]{background:#181818} #composer{background:#303030}',
+        'light': 'body{background:#fff;color:#0d0d0d} a{color:inherit;text-decoration:none} [role=group]{background:#f9f9f9} #composer{background:#f4f4f4}',
+    }
+
+    @staticmethod
+    def _clip(page, selectors, pad=12):
+        """A viewport clip covering every selector's box, padded and clamped."""
+        return page.evaluate("""([sels, pad]) => {
+            const rs = sels.map(s => document.querySelector(s).getBoundingClientRect());
+            const x = Math.max(0, Math.min(...rs.map(r => r.left)) - pad), y = Math.max(0, Math.min(...rs.map(r => r.top)) - pad);
+            const right = Math.min(innerWidth, Math.max(...rs.map(r => r.right)) + pad);
+            const bottom = Math.min(innerHeight, Math.max(...rs.map(r => r.bottom)) + pad);
+            return {x, y, width: right - x, height: bottom - y};
+        }""", [selectors, pad])
+
+    @pytest.mark.skipif(not os.environ.get('CTH_SCREENSHOTS'), reason='designer capture only')
+    def test_capture_ui_screenshots(self):
+        out = Path(os.environ['CTH_SCREENSHOTS'])
+        out.mkdir(parents=True, exist_ok=True)
+        for theme in ('dark', 'light'):
+            page, _, _ = self._qt_page()
+            page.set_viewport_size({'width': 1100, 'height': 760})
+            page.evaluate("([theme, css]) => { document.documentElement.classList.replace('dark', theme); "
+                          "document.head.append(Object.assign(document.createElement('style'), {textContent: css})); }",
+                          [theme, self.THEME_FIXTURE_CSS[theme]])
+            assert self._poll(page, f"() => document.documentElement.classList.contains('cth-light') === {str(theme == 'light').lower()}")
+            page.locator('#cth-filter-bar').screenshot(path=str(out / f'gear-{theme}.png'))
+            page.hover('#row-c3')
+            assert self._qt_shown(page)
+            page.screenshot(path=str(out / f'button-{theme}.png'), clip=self._clip(page, ['#row-c3', '#cth-qt-btn']))
+            self._open_qt(page, 'c2')
+            page.screenshot(path=str(out / f'menu-{theme}.png'), clip=self._clip(page, ['#cth-qt-menu', '#cth-qt-btn']))
+            page.keyboard.press('Escape')
+            self._pick(page, 'c5', '[TODO]')
+            page.wait_for_selector('#cth-qt-toast[role=status]')
+            page.mouse.move(1, 1)  # no hover styling in the shot
+            page.screenshot(path=str(out / f'toast-{theme}.png'), clip=self._clip(page, ['#cth-qt-toast'], pad=24))
+        opts = self.context.new_page()
+        self._pages.append(opts)
+        opts.goto(f'chrome-extension://{self.ext_id}/options.html')
+        opts.wait_for_selector('#rows tr')
+        for width in (400, 900):
+            opts.set_viewport_size({'width': width, 'height': 900})
+            opts.wait_for_timeout(150)
+            opts.screenshot(path=str(out / f'options-{width}.png'), full_page=True)
