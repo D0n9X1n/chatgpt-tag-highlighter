@@ -1032,25 +1032,45 @@ class TestOptionsPage:
         return [s.selectedOptions[0].textContent, need, s.offsetWidth, s.scrollWidth <= s.clientWidth];
     }).filter(([, need, has, fits]) => need > has || !fits)"""
 
-    @pytest.mark.parametrize('width, height', [(1040, 760), (1024, 700)])
-    def test_settings_window_rows_fit_on_one_line(self, width, height):
-        colors = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff', '#123456']
-        page = self._fresh(_full([_rule(f'[T{i}]', c, 'includes' if i % 2 else 'startsWith') for i, c in enumerate(colors)]))
+    # Wider than macOS's default font, like Linux CI's: layout must not depend on font metrics.
+    WIDE_FONT = '* { font-family: Verdana, "DejaVu Sans", sans-serif !important; letter-spacing: 0.02em; }'
+    ALL_COLOURS = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff', '#123456']
+
+    def _rules_page(self, width, height, font):
+        page = self._fresh(_full([_rule(f'[T{i}]', c, 'includes' if i % 2 else 'startsWith') for i, c in enumerate(self.ALL_COLOURS)]))
+        if font == 'wide':
+            page.add_style_tag(content=self.WIDE_FONT)
         page.set_viewport_size({'width': width, 'height': height})
         page.wait_for_timeout(150)
+        return page
+
+    NO_SIDEWAYS_SCROLL = 'document.documentElement.scrollWidth <= innerWidth'
+
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width, height', [(1040, 760), (1024, 700)])
+    def test_settings_window_rows_fit_on_one_line(self, width, height, font):
+        page = self._rules_page(width, height, font)
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        if font == 'wide':
+            return  # Any font: no sideways scroll. The default font also fits every label on one line.
         assert page.evaluate(self.CLIPPED_SELECTS) == [], 'no select label is cut off'
         assert page.evaluate("[...document.querySelectorAll('#rows tr')].every(tr => new Set([...tr.children].map(td => td.getBoundingClientRect().top)).size === 1)")
         assert page.evaluate("[...document.querySelectorAll('#rows .input, #rows .select')].every(e => e.getBoundingClientRect().height < 40)"), 'no control wraps'
-        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
-    @pytest.mark.parametrize('width', [641, 700, 800, 899, 900])
-    def test_mid_width_table_no_horizontal_scroll(self, width):
-        colors = ['#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#fe8019', '#928374', '#a7a7a7', '#ffffff', '#123456']
-        page = self._fresh(_full([_rule(f'[T{i}]', c, 'includes' if i % 2 else 'startsWith') for i, c in enumerate(colors)]))
-        page.set_viewport_size({'width': width, 'height': 800})
-        page.wait_for_timeout(150)
+    @pytest.mark.parametrize('font', ['default', 'wide'])
+    @pytest.mark.parametrize('width', [641, 700, 800, 899, 900, 999])
+    def test_mid_width_table_no_horizontal_scroll(self, width, font):
+        page = self._rules_page(width, 800, font)
         assert page.evaluate("getComputedStyle(document.querySelector('#rows tr')).display") == 'table-row'
-        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), page.evaluate('document.documentElement.scrollWidth')
+        assert page.evaluate(self.NO_SIDEWAYS_SCROLL), page.evaluate('document.documentElement.scrollWidth')
+        # Every control stays inside its row.
+        assert page.evaluate("""() => [...document.querySelectorAll('#rows tr')].every(tr => {
+            const r = tr.getBoundingClientRect();
+            return [...tr.querySelectorAll('input, select, button')].every(c => c.getBoundingClientRect().right <= r.right + 0.5);
+        })""")
+        # No header or cell spills into the next column.
+        assert page.evaluate("""() => [...document.querySelectorAll('.table thead th, #rows td')]
+            .filter(c => c.scrollWidth > c.clientWidth + 1).map(c => [c.textContent.trim() || c.dataset.label, c.clientWidth, c.scrollWidth])""") == []
 
     def test_colour_presets_show_names_with_hex_values(self):
         page = self._fresh(_full([_rule('[A]', '#fabd2f')]))

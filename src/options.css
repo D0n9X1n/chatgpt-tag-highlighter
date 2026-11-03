@@ -89,6 +89,37 @@ button.ghost{
   border-collapse: collapse;
 }
 
+/* Column widths: # · move · tag · match · colour · hex · hide · overlay · preview · delete. */
+.table thead th:nth-child(1){ width: 3%; }
+.table thead th:nth-child(2){ width: 4%; }
+.table thead th:nth-child(3){ width: 21%; }
+.table thead th:nth-child(4){ width: 11%; }
+.table thead th:nth-child(5){ width: 17%; }
+.table thead th:nth-child(6){ width: 14%; }
+.table thead th:nth-child(7){ width: 7%; }
+.table thead th:nth-child(8){ width: 7%; }
+.table thead th:nth-child(9){ width: 6%; }
+.table thead th:nth-child(10){ width: 4%; }
+
+/* 641–999 px: a fixed layout is never wider than the window, whatever the
+   font. Small columns get fixed widths; the four fields share the rest. */
+@media (min-width: 641px) and (max-width: 999px){
+  .table{ table-layout: fixed; }
+  .table th, .table td{ padding-left: 6px; padding-right: 6px; }
+  .table thead th{ overflow-wrap: anywhere; } /* Long headers wrap inside their column. */
+  .table thead th:nth-child(1){ width: 36px; }
+  .table thead th:nth-child(2){ width: 56px; }
+  .table thead th:nth-child(3),
+  .table thead th:nth-child(4),
+  .table thead th:nth-child(5),
+  .table thead th:nth-child(6){ width: auto; }
+  .table thead th:nth-child(7){ width: 80px; }
+  .table thead th:nth-child(8){ width: 104px; }
+  .table thead th:nth-child(9){ width: 80px; }
+  .table thead th:nth-child(10){ width: 50px; }
+  #rows .input, #rows .select{ min-width: 0; }
+}
+
 th, td{
   text-align: left;
   padding: 8px;
@@ -114,7 +145,7 @@ th{
 
 /* Where the full table fits (the 1040 px settings window), don't squeeze a
    select below its widest label. Narrower tables shrink rather than scroll. */
-@media (min-width: 800px){
+@media (min-width: 1000px){
   #rows .select{ min-width: max-content; }
 }
 
@@ -352,7 +383,7 @@ th{
   vertical-align: middle;
 }
 
-@media (max-width: 899px){
+@media (max-width: 999px){
   .moveBtns{ flex-direction: column; }
 }
 
