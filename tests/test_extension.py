@@ -3883,6 +3883,8 @@ class TestAppShellContentScript:
     def test_closing_menu_without_refocus_clears_button(self):
         page, _, _ = self._qt_page()
         self._open_qt(page, 'c5')
+        # Pointer off the sidebar first: a pointer still on the row would rightly show the button again.
+        page.mouse.move(640, 5)
         page.evaluate("document.getElementById('cth-qt-menu').dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', bubbles: true}))")
         assert page.locator('#cth-qt-menu').count() == 0
         assert self._qt_shown(page, False), 'closing the menu must not leave a button bound to an old row'
