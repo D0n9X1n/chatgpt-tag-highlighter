@@ -3438,14 +3438,18 @@ class TestAppShellContentScript:
         page.focus('#row-c3 a')                        # c3's buttons are display:none, but its menu is open
         assert self._qt_shown(page, False)
 
-    def test_quick_tag_ignores_visibility_hidden_buttons(self):
+    def test_quick_tag_slot_is_stable_however_native_buttons_are_hidden(self):
+        # #83: the tag button keeps one slot per native row button, so it neither covers a button
+        # nor jumps when ChatGPT shows, hides (display:none) or blanks (visibility:hidden) them.
         page, _, _ = self._qt_page()
-        page.evaluate("document.querySelector('#row-c5 .menu').style.visibility = 'hidden'")
-        page.hover('#row-c5 a')
-        assert self._qt_shown(page)
-        gap = page.evaluate("() => document.querySelector('#row-c5 .menu').getBoundingClientRect().left - document.getElementById('cth-qt-btn').getBoundingClientRect().right")
-        assert abs(gap - 4) <= 0.5, gap                # still left of the ⋯ slot, never on top of it
-        assert not any(o for _, o in self._qt_overlaps(page, 'c5'))
+        lefts = []
+        for css in ('', 'visibility: hidden', 'display: none'):
+            page.evaluate("css => document.querySelector('#row-c5 .menu').setAttribute('style', css)", css)
+            page.hover('#row-c2 a'); page.hover('#row-c5 a')
+            assert self._qt_shown(page)
+            lefts.append(page.eval_on_selector('#cth-qt-btn', 'e => Math.round(e.getBoundingClientRect().left)'))
+            assert not any(o for _, o in self._qt_overlaps(page, 'c5')), (css, self._qt_overlaps(page, 'c5'))
+        assert len(set(lefts)) == 1, lefts
 
     def test_quick_tag_hides_for_native_row_menu(self):
         page, _, _ = self._qt_page()
