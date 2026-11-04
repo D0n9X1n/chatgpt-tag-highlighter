@@ -471,12 +471,12 @@ html.cth-light #${DELETE_BTN_ID}:hover, html.cth-light #${DELETE_BTN_ID}:focus-v
   background: transparent;
   cursor: pointer;
   border: 1px solid rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.60);
+  color: #fff;
   margin-inline-start: auto;
 }
 html.cth-light #${SETTINGS_BTN_ID} {
   border-color: rgba(0,0,0,0.10);
-  color: rgba(0,0,0,0.55);
+  color: #000;
 }
 #${DELETE_BTN_ID} ~ #${SETTINGS_BTN_ID} {
   margin-inline-start: 0;
@@ -589,14 +589,14 @@ html.cth-dim-untagged [data-cth-row]:not([data-cth="1"]):not([data-cth-active="1
   border: 0;
   padding: 0;
   background: transparent;
-  color: rgba(255,255,255,0.70);
+  color: #fff;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 #${QT_BTN_ID}[hidden] { display: none; }
 #${QT_BTN_ID}:hover, #${QT_BTN_ID}:focus-visible { background: rgba(255,255,255,0.08); }
-html.cth-light #${QT_BTN_ID} { color: rgba(0,0,0,0.60); }
+html.cth-light #${QT_BTN_ID} { color: #000; }
 html.cth-light #${QT_BTN_ID}:hover { background: rgba(0,0,0,0.06); }
 
 #${QT_MENU_ID} {
@@ -673,8 +673,19 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	}
 
 	// ---- Theme detection ----
+	// Live ChatGPT (Nov 2026) sets <html data-theme="light|dark">; older builds used a class.
 	function detectTheme() {
-		return document.documentElement.classList.contains('light') ? 'light' : 'dark';
+		const h = document.documentElement;
+		const attr = h.getAttribute('data-theme');
+		if (attr === 'light' || attr === 'dark') {
+			return attr;
+		}
+
+		if (h.classList.contains('light') || h.classList.contains('dark')) {
+			return h.classList.contains('light') ? 'light' : 'dark';
+		}
+
+		return getComputedStyle(h).colorScheme === 'light' ? 'light' : 'dark';
 	}
 
 	function applyThemeClass() {
@@ -687,7 +698,7 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 	});
 	themeObserver.observe(document.documentElement, {
 		attributes: true,
-		attributeFilter: ['class'],
+		attributeFilter: ['class', 'data-theme'],
 	});
 
 	// ---- Overlay (one element) ----
@@ -2220,17 +2231,23 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			qtSuppressRow = null; // The pointer moved to another row.
 		}
 
-		const more = row && row !== a ? [...row.querySelectorAll('button')].filter(b => !a.contains(b)).at(-1) : null;
-		if (!a || !compiled?.showQuickTag || !chatIdOf(a) || deleteDialog || more?.getAttribute('aria-expanded') === 'true') {
+		// ChatGPT's own row buttons (live: ⋯ "Chat actions" and "Pin chat",
+		// 20 px wide, 28 px apart, often shown only on hover). Keep a 28 px
+		// slot for every one of them, shown or not, so the tag button never
+		// covers one and never moves when they appear.
+		const native = row && row !== a ? [...row.querySelectorAll('button')].filter(b => !a.contains(b)) : [];
+		if (!a || !compiled?.showQuickTag || !chatIdOf(a) || deleteDialog
+			|| native.some(b => b.getAttribute('aria-expanded') === 'true')) {
 			hideQtButton();
 			return;
 		}
 
 		const btn = ensureQtButton();
 		const r = row.getBoundingClientRect();
-		const m = more?.getBoundingClientRect();
+		const shown = native.filter(b => b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden');
+		const left = Math.min(r.right - 28 * (native.length + 1), ...shown.map(b => b.getBoundingClientRect().left - 28));
 		btn.style.setProperty('--cth-qt-top', `${r.top + (r.height / 2) - 12}px`);
-		btn.style.setProperty('--cth-qt-left', `${m ? m.left - 28 : r.right - 32}px`);
+		btn.style.setProperty('--cth-qt-left', `${left}px`);
 		qtAnchor = a;
 		btn.hidden = false;
 	}
