@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-11-03
+
+### Fixed
+- **The quick tag button no longer covers ChatGPT's ⋯ button**
+  ([#83](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/83)).
+  ChatGPT now shows two buttons on a hovered chat, ⋯ and Pin, and the tag
+  button landed on top of ⋯. It now keeps its own spot to their left,
+  whether ChatGPT's buttons are showing yet or not.
+- **Light mode is detected again**
+  ([#84](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/84)).
+  ChatGPT changed how it marks its theme, so the extension always used
+  dark-mode colours and the tag icon was nearly invisible on a light
+  sidebar. The tag and settings icons are now solid black in light mode
+  and solid white in dark mode, and the other light-mode colours are
+  right again.
+
 ## [1.3.1] — 2026-11-03
 
 ### Fixed
