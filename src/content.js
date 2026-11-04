@@ -2231,11 +2231,11 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 			qtSuppressRow = null; // The pointer moved to another row.
 		}
 
-		// ChatGPT's own row buttons (live: ⋯ "Chat actions", then "Pin chat").
-		// Sit 4 px left of the leftmost visible one so none of them is covered.
-		const native = row && row !== a
-			? [...row.querySelectorAll('button')].filter(b => !a.contains(b) && b.getClientRects().length > 0)
-			: [];
+		// ChatGPT's own row buttons (live: ⋯ "Chat actions" and "Pin chat",
+		// 20 px wide, 28 px apart, often shown only on hover). Keep a 28 px
+		// slot for every one of them, shown or not, so the tag button never
+		// covers one and never moves when they appear.
+		const native = row && row !== a ? [...row.querySelectorAll('button')].filter(b => !a.contains(b)) : [];
 		if (!a || !compiled?.showQuickTag || !chatIdOf(a) || deleteDialog
 			|| native.some(b => b.getAttribute('aria-expanded') === 'true')) {
 			hideQtButton();
@@ -2244,9 +2244,10 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 
 		const btn = ensureQtButton();
 		const r = row.getBoundingClientRect();
-		const left = Math.min(...native.map(b => b.getBoundingClientRect().left), r.right - 4);
+		const shown = native.filter(b => b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden');
+		const left = Math.min(r.right - 28 * (native.length + 1), ...shown.map(b => b.getBoundingClientRect().left - 28));
 		btn.style.setProperty('--cth-qt-top', `${r.top + (r.height / 2) - 12}px`);
-		btn.style.setProperty('--cth-qt-left', `${left - 28}px`);
+		btn.style.setProperty('--cth-qt-left', `${left}px`);
 		qtAnchor = a;
 		btn.hidden = false;
 	}

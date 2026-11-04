@@ -2477,10 +2477,10 @@ class TestContentScript:
         span = f"document.querySelector('{link} .truncate span[dir=auto]')"
         page.hover(link)
         page.wait_for_selector('#cth-qt-btn', state='visible')
-        # Legacy rows have no native menu button: align to the anchor's own right edge.
-        gap = page.evaluate(f"""() => document.querySelector('{link}').getBoundingClientRect().right - 8
+        # Legacy rows have no native row buttons: 4 px inside the row's right edge.
+        gap = page.evaluate(f"""() => document.querySelector('{link}').getBoundingClientRect().right
             - document.getElementById('cth-qt-btn').getBoundingClientRect().right""")
-        assert abs(gap) <= 4, gap
+        assert abs(gap - 4) <= 0.5, gap
         page.evaluate(f"window.__node = {span}.firstChild")
         page.click('#cth-qt-btn')
         page.click('#cth-qt-menu [data-tag="[BUG]"]')
@@ -3069,6 +3069,19 @@ class TestAppShellContentScript:
         assert self._poll(page, f"() => getComputedStyle(document.getElementById('cth-qt-btn')).color === '{white}'")
         assert page.evaluate(colours) == [white, white], 'icons are white in dark mode'
 
+    @pytest.mark.parametrize('theme_js, light', [
+        ("h.classList.add('light'); h.setAttribute('data-theme', 'dark')", False),   # data-theme wins over the class
+        ("h.classList.add('dark'); h.setAttribute('data-theme', 'light')", True),
+        ("h.classList.remove('dark', 'light'); h.removeAttribute('data-theme'); h.style.colorScheme = 'light'", True),  # color-scheme fallback
+        ("h.classList.remove('dark', 'light'); h.removeAttribute('data-theme'); h.style.colorScheme = 'dark'", False),
+    ], ids=['attr-dark-beats-class', 'attr-light-beats-class', 'scheme-light', 'scheme-dark'])
+    def test_theme_detection_order(self, theme_js, light):
+        self._configure()
+        page = self._open_chat()
+        self._ready(page)
+        page.evaluate(f"() => {{ const h = document.documentElement; h.classList.remove('dark'); {theme_js}; h.classList.toggle('x-retrigger'); }}")
+        assert self._poll(page, f"() => document.documentElement.classList.contains('cth-light') === {str(light).lower()}")
+
     def test_selected_untagged_row_is_visible_and_selection_moves(self):
         self._configure(dimUntagged=True)
         page = self._open_chat(active='c5')
@@ -3390,6 +3403,49 @@ class TestAppShellContentScript:
             assert [b[0] for b in boxes] == ['Chat actions', 'Pin chat'], boxes
             assert not any(b[3] for b in boxes), f'tag button overlaps a native button: {boxes}'
             assert boxes[0][1] <= boxes[0][2] - 4, f'4 px gap left of ⋯: {boxes}'
+
+    HOVER_ONLY = "() => { const st = document.createElement('style'); st.textContent = '[role=group]:not(:hover) > button { display: none; }'; document.head.append(st); }"
+
+    def _qt_overlaps(self, page, cid):
+        return page.evaluate("""cid => {
+            const q = document.getElementById('cth-qt-btn').getBoundingClientRect();
+            return [...document.querySelectorAll(`#row-${cid} > button`)].filter(b => b.getClientRects().length).map(b => {
+                const r = b.getBoundingClientRect();
+                return [b.getAttribute('aria-label'), q.left < r.right && r.left < q.right && q.top < r.bottom && r.top < q.bottom];
+            });
+        }""", cid)
+
+    def test_quick_tag_reserves_room_for_hover_only_buttons(self):
+        # ChatGPT may show its row buttons only on hover: the tag button keeps their room either way.
+        page, _, _ = self._qt_page()
+        page.evaluate(self.HOVER_ONLY)
+        page.hover('#row-c5 a')
+        assert self._qt_shown(page)
+        before = page.eval_on_selector('#cth-qt-btn', 'e => e.getBoundingClientRect().left')
+        page.click('#cth-qt-btn')                      # the row loses :hover, its buttons hide
+        page.wait_for_selector('#cth-qt-menu[data-cth-chat="c5"]')
+        page.hover('#row-c5 a')                        # back on the row: buttons visible again
+        page.wait_for_timeout(150)
+        assert page.eval_on_selector('#cth-qt-btn', 'e => e.getBoundingClientRect().left') == before
+        assert not any(o for _, o in self._qt_overlaps(page, 'c5')), self._qt_overlaps(page, 'c5')
+
+    def test_quick_tag_hidden_while_a_hidden_native_menu_is_expanded(self):
+        page, _, _ = self._qt_page()
+        page.evaluate(self.HOVER_ONLY)
+        page.evaluate("document.querySelector('#row-c3 .menu').setAttribute('aria-expanded', 'true')")
+        page.hover('#row-c2 a')
+        assert self._qt_shown(page)
+        page.focus('#row-c3 a')                        # c3's buttons are display:none, but its menu is open
+        assert self._qt_shown(page, False)
+
+    def test_quick_tag_ignores_visibility_hidden_buttons(self):
+        page, _, _ = self._qt_page()
+        page.evaluate("document.querySelector('#row-c5 .menu').style.visibility = 'hidden'")
+        page.hover('#row-c5 a')
+        assert self._qt_shown(page)
+        gap = page.evaluate("() => document.querySelector('#row-c5 .menu').getBoundingClientRect().left - document.getElementById('cth-qt-btn').getBoundingClientRect().right")
+        assert abs(gap - 4) <= 0.5, gap                # still left of the ⋯ slot, never on top of it
+        assert not any(o for _, o in self._qt_overlaps(page, 'c5'))
 
     def test_quick_tag_hides_for_native_row_menu(self):
         page, _, _ = self._qt_page()
