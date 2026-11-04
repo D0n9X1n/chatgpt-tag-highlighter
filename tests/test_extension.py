@@ -2954,7 +2954,7 @@ class TestContentScript:
                     pass
 
 
-# App-shell layout inspected live on 2026-09-28. No legacy discovery hooks:
+# App-shell layout inspected live on 2026-09-28 (row buttons re-checked 2026-11-03). No legacy discovery hooks:
 # fixture-only IDs let tests inspect rows without coupling to extension markers.
 # title_html: {chat_id: raw inner HTML of the row's [data-thread-title]}.
 def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height=None,
@@ -2967,7 +2967,10 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height
         row = (f'<div role="group" id="row-{cid}"{selected}>'
                f'<div data-thread-title-trigger><a data-interactive-row-link="true" '
                f'href="/c/{cid}"{selected}><span data-thread-title="true">'
-               f'{inner}</span></a></div><button class="menu">menu</button></div>')
+               f'{inner}</span></a></div>'
+               # Live (2026-11-03): ⋯ "Chat actions" menu, then a "Pin chat" button.
+               f'<button class="menu" aria-label="Chat actions" aria-haspopup="menu">⋯</button>'
+               f'<button class="pin" aria-label="Pin chat">p</button></div>')
         rows.append(f'<div role="listitem" id="item-{cid}">{row}</div>' if i < 2 else row)
     groups = ''.join(
         f'<div data-turn-key="t{i}" class="turn"><div data-content-search-turn-key="t{i}">'
@@ -2979,7 +2982,8 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height
     body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
     [data-app-action-sidebar-scroll] {{height:{f'{sidebar_height}px' if sidebar_height else '100%'};overflow:auto}}
     [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
-    [data-thread-title-trigger] {{flex:1}} a {{display:block}}
+    [data-thread-title-trigger] {{flex:1;min-width:0}} a {{display:block}}
+    [role=group] > button {{flex:none;width:20px;height:20px;margin-left:8px;padding:0}}
     [role=listitem] {{padding-bottom:4px}} main {{flex:1;min-width:0}}
     [data-app-action-timeline-scroll] {{height:100vh;overflow:auto;position:relative}}
     .turn {{height:300px}} #composer {{position:sticky;bottom:0;margin:12px auto;width:80%;height:60px;background:white}}
@@ -3048,6 +3052,22 @@ class TestAppShellContentScript:
         assert not page.is_visible('#row-c4')
         page.evaluate("document.documentElement.classList.replace('dark', 'light')")
         assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c1')).backgroundColor === 'rgba(250, 189, 47, 0.16)'")
+
+    def test_live_data_theme_drives_light_mode_and_icon_colours(self):
+        # Live ChatGPT (2026-11-03) marks its theme with <html data-theme="light|dark"> and no light/dark class.
+        page, _, _ = self._qt_page()
+        page.evaluate("() => { const h = document.documentElement; h.classList.remove('dark'); h.setAttribute('data-theme', 'light'); }")
+        assert self._poll(page, "() => document.documentElement.classList.contains('cth-light')"), 'data-theme=light is light mode'
+        assert self._poll(page, "() => getComputedStyle(document.querySelector('#row-c1')).backgroundColor === 'rgba(250, 189, 47, 0.16)'")
+        page.hover('#row-c5 a')
+        assert self._qt_shown(page)
+        black, white = 'rgb(0, 0, 0)', 'rgb(255, 255, 255)'
+        colours = "() => [getComputedStyle(document.getElementById('cth-qt-btn')).color, getComputedStyle(document.getElementById('cth-settings')).color]"
+        assert page.evaluate(colours) == [black, black], 'icons are black in light mode'
+        page.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+        assert self._poll(page, "() => !document.documentElement.classList.contains('cth-light')"), 'data-theme=dark is dark mode'
+        assert self._poll(page, f"() => getComputedStyle(document.getElementById('cth-qt-btn')).color === '{white}'")
+        assert page.evaluate(colours) == [white, white], 'icons are white in dark mode'
 
     def test_selected_untagged_row_is_visible_and_selection_moves(self):
         self._configure(dimUntagged=True)
@@ -3353,6 +3373,23 @@ class TestAppShellContentScript:
         self._open_qt(page, 'c1')
         page.keyboard.press('Tab')
         assert page.locator('#cth-qt-menu').count() == 0
+
+    def test_quick_tag_button_overlaps_no_native_row_button(self):
+        # Live rows end with ⋯ "Chat actions" and "Pin chat"; the tag button must sit left of both.
+        page, _, _ = self._qt_page()
+        for cid in ('c1', 'c3', 'c5'):
+            page.hover(f'#row-{cid} a')
+            assert self._qt_shown(page), cid
+            boxes = page.evaluate("""cid => {
+                const q = document.getElementById('cth-qt-btn').getBoundingClientRect();
+                return [...document.querySelectorAll(`#row-${cid} > button`)].map(b => {
+                    const r = b.getBoundingClientRect();
+                    return [b.getAttribute('aria-label'), Math.round(q.right), Math.round(r.left), q.left < r.right && r.left < q.right && q.top < r.bottom && r.top < q.bottom];
+                });
+            }""", cid)
+            assert [b[0] for b in boxes] == ['Chat actions', 'Pin chat'], boxes
+            assert not any(b[3] for b in boxes), f'tag button overlaps a native button: {boxes}'
+            assert boxes[0][1] <= boxes[0][2] - 4, f'4 px gap left of ⋯: {boxes}'
 
     def test_quick_tag_hides_for_native_row_menu(self):
         page, _, _ = self._qt_page()
