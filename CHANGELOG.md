@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-11-09
+
+### Changed
+- Build and release tooling updates only; the extension itself is
+  unchanged. The release workflow uses `softprops/action-gh-release`
+  3.0.4, and the CodeQL scan uses `github/codeql-action` 4.39.3. CodeQL
+  fails when its steps run different versions, so Dependabot now bumps
+  all `github/codeql-action` steps in one pull request.
+
 ## [1.3.3] — 2026-11-08
 
 ### Fixed
