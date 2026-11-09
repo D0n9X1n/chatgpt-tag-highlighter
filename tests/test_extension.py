@@ -3130,6 +3130,45 @@ class TestAppShellContentScript:
         page.evaluate("document.querySelectorAll('[aria-current]').forEach(e=>e.removeAttribute('aria-current')); document.querySelector('#row-c5 a').setAttribute('aria-current','page')")
         assert self._overlay_hidden(page) and page.is_visible('#native')
 
+    def test_overlay_follows_composer_growing_while_typing(self):
+        self._configure()
+        page = self._open_chat()
+        assert self._overlay_visible(page)
+        aligned = """() => {
+            const o = document.querySelector('#cth-overlay').getBoundingClientRect();
+            const c = document.querySelector('#composer').getBoundingClientRect();
+            return Math.abs(o.bottom-c.top) <= 2;
+        }"""
+        page.evaluate("""() => {
+            document.querySelector('#composer').style.height = 'auto';
+            const e = document.querySelector('#editor');
+            e.style.height = 'auto';
+            e.textContent = 'x';
+        }""")
+        assert self._poll(page, aligned)
+        top0 = page.evaluate("document.querySelector('#composer').getBoundingClientRect().top")
+        # Text wrapping onto more lines changes only character data: no node is
+        # added, so nothing but the composer's own size changes.
+        page.evaluate("document.querySelector('#editor').firstChild.data = 'long line '.repeat(200)")
+        top1 = page.evaluate("document.querySelector('#composer').getBoundingClientRect().top")
+        assert top1 < top0 - 20, 'fixture: composer should grow upward'
+        assert self._poll(page, aligned), 'overlay must move up with the growing composer'
+        # A re-mounted composer is a new box: it must be observed too.
+        page.evaluate("""() => {
+            const old = document.querySelector('#composer');
+            const fresh = old.cloneNode(true);
+            fresh.querySelector('#editor').textContent = 'x';
+            old.replaceWith(fresh);
+        }""")
+        assert self._poll(page, aligned)
+        # Let any layout queued by the re-mount run first, so only the
+        # observer can catch the growth below.
+        page.evaluate("new Promise(r => { let n = 5; const f = () => --n ? requestAnimationFrame(f) : r(); requestAnimationFrame(f); })")
+        top2 = page.evaluate("document.querySelector('#composer').getBoundingClientRect().top")
+        page.evaluate("document.querySelector('#editor').firstChild.data = 'long line '.repeat(200)")
+        assert page.evaluate("document.querySelector('#composer').getBoundingClientRect().top") < top2 - 20
+        assert self._poll(page, aligned), 'overlay must follow a re-mounted composer as it grows'
+
     def test_title_change_row_reuse_root_replacement_and_bar_repair(self):
         self._configure()
         page = self._open_chat()

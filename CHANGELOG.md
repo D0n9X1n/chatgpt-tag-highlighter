@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-11-08
+
+### Fixed
+- **The chat-title bar above the message box moves up as the box grows.**
+  When a message wrapped onto more lines, the box got taller but the bar
+  stayed where it was and covered the text being typed. The bar now
+  follows the top of the box as it grows or shrinks.
+
 ## [1.3.2] — 2026-11-03
 
 ### Fixed
