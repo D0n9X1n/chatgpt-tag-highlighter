@@ -1827,13 +1827,31 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		});
 	}
 
+	// The composer grows as text wraps onto more lines. That changes only
+	// character data and the box's size, which neither the root observer
+	// (childList) nor scroll/resize sees, so watch the box itself.
+	let composerResizeObserver = null;
+	let observedComposer = null;
+	function observeComposer(box) {
+		if (box === observedComposer || typeof ResizeObserver !== 'function') {
+			return;
+		}
+
+		composerResizeObserver ||= new ResizeObserver(scheduleOverlayLayout);
+		composerResizeObserver.disconnect();
+		observedComposer = box;
+		if (box) composerResizeObserver.observe(box);
+	}
+
 	function layoutOverlayNow() {
 		if (!overlayWanted) {
+			observeComposer(null);
 			setOverlayShown(false);
 			return;
 		}
 
 		const box = findComposerBox();
+		observeComposer(box);
 		const r = box?.getBoundingClientRect();
 		if (!r || r.width === 0 || r.height === 0) {
 			setOverlayShown(false);
