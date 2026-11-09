@@ -10,6 +10,12 @@ updates:
       time: '06:00'
       timezone: Etc/UTC
     open-pull-requests-limit: 5
+    # CodeQL refuses to run when init and analyze differ in version, so
+    # bump every github/codeql-action/* step in one PR.
+    groups:
+      codeql-action:
+        patterns:
+          - github/codeql-action*
     commit-message:
       prefix: ci
       include: scope
