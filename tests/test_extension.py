@@ -2980,6 +2980,8 @@ def _app_shell_fixture(chats=DEFAULT_CHATS, active='c1', turns=6, sidebar_height
     return f'''<!doctype html><html class="dark"><head><meta charset="utf-8">
     <title>{_html.escape(doc_title)}</title><style>
     body {{margin:0;display:flex;height:100vh}} #app-shell-sidebar {{width:260px;flex-shrink:0}}
+    /* Live (2026-11-27): the sidebar <aside> is position:relative; z-index:40. */
+    #app-shell-sidebar {{position:relative;z-index:40;isolation:isolate;background:rgb(23,23,23)}}
     [data-app-action-sidebar-scroll] {{height:{f'{sidebar_height}px' if sidebar_height else '100%'};overflow:auto}}
     [role=group] {{display:flex;background:rgb(30,30,30);padding:8px;position:relative}}
     [data-thread-title-trigger] {{flex:1;min-width:0}} a {{display:block}}
@@ -3425,6 +3427,97 @@ class TestAppShellContentScript:
         self._open_qt(page, 'c1')
         page.keyboard.press('Tab')
         assert page.locator('#cth-qt-menu').count() == 0
+
+    QT_ON_TOP = """() => {
+        const b = document.getElementById('cth-qt-btn'), r = b.getBoundingClientRect();
+        return b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+    }"""
+
+    def test_quick_tag_button_is_above_the_sidebar(self):
+        # Live (2026-11-27): ChatGPT's sidebar <aside> has z-index 40; a z-index 30 button sat under it, unseen and unclickable.
+        page, _, _ = self._qt_page()
+        page.hover('#row-c3 a')
+        assert self._qt_shown(page)
+        assert page.evaluate(self.QT_ON_TOP), 'hover: the tag button must be the top element at its centre'
+        page.click('#cth-qt-btn', timeout=2000)
+        page.wait_for_selector('#cth-qt-menu[data-cth-chat="c3"]')
+        z = page.evaluate("() => [document.getElementById('cth-qt-btn'), document.getElementById('cth-qt-menu')].map(e => +getComputedStyle(e).zIndex)")
+        assert z[0] < z[1], f'our menu stays above the button: {z}'
+        page.keyboard.press('Escape')
+        page.mouse.move(900, 450)                       # pointer off the sidebar
+        assert self._qt_shown(page, False)
+        page.focus('#row-c2 a')                         # keyboard only
+        assert self._qt_shown(page)
+        assert page.evaluate(self.QT_ON_TOP), 'focus: the tag button must be the top element at its centre'
+        page.click('#cth-qt-btn', timeout=2000)
+        page.wait_for_selector('#cth-qt-menu[data-cth-chat="c2"]')
+
+    def test_quick_tag_button_stays_below_host_panels_above_the_sidebar(self):
+        # Only beat the sidebar itself: a ChatGPT panel stacked above the sidebar, or a top-layer popover, covers the button.
+        page, _, _ = self._qt_page()
+        page.mouse.move(900, 450)                       # pointer off the sidebar: the button stays up for focus
+        page.focus('#row-c3 a')
+        assert self._qt_shown(page)
+        cover = """kind => {
+            const b = document.getElementById('cth-qt-btn').getBoundingClientRect();
+            const p = document.createElement('div');
+            p.id = 'host-panel';
+            if (kind === 'popover') p.popover = 'manual';
+            p.style.cssText = `position:fixed;margin:0;padding:0;border:0;left:${b.left - 10}px;top:${b.top - 10}px;width:60px;height:60px;background:#333`
+                + (kind === 'popover' ? '' : ';z-index:50');
+            document.body.append(p);
+            if (kind === 'popover') p.showPopover();
+        }"""
+        for kind in ('z-index', 'popover'):
+            page.evaluate(cover, kind)
+            assert self._qt_shown(page), kind
+            assert not page.evaluate(self.QT_ON_TOP), f'a host {kind} panel over the button must cover it'
+            page.evaluate("() => document.getElementById('host-panel').remove()")
+            assert page.evaluate(self.QT_ON_TOP), kind
+
+    def test_quick_tag_button_follows_the_sidebar_stacking(self):
+        # The level comes from the sidebar's own stacking, not a fixed number.
+        page, _, _ = self._qt_page()
+        page.mouse.move(900, 450)
+        z = """css => {
+            document.getElementById('cth-qt-btn')?.setAttribute('hidden', '');
+            Object.assign(document.getElementById('app-shell-sidebar').style, css);
+            document.querySelector('#row-c3 a').blur();         // re-fire focusin each call
+            document.querySelector('#row-c3 a').focus();
+            const b = document.getElementById('cth-qt-btn');
+            return b && !b.hidden ? getComputedStyle(b).zIndex : null;
+        }"""
+        assert page.evaluate(z, {'zIndex': '100'}) == '101'
+        assert page.evaluate(self.QT_ON_TOP)
+        assert page.evaluate(z, {'zIndex': '2147483000'}) == '2147481999', 'stays below our menu and toast'
+        assert page.evaluate(z, {'zIndex': 'auto', 'position': 'static'}) == '30', 'no stacking ancestor: default'
+        # A z-index on a static, non-flex block has no effect and must not pull the button under the sidebar.
+        page.evaluate("""() => {
+            const aside = document.getElementById('app-shell-sidebar');
+            Object.assign(aside.style, {zIndex: '40', position: 'relative'});
+            const outer = document.createElement('div'), inner = document.createElement('div');
+            outer.style.cssText = 'width:260px;flex-shrink:0';
+            inner.style.cssText = 'z-index:0';
+            aside.before(outer); outer.append(inner); inner.append(aside);
+        }""")
+        assert page.evaluate(z, {}) == '41'
+        assert page.evaluate(self.QT_ON_TOP), 'a no-op z-index on a static wrapper is ignored'
+        # display:contents generates no box: its z-index never applies, and it is not a layout parent.
+        page.evaluate("""() => {
+            const outer = document.getElementById('app-shell-sidebar').parentElement.parentElement;
+            outer.style.display = 'contents'; outer.style.zIndex = '0';
+            outer.firstElementChild.style.cssText = 'z-index:7;flex-shrink:0;width:260px';  // static flex item of <body>
+        }""")
+        assert page.evaluate(z, {}) == '8', 'a static item of a flex grandparent behind display:contents applies'
+        assert page.evaluate(self.QT_ON_TOP)
+        # The outermost applying ancestor wins.
+        page.evaluate("""() => {
+            const outer = document.getElementById('app-shell-sidebar').parentElement.parentElement;
+            outer.style.display = ''; outer.style.zIndex = '';
+            Object.assign(outer.style, {position: 'relative', zIndex: '100'});
+        }""")
+        assert page.evaluate(z, {}) == '101', 'outermost applying ancestor wins'
+        assert page.evaluate(self.QT_ON_TOP)
 
     def test_quick_tag_button_overlaps_no_native_row_button(self):
         # Live rows end with ⋯ "Chat actions" and "Pin chat"; the tag button must sit left of both.
