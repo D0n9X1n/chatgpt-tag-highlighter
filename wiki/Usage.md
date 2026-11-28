@@ -6,7 +6,7 @@
 
 - **Chrome, Edge, Brave, Arc:** install from the [Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm).
 - **Firefox:** install from [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/).
-- **Local build:** run `./publish.sh --version 0.0.99`, then load `dist/chrome/` with **Load unpacked** in `chrome://extensions`, or `dist/firefox/manifest.json` with **Load Temporary Add-on** in `about:debugging`. `src/` has no `manifest.json`, so it can't be loaded directly. See [Development and Release](Development-and-Release).
+- **Local build:** run `./publish.sh --version 0.0.99`, then load `dist/chrome/` with **Load unpacked** in `chrome://extensions`, or `dist/firefox/manifest.json` with **Load Temporary Add-on** in `about:debugging`. `src/` has no `manifest.json`, so it can't be loaded directly.
 
 ## Tag your chats
 

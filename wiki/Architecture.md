@@ -34,19 +34,30 @@ Quick tag renames go straight from `content.js` to ChatGPT (`GET` then `PATCH /b
 
 ## ChatGPT page hooks
 
-ChatGPT changes its page without notice. The content script depends on:
+ChatGPT changes its page without notice, so the content script hooks only a few stable attributes and keeps a fallback for the older layout:
 
-- **Sidebar:** `#history` → `a[data-sidebar-item="true"]`, title in `.truncate span[dir="auto"]`. The open chat has an empty `data-active` attribute; `data-active="false"` is not selected.
-- **Message box:** `#prompt-textarea` inside `form[data-type="unified-composer"]`, with `div.bg-token-bg-primary` as the legacy fallback. The banner is positioned against it.
-- **Messages:** `[data-testid="conversation-turn-N"]`, now `<section>` (formerly `<article>`). The real scroller is an `overflow-y: auto` element above `<main>`.
-- **ChatGPT's scroll-to-bottom button:** an unlabelled, `aria-hidden` button inside a wrapper whose class contains `data-scroll-from-end`.
+| Part | Current layout | Older layout |
+|---|---|---|
+| Sidebar chats | `#app-shell-sidebar [data-app-action-sidebar-scroll]` → `a[data-interactive-row-link="true"][href^="/c/"]`, title in `[data-thread-title="true"]`; the open chat has `aria-current="page"` | `#history` → `a[data-sidebar-item="true"]`, title in `.truncate`; the open chat has `data-active` (not `"false"`) |
+| Message box (banner anchor) | `form[data-chatgpt-composer]` with a `[contenteditable="true"][data-composer-markdown]` editor | `#prompt-textarea` inside `form[data-type="unified-composer"]` |
+| Turns | top-level `div[data-turn-key]`, one per user/assistant exchange | `[data-testid="conversation-turn-N"]`, one per message |
+| Scroll-to-bottom button | `button[class~="group/scroll-to-bottom"]` | an unlabelled, `aria-hidden` button inside a `data-scroll-from-end` wrapper |
+| Theme | `<html data-theme="light|dark">` | `light`/`dark` class on `<html>` |
 
-When ChatGPT changes, update the test fixture from the inspected page structure (never real titles or messages), add a failing test, then fix. See [Testing](Testing).
+The quick tag button is one fixed element on the page, placed beside the hovered row. It sits one stacking level above the sidebar, so the sidebar can't cover it, but below any ChatGPT panel or menu stacked above the sidebar.
+
+## Long chats
+
+**Why:** in a long conversation the browser keeps styling and laying out every message, even far off-screen, so resizing, theme changes and scrolling get slow.
+
+**How:** with "Speed up long chats" on and at least 20 turn containers, every container except the newest 4 gets `content-visibility: auto`, so the browser skips it until it nears the screen. Each keeps its measured height as `contain-intrinsic-block-size`, so the scrollbar doesn't jump. Nothing is removed: scrolling, Find and selection keep working, and turning the option off restores normal rendering at once.
+
+**Max chat turns** is the destructive alternative: it removes older containers from the page (never your account) until reload, keeping or removing whole exchanges, never half of one.
 
 ## Lifecycle
 
-- DOM work is batched through `requestAnimationFrame` schedulers, and a `WeakMap` title cache skips unchanged chats.
-- A sidebar observer watches `#history` for new chats, title text, and selection changes. A page-level observer rebinds when `#history` is replaced, removed, or mounted late, including when settings arrive after the page on first install.
+- DOM work is batched through `requestAnimationFrame` schedulers, and a `WeakMap` cache skips chats whose title and link haven't changed.
+- A sidebar observer watches the chat list for new chats, title text and selection changes. A page-level observer rebinds when ChatGPT replaces, removes or late-mounts the sidebar, and restores missing filter controls.
 - The message observer only runs while pruning or long-chat rendering is on.
 - The banner tracks "wanted" (the open chat matches) separately from "shown" (a message box is measurable), so it recovers when ChatGPT re-mounts the message box.
-- The content script runs in an isolated world and can't see ChatGPT's own `history.pushState` calls, so it relies on DOM observers. Scans must not write attributes the sidebar observer watches, to avoid mutation loops.
+- The content script runs in an isolated world and can't see ChatGPT's own `history.pushState` calls, so it relies on DOM observers. Scans never write attributes the sidebar observer watches, to avoid mutation loops.

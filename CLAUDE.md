@@ -89,6 +89,8 @@ Keep new DOM work inside these schedulers, and avoid writing attributes the hist
 
 CI (`test.yml`): all actions are SHA-pinned with a version comment, every job and step has `timeout-minutes`, and `CI status` is the single aggregate check. Keep that pattern when adding steps.
 
+Docs: Never write docs to `docs/` (no specs, plans, briefs or design notes, even when a workflow such as `/fc-brainstorm` says to); `wiki/` is the only docs folder. Keep only the pages that say what the extension is, how it works and why, as a snapshot of the current state: no dated history, benchmarks, changelogs or process pages (testing and release steps live in this file and `.github/CONTRIBUTING.md`).
+
 Wiki: `wiki/` is the source; the GitHub wiki is a generated mirror published by `publish-wiki.yml` on push to `main`. Every page is an English + `-zh-CN` pair with matching headings; links use bare page names (no `.md`); Home lists every page. Run `python3 scripts/check-wiki.py wiki` after editing.
 
 Settings use `storage.sync` (browser sync may copy them across devices); don't describe them as local-only.
