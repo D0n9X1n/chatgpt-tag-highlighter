@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] — 2026-11-27
+
+### Fixed
+- **The quick tag button shows up again**
+  ([#93](https://github.com/D0n9X1n/chatgpt-tag-highlighter/issues/93)).
+  ChatGPT changed its sidebar so that it sits above the tag button, which
+  hid the button: hovering a chat showed nothing to click. The button now
+  places itself just above the sidebar, so it is visible and clickable on
+  hover or keyboard focus. ChatGPT's own chat menus still open on top of it.
+
 ## [1.3.4] — 2026-11-09
 
 ### Changed

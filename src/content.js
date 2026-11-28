@@ -582,7 +582,7 @@ html.cth-dim-untagged [data-cth-row]:not([data-cth="1"]):not([data-cth-active="1
   position: fixed;
   top: var(--cth-qt-top);
   left: var(--cth-qt-left);
-  z-index: 30;
+  z-index: var(--cth-qt-z, 30);
   width: 24px;
   height: 24px;
   border-radius: 6px;
@@ -2266,6 +2266,31 @@ html.cth-lazy-turns [data-cth-lazy="1"] {
 		const left = Math.min(r.right - 28 * (native.length + 1), ...shown.map(b => b.getBoundingClientRect().left - 28));
 		btn.style.setProperty('--cth-qt-top', `${r.top + (r.height / 2) - 12}px`);
 		btn.style.setProperty('--cth-qt-left', `${left}px`);
+		// Sit one level above the sidebar's outermost z-index (live Nov 27,
+		// 2026: the <aside> is z-index 40), never above ChatGPT panels that
+		// stack over the sidebar. No such ancestor (legacy): CSS default 30.
+		// z-index only applies to positioned elements and flex/grid items;
+		// a display:contents element has no box (skip it, and look past it
+		// for the layout parent).
+		// shortcut: a host panel at the sidebar's level or level + 1, or one
+		// sharing a z-index wrapper with the sidebar, still paints under the
+		// button; switch to an occlusion check if ChatGPT ships such a panel.
+		let z = NaN;
+		for (let e = row.parentElement; e && e !== document.body; e = e.parentElement) {
+			const cs = getComputedStyle(e);
+			const v = parseInt(cs.zIndex, 10);
+			if (!Number.isFinite(v) || cs.display === 'contents') {
+				continue;
+			}
+
+			let p = e.parentElement;
+			while (p && p !== document.body && getComputedStyle(p).display === 'contents') p = p.parentElement;
+			if (cs.position !== 'static' || /flex|grid/.test(p ? getComputedStyle(p).display : '')) {
+				z = v;
+			}
+		}
+		if (Number.isFinite(z)) btn.style.setProperty('--cth-qt-z', String(Math.min(z + 1, 2147481999)));
+		else btn.style.removeProperty('--cth-qt-z');
 		qtAnchor = a;
 		btn.hidden = false;
 	}
