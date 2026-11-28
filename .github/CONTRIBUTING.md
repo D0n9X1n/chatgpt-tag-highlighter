@@ -39,9 +39,8 @@ src/                    # Extension source (build to dist/ before loading)
   manifest.firefox.json # MV3 manifest with browser_specific_settings (Firefox)
 publish.sh              # Builds dist/{chrome,firefox} + .zip / .xpi archives
 tests/                  # pytest + Playwright suite (see "Running Tests")
-.github/workflows/      # CI: tests, codeql, release
-docs/specs/             # Design specs, one per feature
-feature-crew/           # Submodule: agent-team workflow used by maintainers
+.github/workflows/      # CI: tests, codeql, release, wiki publish
+wiki/                   # The only docs: what it is, how it works, why (current snapshot)
 ```
 
 ## Making Changes
@@ -131,8 +130,11 @@ Releases are cut from a commit that is already on `main` and has a green
 ## Wiki
 
 The GitHub wiki is generated from the tracked `wiki/` folder; don't edit
-it on github.com. Each page has an English file and a `-zh-CN` file with
-the same headings and facts. Check with `python3 scripts/check-wiki.py wiki`;
+it on github.com. It is the only place for docs: there is no `docs/`
+folder, and design specs or plans are not kept. Pages say what the
+extension is, how it works and why, as a snapshot of the current state
+(no dated history or benchmarks). Each page has an English file and a
+`-zh-CN` file with the same headings and facts. Check with `python3 scripts/check-wiki.py wiki`;
 `.github/workflows/publish-wiki.yml` publishes it on every push to `main`.
 
 ## Pull Requests

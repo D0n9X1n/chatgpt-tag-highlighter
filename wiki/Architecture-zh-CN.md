@@ -34,19 +34,30 @@ flowchart LR
 
 ## ChatGPT 页面钩子
 
-ChatGPT 会不打招呼地改动页面。内容脚本依赖：
+ChatGPT 会不打招呼地改动页面，所以内容脚本只依赖少数稳定的属性，并保留对旧布局的回退：
 
-- **侧边栏：** `#history` → `a[data-sidebar-item="true"]`，标题在 `.truncate span[dir="auto"]` 中。打开的会话带有空的 `data-active` 属性；`data-active="false"` 不算选中。
-- **输入框：** `#prompt-textarea` 位于 `form[data-type="unified-composer"]` 中，旧布局回退到 `div.bg-token-bg-primary`。横幅以它为定位基准。
-- **消息：** `[data-testid="conversation-turn-N"]`，现在是 `<section>`（以前是 `<article>`）。真正的滚动容器是 `<main>` 之上的一个 `overflow-y: auto` 元素。
-- **ChatGPT 的"滚动到底部"按钮：** 一个没有标签、`aria-hidden` 的按钮，位于 class 中含 `data-scroll-from-end` 的容器内。
+| 部分 | 当前布局 | 旧布局 |
+|---|---|---|
+| 侧边栏会话 | `#app-shell-sidebar [data-app-action-sidebar-scroll]` → `a[data-interactive-row-link="true"][href^="/c/"]`，标题在 `[data-thread-title="true"]` 中；打开的会话带 `aria-current="page"` | `#history` → `a[data-sidebar-item="true"]`，标题在 `.truncate` 中；打开的会话带 `data-active`（值不为 `"false"`） |
+| 输入框（横幅定位基准） | `form[data-chatgpt-composer]`，其中的编辑器为 `[contenteditable="true"][data-composer-markdown]` | `form[data-type="unified-composer"]` 中的 `#prompt-textarea` |
+| 轮次 | 顶层 `div[data-turn-key]`，每个对应一整轮用户与助手的问答 | `[data-testid="conversation-turn-N"]`，每个对应一条消息 |
+| 滚动到底部按钮 | `button[class~="group/scroll-to-bottom"]` | `data-scroll-from-end` 容器中没有标签、`aria-hidden` 的按钮 |
+| 主题 | `<html data-theme="light|dark">` | `<html>` 上的 `light`/`dark` class |
 
-ChatGPT 改版后，先根据检查到的页面结构（绝不使用真实标题或消息）更新测试夹具，写一个会失败的测试，再修复。见 [测试](Testing-zh-CN)。
+快速标签按钮是页面上唯一一个固定定位的元素，放在悬停的会话行旁边。它的层级比侧边栏高一级，所以不会被侧边栏盖住，但低于叠在侧边栏之上的 ChatGPT 面板或菜单。
+
+## 长对话
+
+**原因：** 在超长对话中，浏览器会持续为每一条消息计算样式和布局，即使它们远在屏幕之外，因此调整窗口大小、切换主题和滚动都会变慢。
+
+**原理：** 开启"加速长对话"且轮次容器达到 20 个时，除最新 4 个外，每个容器都标记为 `content-visibility: auto`，浏览器在它接近屏幕之前跳过它。每个容器保留测得的高度作为 `contain-intrinsic-block-size`，所以滚动条不会跳动。不会删除任何内容：滚动、页面查找和文字选择照常可用，关闭该选项后立即恢复正常渲染。
+
+**Max chat turns**（保留的最大轮次）是会删除内容的替代方案：在刷新前从页面上移除较早的容器（绝不会动你的账号），按整轮问答保留或移除，不会拆开一轮。
 
 ## 生命周期
 
-- DOM 操作通过 `requestAnimationFrame` 调度器批量处理，`WeakMap` 标题缓存会跳过未变化的会话。
-- 侧边栏观察器监听 `#history` 中的新会话、标题文字和选中变化。页面级观察器在 `#history` 被替换、移除或延迟挂载时重新绑定，包括首次安装时设置晚于页面到达的情况。
+- DOM 操作通过 `requestAnimationFrame` 调度器批量处理，`WeakMap` 缓存会跳过标题和链接都未变化的会话。
+- 侧边栏观察器监听会话列表中的新会话、标题文字和选中变化。页面级观察器在 ChatGPT 替换、移除或延迟挂载侧边栏时重新绑定，并恢复缺失的筛选控件。
 - 消息观察器只在开启轮次剪裁或长对话渲染时运行。
 - 横幅把"需要显示"（打开的会话命中规则）和"已显示"（输入框可测量）分开跟踪，因此 ChatGPT 重新挂载输入框后能恢复。
-- 内容脚本运行在隔离环境中，看不到 ChatGPT 自己的 `history.pushState` 调用，所以依赖 DOM 观察器。扫描时不能写入侧边栏观察器监听的属性，以免形成变更循环。
+- 内容脚本运行在隔离环境中，看不到 ChatGPT 自己的 `history.pushState` 调用，所以依赖 DOM 观察器。扫描时从不写入侧边栏观察器监听的属性，以免形成变更循环。

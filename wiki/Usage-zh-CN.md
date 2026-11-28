@@ -6,7 +6,7 @@
 
 - **Chrome、Edge、Brave、Arc：** 从 [Chrome 应用商店](https://chromewebstore.google.com/detail/chatgpt-tag-highlighter/lplghggkggkbkkakjabafjenjlekogbm) 安装。
 - **Firefox：** 从 [Firefox 附加组件](https://addons.mozilla.org/firefox/addon/chatgpt-tag-highlighter/) 安装。
-- **本地构建：** 运行 `./publish.sh --version 0.0.99`，然后在 `chrome://extensions` 用 **Load unpacked** 加载 `dist/chrome/`，或在 `about:debugging` 用 **Load Temporary Add-on** 加载 `dist/firefox/manifest.json`。`src/` 中没有 `manifest.json`，不能直接加载。参见 [开发与发布](Development-and-Release-zh-CN)。
+- **本地构建：** 运行 `./publish.sh --version 0.0.99`，然后在 `chrome://extensions` 用 **Load unpacked** 加载 `dist/chrome/`，或在 `about:debugging` 用 **Load Temporary Add-on** 加载 `dist/firefox/manifest.json`。`src/` 中没有 `manifest.json`，不能直接加载。
 
 ## 给会话加标签
 
